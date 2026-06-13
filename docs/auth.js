@@ -112,9 +112,13 @@ export async function handleRedirectCallback() {
   if (!r.ok)
     throw new Error(`Token exchange failed (${r.status}) -- check the client id and redirect URL.`);
   const j = await r.json();
+  // WCL user tokens are long-lived but the response may omit expires_in; defaulting
+  // to 0 would make the token look instantly expired and silently fall back to the
+  // proxy. Assume ~1 year when absent; a real revocation surfaces as a 401 anyway.
+  const ttl = j.expires_in || 31536000;
   localStorage.setItem(TOKEN_KEY, JSON.stringify({
     access_token: j.access_token,
-    expires_at: Date.now() / 1000 + (j.expires_in || 0),
+    expires_at: Date.now() / 1000 + ttl,
   }));
 
   let returnState = null;

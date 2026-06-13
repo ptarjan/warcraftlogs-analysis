@@ -15,6 +15,9 @@ dist/
 .item_cache.json
 .cli-cache.json
 
+# Scratch (command-output capture)
+.tmp/
+
 # Python
 __pycache__/
 *.pyc

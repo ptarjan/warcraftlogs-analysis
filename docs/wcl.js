@@ -7,7 +7,7 @@ import {
   IS_NODE, TOKEN_URL, CLIENT_API_URL, USER_API_URL, WOWHEAD_URL,
   WORKER_URL, WORKER_CONFIGURED,
 } from "./config.js";
-import { getAccessToken } from "./auth.js";
+import { getAccessToken, logout } from "./auth.js";
 
 export class PrivateReport extends Error {}
 
@@ -89,9 +89,12 @@ async function browserWcl(query) {
       body: JSON.stringify({ query }),
     });
     // A connected user whose token died must reconnect (or disconnect to use the
-    // shared proxy) -- we don't silently fall back, so their identity is honest.
-    if (r.status === 401)
+    // shared proxy). Clear the dead token so the UI/next load reflect it; we don't
+    // silently fall back, so the active identity stays honest.
+    if (r.status === 401) {
+      logout();
       throw new NeedsAuth("Your Warcraft Logs session expired -- reconnect, or disconnect to use the shared proxy.");
+    }
     return { status: r.status, j: await r.json().catch(() => ({})), retryAfter: readRetryAfter(r) };
   }
   // Anonymous: route through the Worker, which holds the shared app secret.
@@ -184,4 +187,31 @@ export async function itemTooltip(id, bonusIds) {
   const p = fetch(url, opts).then((r) => r.json());
   _itemInflight.set(url, p);
   try { return await p; } finally { _itemInflight.delete(url); }
+}
+
+// The connected user's own characters, ordered most-recently-logged first (the
+// closest the API gets to "most used"). Connected-only and best-effort: any
+// schema/permission miss returns [] so the UI just doesn't prefill. Two-tier:
+// try with per-character recency for ordering, else fall back to the bare list.
+export async function myCharacters() {
+  if (IS_NODE || !getAccessToken()) return [];
+  const base = "name server { slug region { slug } }";
+  let chars = null;
+  for (const sel of [`${base} recentReports(limit: 1) { data { startTime } }`, base]) {
+    try {
+      const d = await gql(`{ userData { currentUser { characters { ${sel} } } } }`);
+      chars = (d && d.userData && d.userData.currentUser && d.userData.currentUser.characters) || [];
+      break;
+    } catch { chars = null; } // bad field / no permission -> try the simpler shape
+  }
+  if (!chars) return [];
+  return chars
+    .map((c) => ({
+      name: c.name,
+      server: c.server && c.server.slug,
+      region: ((c.server && c.server.region && c.server.region.slug) || "").toUpperCase(),
+      last: (c.recentReports && c.recentReports.data && c.recentReports.data[0] || {}).startTime || 0,
+    }))
+    .filter((c) => c.name && c.server && c.region)
+    .sort((a, b) => b.last - a.last);
 }

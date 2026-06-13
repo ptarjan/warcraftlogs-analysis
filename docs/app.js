@@ -3,7 +3,7 @@
 // the supporting analyses as collapsible cards below.
 import { detectContext, detectPriority, DIFFICULTY } from "./core.js";
 import { isAuthed, beginLogin, handleRedirectCallback, logout } from "./auth.js";
-import { NeedsAuth } from "./wcl.js";
+import { NeedsAuth, myCharacters } from "./wcl.js";
 import * as analyze from "./analyze.js";
 import * as diagnose from "./diagnose.js";
 import * as rotation from "./rotation.js";
@@ -16,7 +16,7 @@ const regionSel = $("region"), serverSel = $("server"), authEl = $("auth");
 
 // --- server dropdown, populated from the bundled realm list per region --- //
 let REALMS = {};
-loadRealms();
+const realmsReady = loadRealms();
 async function loadRealms() {
   try { REALMS = await (await fetch("./servers.json")).json(); }
   catch (e) { REALMS = {}; }
@@ -49,11 +49,42 @@ function renderAuth() {
 }
 function showAuthErr(e) { cur = makeCard("Connection error"); note(e.message || String(e), "err"); }
 
-// On load: finish any returning OAuth redirect, then reflect auth state.
+// When connected, fill the character box with the user's own characters
+// (most-recently-logged first) -- a datalist for autocomplete, and the top one
+// prefilled. Best-effort: failure just leaves the form blank as before.
+let charMap = new Map(); // lower(name) -> { name, server, region }
+async function prefillCharacters() {
+  if (!isAuthed()) return;
+  let chars = [];
+  try { chars = await myCharacters(); } catch { return; }
+  if (!chars.length) return;
+  const dl = $("charlist");
+  if (dl) dl.innerHTML = chars
+    .map((c) => `<option value="${c.name}">${c.name} · ${c.server} (${c.region})</option>`).join("");
+  charMap = new Map(chars.map((c) => [c.name.toLowerCase(), c]));
+  if (!$("name").value.trim()) await applyChar(chars[0]); // top = most recent
+}
+// Set name + its region/server together (server needs the realm list loaded).
+async function applyChar(c) {
+  $("name").value = c.name;
+  regionSel.value = c.region;
+  await realmsReady;
+  fillServers();
+  serverSel.value = c.server;
+}
+// Picking/typing one of your characters auto-fills its server + region.
+$("name").addEventListener("change", () => {
+  const c = charMap.get($("name").value.trim().toLowerCase());
+  if (c) applyChar(c);
+});
+
+// On load: finish any returning OAuth redirect, reflect auth state, then (if
+// connected) prefill the character box.
 (async () => {
   try { await handleRedirectCallback(); }
   catch (e) { showAuthErr(e); }
   renderAuth();
+  prefillCharacters();
 })();
 
 // --------------------------------------------------------------------------- //
