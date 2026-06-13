@@ -64,14 +64,21 @@ export function talentDiff(youSet, fieldCount, fieldN, missThresh = 0.6, offThre
 
 // "90% of the field takes it" does NOT mean a talent adds damage -- the field
 // also unanimously takes mandatory UTILITY (Detox = dispel, Typhoon = knockback,
-// Tiger Tail Sweep = stun range) and DEFENSIVES. The tooltip is the discriminator:
-// a DPS talent's text shows a throughput signal (damage / a secondary stat), and
-// isn't a pure utility/defensive effect. Pure + tested so it needs no network.
+// Tiger Tail Sweep = stun range) and DEFENSIVES. The tooltip is the discriminator.
+//
+// A talent adds damage when it carries a STRONG offensive marker: a damage
+// coefficient ("(200% of attack power)"), "increased/additional damage", "damage
+// dealt/done", a flat "deals N", or it raises a throughput stat. We require that
+// (not merely the word "damage") and first strip purely-defensive phrases, so
+// "reduces damage taken" can't read as offense. Validated against ALL 39 specs'
+// tooltips (3239 talents): a 2-spec sample had it backwards -- it vetoed any
+// talent mentioning "heal"/"absorb", wrongly dropping hybrid damage+heal talents
+// (Engulfing Blaze, Liveliness, Fulminous Roar -- common on Evoker/Druid/Priest).
+// Pure + tested so it needs no network.
 export function looksLikeDpsTalent(tooltipText) {
-  const t = String(tooltipText || "").replace(/<[^>]+>/g, " ").toLowerCase();
-  const util = /dispel|knock|stun|snare|\broot\b|interrupt|damage taken|damage reduction|absorb|\bheal|cleanse|\bremove/.test(t);
-  const dmg = /\bdamage\b|\bdeals?\b|increase\w*\s.*(critical strike|\bcrit\b|haste|mastery|versatil)/.test(t);
-  return dmg && !util;
+  const t = String(tooltipText || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").toLowerCase();
+  const off = t.replace(/damage (taken|reduction)|(reduces?|reducing|less)[^.]{0,40}damage|damage[^.]{0,20}(reduced|taken)/g, " ");
+  return /% of (attack|spell) power|(increased|additional|extra|bonus) damage|damage (dealt|done)|deals?\s+\d|inflicts?\s+\d|increases?[^.]{0,40}(damage|critical strike|\bcrit\b|\bhaste\b|mastery|versatil|attack power|spell power|\bagility\b|\bstrength\b|\bintellect\b)|\d+%[^.]{0,30}\bdamage\b/.test(off);
 }
 
 // Does a talent (by spell id) add damage? Reads the Wowhead tooltip, classifies
@@ -80,7 +87,7 @@ const _dpsCache = new Map();
 async function isDpsTalent(spellId) {
   if (!spellId) return false;
   if (_dpsCache.has(spellId)) return _dpsCache.get(spellId);
-  const ck = "taldps:" + spellId;
+  const ck = "taldps2:" + spellId; // "2" bumps the namespace past v1-classified entries
   try { const c = localStorage.getItem(ck); if (c !== null && c !== undefined) { const v = c === "1"; _dpsCache.set(spellId, v); return v; } } catch (e) { /* ignore */ }
   let dps = false;
   try { const d = await spellTooltip(spellId); dps = looksLikeDpsTalent(d && d.tooltip); } catch (e) { dps = false; }

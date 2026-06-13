@@ -4,16 +4,23 @@ import { installLocalStorage } from "./helpers.mjs";
 installLocalStorage();
 const { talentDiff, buildTalentIndex, talentLabel, looksLikeDpsTalent } = await import("../docs/talents.js");
 
-test("looksLikeDpsTalent keeps damage talents and drops utility/defensive ones", () => {
-  // real tooltip fragments: utility the field takes unanimously must NOT count.
-  assert.equal(looksLikeDpsTalent("Detox. Removes all Poison and Disease effects."), false);
-  assert.equal(looksLikeDpsTalent("Typhoon. Blasts targets, knocking them back."), false);
-  assert.equal(looksLikeDpsTalent("Increases the range of Leg Sweep."), false);
-  assert.equal(looksLikeDpsTalent("Survival Instincts. Reduces all damage taken by 50%."), false); // has "damage" but defensive
-  // genuine throughput
-  assert.equal(looksLikeDpsTalent("Exploding Keg deals 12000 Fire damage."), true);
-  assert.equal(looksLikeDpsTalent("Increases your Critical Strike by 3%."), true);
+// Cases drawn from the real corpus (all 39 specs' tooltips), incl. the ones a
+// 2-spec heuristic got wrong.
+test("looksLikeDpsTalent drops pure utility/defensive the field still unanimously takes", () => {
+  assert.equal(looksLikeDpsTalent("Removes all Poison and Disease effects from the target."), false); // Detox
+  assert.equal(looksLikeDpsTalent("Blasts targets within 15 yards, knocking them back and reducing movement speed."), false); // Typhoon
+  assert.equal(looksLikeDpsTalent("Increases the range of Leg Sweep."), false);          // Tiger Tail Sweep
+  assert.equal(looksLikeDpsTalent("Reduces all damage taken by 50% for 6 sec."), false); // Survival Instincts (defensive "damage")
+  assert.equal(looksLikeDpsTalent("Instantly heals you for 30% of your maximum health."), false);
   assert.equal(looksLikeDpsTalent(""), false);
+});
+
+test("looksLikeDpsTalent keeps damage talents, even hybrids that ALSO heal/shield", () => {
+  assert.equal(looksLikeDpsTalent("Exploding Keg... each dealing (200% of Attack Power) Physical damage."), true); // Empty the Cellar
+  assert.equal(looksLikeDpsTalent("Blackout Kick and Tiger Palm deal 15% additional damage in a line."), true);    // Overwhelming Force
+  assert.equal(looksLikeDpsTalent("Living Flame deals 10% increased damage and healing."), true);  // Engulfing Blaze (hybrid)
+  assert.equal(looksLikeDpsTalent("Thrash and Maul grant you an absorb shield, and deal 20% increased damage."), true); // hybrid w/ absorb
+  assert.equal(looksLikeDpsTalent("Increases your Haste by 15%."), true);                 // a throughput stat
 });
 
 test("buildTalentIndex maps Raidbots node/entry ids to names + spell ids", () => {
