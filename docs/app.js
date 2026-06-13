@@ -56,12 +56,12 @@ function realmLabel(region, slug) {
 }
 
 // Two modes. Anonymous: the manual form (type character + region + server).
-// Connected: hide the form and show a clickable list of YOUR characters that
-// have parses on current content, most parses first -- click one to analyze.
+// Connected: hide just the input form and show a clickable list of YOUR
+// characters that have parses on current content, most first -- click to
+// analyze. Everything else on the page (intro, sample) stays put.
 // Best-effort: if the list can't be built, fall back to the manual form.
 function showForm(on) {
   form.style.display = on ? "" : "none";
-  const intro = $("intro"); if (intro) intro.style.display = on ? "" : "none";
   const picker = $("picker"); if (picker) picker.style.display = on ? "none" : "";
 }
 async function renderMode() {
