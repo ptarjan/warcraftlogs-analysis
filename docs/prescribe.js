@@ -220,6 +220,63 @@ function statGapLever(gf, my, field, priority) {
   return [];
 }
 
+// THE SYNTHESIS, rendered: one answer anchored on the MEASURED DPS gap (your
+// kill vs the ilvl-matched field vs the top parses -- real numbers, not a sum of
+// per-lever guesses), what that gap is made of, then the change-list split into
+// "yours to do" vs raid comp. Pure presentation -- the analysis already happened.
+function renderPrescription(log, d) {
+  const { rx, you, field, execd, rot, tp, gf, priority } = d;
+  const isComp = (r) => r.dim === "Comp";                  // raid-dependent, not yours to press
+  const yours = rx.filter((r) => r.impact > 0 && !isComp(r));
+  const k = (n) => `${f((n || 0) / 1000, 1)}k`;
+  const peerGap = (you.dps && field.dpsMed) ? Math.round(((field.dpsMed - you.dps) / you.dps) * 100) : null;
+  const topGap = (tp && tp.dpsGapPct) ? Math.round(tp.dpsGapPct) : null;
+
+  log("");
+  log("=".repeat(66));
+  log(`HOW TO PARSE BETTER -- ${d.name}-${d.server} (${d.specName} ${d.className}), ilvl ~${d.curIlvl}`);
+  log("=".repeat(66));
+  if (d.medP != null) log(`You parse ${d.medP}th percentile overall (median of ${d.nBosses} bosses; best ${d.bestP}th on ${d.topParse.encounter.name}).`);
+  if (peerGap != null) {
+    const vsField = peerGap > 0 ? `${peerGap}% behind` : `${Math.abs(peerGap)}% ahead of`;
+    log(`Measured on ${d.gearBoss.encounter.name}: you do ${k(you.dps)} DPS -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
+        (topGap != null ? `, ${topGap}% behind the top parses` : "") + `. That gap is your headroom.`);
+  }
+  if (yours.length) log(`Biggest fix YOU control: ${rxHeadline(yours[0].text)} -- start here.`);
+  // What the gap is made of -- MEASURED quantities (no per-lever DPS guess).
+  const facts = [];
+  if (execd && execd.totalExcess >= 1) facts.push(`Execution -- you lose ${f(execd.totalExcess, 1)}s/min of GCD uptime vs peers`);
+  if (rot && rot.usage && rot.usage.under.length) { const a = rot.usage.under[0]; facts.push(`Rotation -- you press ${a.name} ${f(a.you, 1)}/min vs the field's ${f(a.field, 1)}`); }
+  if (tp && tp.routing && (tp.routing.top - tp.routing.you) >= 5) facts.push(`Routing -- ${f(tp.routing.you, 0)}% of your damage hits adds vs the top parses' ${f(tp.routing.top, 0)}%`);
+  if (tp && tp.buffGaps) { const g = tp.buffGaps.find((x) => x.comp); if (g) facts.push(`Comp -- you're missing ${g.name} (${f(g.you, 0)}% vs ${f(g.top, 0)}% uptime; raid-dependent)`); }
+  if (gf && gf.swaps.length) facts.push(`Gear -- ${gf.swaps.length} ${priority}-itemized upgrade${gf.swaps.length > 1 ? "s" : ""} the field runs (DPS value needs a sim)`);
+  if (facts.length) { log("What the gap is made of (measured):"); for (const ff of facts) log(`  ${ff}`); }
+  log(`(Field = top-ranked players at your item level; top parses = the rank-1 kills.)`);
+
+  // Split the list by what's YOURS to do vs raid comp. The whole point is "what
+  // do I do to my character right now" -- a roster gap (bring an Aug Evoker) is
+  // real but isn't a change you make to your character, so it never competes for
+  // the top of the to-do list; it's a clearly-labelled footnote. Each section
+  // stays sorted biggest-DPS-first.
+  const compList = rx.filter((r) => isComp(r));
+  const youList = rx.filter((r) => !isComp(r));
+  const line = (r, i) => log(`  ${i + 1}. [${r.label.padStart(9)}]  ${r.text}`);
+
+  log("");
+  log("DO THESE TO YOUR CHARACTER NOW (biggest first; gear/rotation % are sim estimates, the rest measured):");
+  if (!youList.length) {
+    log("  You match your peers on gear, enchants, consumables, stats, and execution. The rest is comp + farm kills.");
+  }
+  youList.forEach(line);
+
+  if (compList.length) {
+    log("");
+    log("RAID COMP (real DPS, but a roster/buff gap -- NOT something you change on your character):");
+    compList.forEach(line);
+  }
+  log("");
+}
+
 export async function run(log, name, server, region, className = "Monk", specName = "Brewmaster",
   difficulty = 5, knownPriority = null) {
   const c = await characterZone(name, server, region, difficulty);
@@ -274,57 +331,9 @@ export async function run(log, name, server, region, className = "Monk", specNam
   ];
   rx.sort((a, b) => b.impact - a.impact);
 
-  // THE SYNTHESIS: pull every analysis into one answer, anchored on the MEASURED
-  // DPS gap (your kill vs the ilvl-matched field vs the top parses -- real numbers,
-  // not a sum of per-lever guesses), then break that gap into measured facts. The
-  // only place we estimate is gear (a stat -> DPS needs a sim), and we say so.
-  const isComp = (r) => r.dim === "Comp";                  // raid-dependent, not yours to press
-  const yours = rx.filter((r) => r.impact > 0 && !isComp(r));
-  const k = (n) => `${f((n || 0) / 1000, 1)}k`;
-  const peerGap = (you.dps && field.dpsMed) ? Math.round(((field.dpsMed - you.dps) / you.dps) * 100) : null;
-  const topGap = (tp && tp.dpsGapPct) ? Math.round(tp.dpsGapPct) : null;
-
-  log("");
-  log("=".repeat(66));
-  log(`HOW TO PARSE BETTER -- ${name}-${server} (${specName} ${className}), ilvl ~${curIlvl}`);
-  log("=".repeat(66));
-  if (medP != null) log(`You parse ${medP}th percentile overall (median of ${ranks.length} bosses; best ${bestP}th on ${topParse.encounter.name}).`);
-  if (peerGap != null) {
-    const vsField = peerGap > 0 ? `${peerGap}% behind` : `${Math.abs(peerGap)}% ahead of`;
-    log(`Measured on ${gearBoss.encounter.name}: you do ${k(you.dps)} DPS -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
-        (topGap != null ? `, ${topGap}% behind the top parses` : "") + `. That gap is your headroom.`);
-  }
-  if (yours.length) log(`Biggest fix YOU control: ${rxHeadline(yours[0].text)} -- start here.`);
-  // What the gap is made of -- MEASURED quantities (no per-lever DPS guess).
-  const facts = [];
-  if (execd && execd.totalExcess >= 1) facts.push(`Execution -- you lose ${f(execd.totalExcess, 1)}s/min of GCD uptime vs peers`);
-  if (rot && rot.usage && rot.usage.under.length) { const a = rot.usage.under[0]; facts.push(`Rotation -- you press ${a.name} ${f(a.you, 1)}/min vs the field's ${f(a.field, 1)}`); }
-  if (tp && tp.routing && (tp.routing.top - tp.routing.you) >= 5) facts.push(`Routing -- ${f(tp.routing.you, 0)}% of your damage hits adds vs the top parses' ${f(tp.routing.top, 0)}%`);
-  if (tp && tp.buffGaps) { const g = tp.buffGaps.find((x) => x.comp); if (g) facts.push(`Comp -- you're missing ${g.name} (${f(g.you, 0)}% vs ${f(g.top, 0)}% uptime; raid-dependent)`); }
-  if (gf && gf.swaps.length) facts.push(`Gear -- ${gf.swaps.length} ${priority}-itemized upgrade${gf.swaps.length > 1 ? "s" : ""} the field runs (DPS value needs a sim)`);
-  if (facts.length) { log("What the gap is made of (measured):"); for (const ff of facts) log(`  ${ff}`); }
-  log(`(Field = top-ranked players at your item level; top parses = the rank-1 kills.)`);
-
-  // Split the list by what's YOURS to do vs raid comp. The whole point is "what
-  // do I do to my character right now" -- a roster gap (bring an Aug Evoker) is
-  // real but isn't a change you make to your character, so it never competes for
-  // the top of the to-do list; it's a clearly-labelled footnote. Each section
-  // stays sorted biggest-DPS-first.
-  const compList = rx.filter((r) => isComp(r));
-  const youList = rx.filter((r) => !isComp(r));
-  const line = (r, i) => log(`  ${i + 1}. [${r.label.padStart(9)}]  ${r.text}`);
-
-  log("");
-  log("DO THESE TO YOUR CHARACTER NOW (biggest first; gear/rotation % are sim estimates, the rest measured):");
-  if (!youList.length) {
-    log("  You match your peers on gear, enchants, consumables, stats, and execution. The rest is comp + farm kills.");
-  }
-  youList.forEach(line);
-
-  if (compList.length) {
-    log("");
-    log("RAID COMP (real DPS, but a roster/buff gap -- NOT something you change on your character):");
-    compList.forEach(line);
-  }
-  log("");
+  renderPrescription(log, {
+    name, server, className, specName, curIlvl, gearBoss,
+    medP, bestP, topParse, nBosses: ranks.length,
+    you, field, execd, rot, tp, gf, priority, rx,
+  });
 }
