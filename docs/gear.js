@@ -313,7 +313,7 @@ export async function audit(log, name, server, region, difficulty, className, sp
   const ff = await gearFindings(name, server, region, difficulty, className, specName, priority);
   if (!ff) throw new Error("No gear found.");
   log("");
-  log(`=== Gear audit for ${name} (priority: ${priority}) | vs ${ff.n} top-DPS ${specName}s ===`);
+  log(`=== Gear audit for ${name} (priority: ${priority}) | vs top-DPS ${specName}s ===`);
   log(`${"SLOT".padEnd(9)} ${"YOUR ITEM".padEnd(30)} ${"crit/hst/mas/ver".padEnd(17)} matches peers?`);
   for (const [slot, ist, match, embellished] of ff.rows) {
     const secs = `${String(ist.crit).padStart(3)}/${String(ist.haste).padStart(3)}/${String(ist.mastery).padStart(3)}/${String(ist.vers).padStart(3)}`;
