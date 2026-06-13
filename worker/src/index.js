@@ -67,11 +67,11 @@ async function getToken(env) {
   return cachedToken.access_token;
 }
 
-function corsHeaders(req, env) {
-  const allow = env.ALLOWED_ORIGIN || "*";
-  const origin = req.headers.get("Origin") || "";
-  // If an allow-list origin is configured, echo it only when it matches.
-  const value = allow === "*" ? "*" : (origin === allow ? allow : allow);
+function corsHeaders(env) {
+  // ALLOWED_ORIGIN is a single value ("*" or one origin). Echoing it verbatim is
+  // already the enforcement: with a specific origin the browser blocks any other
+  // request whose Origin doesn't match the header.
+  const value = env.ALLOWED_ORIGIN || "*";
   return {
     "Access-Control-Allow-Origin": value,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -100,7 +100,7 @@ async function wowheadProxy(ctx, ch, target, contentType = "application/json") {
 
 export default {
   async fetch(req, env, ctx) {
-    const ch = corsHeaders(req, env);
+    const ch = corsHeaders(env);
     if (req.method === "OPTIONS") return new Response(null, { headers: ch });
     const url = new URL(req.url);
 
