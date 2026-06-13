@@ -272,6 +272,21 @@ def difficulty_inflation(name, server, region, encounter, class_name, spec_name,
 
 
 # --------------------------------------------------------------------------- #
+def run(name, server, region, class_name="Monk", spec_name="Brewmaster",
+        difficulty=5, bosses=3, inflation=False):
+    """Overview + controlled per-boss comparison (the CLI/web entry point)."""
+    zr, killed = overview(name, server, region, difficulty)
+    for r in killed[:bosses]:
+        try:
+            deep_compare(name, server, region, r["encounter"],
+                         difficulty, class_name, spec_name)
+        except Exception as e:  # noqa: BLE001
+            print(f"  ({r['encounter']['name']}: {e})")
+    if inflation and killed:
+        difficulty_inflation(name, server, region,
+                             killed[0]["encounter"], class_name, spec_name)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Warcraft Logs character DPS analysis")
     ap.add_argument("name")
@@ -285,17 +300,8 @@ def main():
     ap.add_argument("--inflation", action="store_true",
                     help="also run the Heroic-vs-Mythic inflation check")
     args = ap.parse_args()
-
-    zr, killed = overview(args.name, args.server, args.region, args.difficulty)
-    for r in killed[:args.bosses]:
-        try:
-            deep_compare(args.name, args.server, args.region, r["encounter"],
-                         args.difficulty, args.class_name, args.spec_name)
-        except Exception as e:  # noqa: BLE001
-            print(f"  ({r['encounter']['name']}: {e})")
-    if args.inflation and killed:
-        difficulty_inflation(args.name, args.server, args.region,
-                             killed[0]["encounter"], args.class_name, args.spec_name)
+    run(args.name, args.server, args.region, args.class_name, args.spec_name,
+        args.difficulty, args.bosses, args.inflation)
 
 
 if __name__ == "__main__":

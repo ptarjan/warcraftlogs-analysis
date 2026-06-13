@@ -210,27 +210,21 @@ def print_boss_comparison(c):
               f"{flag}")
 
 
-def main():
-    ap = argparse.ArgumentParser(description="Comparative timeline diagnosis")
-    ap.add_argument("name"); ap.add_argument("server"); ap.add_argument("region")
-    ap.add_argument("--class", dest="class_name", default="Monk")
-    ap.add_argument("--spec", dest="spec_name", default="Brewmaster")
-    ap.add_argument("--difficulty", type=int, default=5)
-    ap.add_argument("--boss", default=None, help="boss substring; default = all kills")
-    args = ap.parse_args()
-
-    c = character_zone(args.name, args.server, args.region, args.difficulty)
+def run(name, server, region, class_name="Monk", spec_name="Brewmaster",
+        difficulty=5, boss=None):
+    """Comparative timeline diagnosis (the CLI/web entry point)."""
+    c = character_zone(name, server, region, difficulty)
     ranks = [r for r in c["zoneRankings"].get("rankings", [])
              if r.get("totalKills", 0) > 0 and r.get("rankPercent") is not None]
-    if args.boss:
-        ranks = [r for r in ranks if args.boss.lower() in r["encounter"]["name"].lower()]
-    print(f"\n=== Comparative timeline diagnosis: {args.name} "
+    if boss:
+        ranks = [r for r in ranks if boss.lower() in r["encounter"]["name"].lower()]
+    print(f"\n=== Comparative timeline diagnosis: {name} "
           f"(vs ilvl-matched peers, intermissions cancel out) ===")
     agg = {k: [] for k in ("lost_per_min", "range_lost_per_min", "press_lost_per_min", "auto_down_pct")}
     for r in ranks:
         try:
-            comp = compare_boss(args.name, args.server, args.region, r["encounter"],
-                                args.difficulty, args.class_name, args.spec_name)
+            comp = compare_boss(name, server, region, r["encounter"],
+                                difficulty, class_name, spec_name)
         except Exception as e:  # noqa: BLE001
             print(f"  ({r['encounter']['name']}: {e})"); continue
         if comp:
@@ -243,6 +237,18 @@ def main():
         print(f"      from out-of-range/moving:     {st.median(agg['range_lost_per_min']):+.1f}s")
         print(f"      from not pressing in range:   {st.median(agg['press_lost_per_min']):+.1f}s")
         print(f"    out-of-melee % over peers:      {st.median(agg['auto_down_pct']):+.1f} pts")
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Comparative timeline diagnosis")
+    ap.add_argument("name"); ap.add_argument("server"); ap.add_argument("region")
+    ap.add_argument("--class", dest="class_name", default="Monk")
+    ap.add_argument("--spec", dest="spec_name", default="Brewmaster")
+    ap.add_argument("--difficulty", type=int, default=5)
+    ap.add_argument("--boss", default=None, help="boss substring; default = all kills")
+    args = ap.parse_args()
+    run(args.name, args.server, args.region, args.class_name, args.spec_name,
+        args.difficulty, args.boss)
 
 
 if __name__ == "__main__":

@@ -119,15 +119,11 @@ def aggregate_execution(name, server, region, difficulty, class_name, spec_name,
     }
 
 
-def main():
-    ap = argparse.ArgumentParser(description="Prescription generator")
-    ap.add_argument("name"); ap.add_argument("server"); ap.add_argument("region")
-    ap.add_argument("--class", dest="class_name", default="Monk")
-    ap.add_argument("--spec", dest="spec_name", default="Brewmaster")
-    ap.add_argument("--difficulty", type=int, default=5)
-    args = ap.parse_args()
-    N, S, R = args.name, args.server, args.region
-    CL, SP, D = args.class_name, args.spec_name, args.difficulty
+def run(name, server, region, class_name="Monk", spec_name="Brewmaster",
+        difficulty=5):
+    """Generate the prioritized prescription (the CLI/web entry point)."""
+    N, S, R = name, server, region
+    CL, SP, D = class_name, spec_name, difficulty
 
     c = character_zone(N, S, R, D)
     ranks = [r for r in c["zoneRankings"].get("rankings", [])
@@ -219,6 +215,17 @@ def main():
     for i, (_, impact, text) in enumerate(sorted(rx), 1):
         print(f"  {i}. [{impact:>9}]  {text}")
     print()
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Prescription generator")
+    ap.add_argument("name"); ap.add_argument("server"); ap.add_argument("region")
+    ap.add_argument("--class", dest="class_name", default="Monk")
+    ap.add_argument("--spec", dest="spec_name", default="Brewmaster")
+    ap.add_argument("--difficulty", type=int, default=5)
+    args = ap.parse_args()
+    run(args.name, args.server, args.region, args.class_name, args.spec_name,
+        args.difficulty)
 
 
 if __name__ == "__main__":

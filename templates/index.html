@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Warcraft Logs Analysis</title>
+<style>
+  :root {
+    --bg: #14110d; --panel: #1f1a13; --edge: #3a2f1f; --ink: #e8dcc4;
+    --muted: #a08d6a; --accent: #e0a72a; --ok: #6fbf4f; --warn: #d96b4a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  header { padding: 22px 20px 6px; }
+  h1 { margin: 0; font-size: 22px; color: var(--accent); letter-spacing: .3px; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  main { max-width: 980px; margin: 0 auto; padding: 12px 20px 60px; }
+  form {
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 10px;
+    padding: 16px; display: grid; gap: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    align-items: end;
+  }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px;
+          text-transform: uppercase; letter-spacing: .5px; }
+  input, select {
+    width: 100%; padding: 8px 10px; background: #12100b; color: var(--ink);
+    border: 1px solid var(--edge); border-radius: 6px; font-size: 14px;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  .checks { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 14px; }
+  .checks label { text-transform: none; letter-spacing: 0; color: var(--ink);
+                  font-size: 13px; display: flex; align-items: center; gap: 6px;
+                  margin: 0; cursor: pointer; }
+  .checks input { width: auto; }
+  .actions { grid-column: 1 / -1; display: flex; gap: 12px; align-items: center; }
+  button {
+    background: var(--accent); color: #1a1306; border: 0; border-radius: 6px;
+    padding: 10px 22px; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  .status { color: var(--muted); font-size: 13px; }
+  .spin { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--edge);
+          border-top-color: var(--accent); border-radius: 50%; animation: s .8s linear infinite;
+          vertical-align: -2px; margin-right: 6px; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  pre {
+    margin-top: 18px; background: #0d0b07; border: 1px solid var(--edge);
+    border-radius: 10px; padding: 16px; overflow-x: auto; white-space: pre;
+    font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; min-height: 60px;
+  }
+  pre:empty::before { content: "Results will stream here…"; color: var(--muted); }
+  .ln-head { color: var(--accent); font-weight: 600; }
+  .ln-sub { color: #9fc8e8; }
+  .ln-worse { color: var(--warn); }
+  .ln-rx { color: var(--ok); }
+  .ln-err { color: var(--warn); font-weight: 600; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚔ Warcraft Logs Analysis</h1>
+  <div class="sub">Compare a character's DPS against the ilvl-matched field, then get a
+    prioritized to-do list. Streams live as it computes (30s–2&nbsp;min).</div>
+</header>
+<main>
+  <form id="form">
+    <div>
+      <label for="name">Character</label>
+      <input id="name" name="name" placeholder="Hadryan" required autofocus>
+    </div>
+    <div>
+      <label for="server">Server</label>
+      <input id="server" name="server" placeholder="proudmoore" required>
+    </div>
+    <div>
+      <label for="region">Region</label>
+      <select id="region" name="region">
+        {% for r in regions %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="class_name">Class</label>
+      <input id="class_name" name="class_name" value="Monk">
+    </div>
+    <div>
+      <label for="spec">Spec</label>
+      <input id="spec" name="spec" value="Brewmaster">
+    </div>
+    <div>
+      <label for="difficulty">Difficulty</label>
+      <select id="difficulty" name="difficulty">
+        {% for v, lbl in difficulties %}<option value="{{ v }}">{{ lbl }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="priority">Gear priority stat</label>
+      <select id="priority" name="priority">
+        {% for p in priorities %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="checks">
+      {% for key, lbl in analyses %}
+      <label><input type="checkbox" name="analysis" value="{{ key }}" checked> {{ lbl }}</label>
+      {% endfor %}
+    </div>
+    <div class="actions">
+      <button id="go" type="submit">Analyze</button>
+      <span class="status" id="status"></span>
+    </div>
+  </form>
+
+  <pre id="out"></pre>
+</main>
+
+<script>
+const form = document.getElementById('form');
+const out = document.getElementById('out');
+const statusEl = document.getElementById('status');
+const goBtn = document.getElementById('go');
+let es = null;
+
+function classify(line) {
+  if (/^\[error]|error] analysis failed/i.test(line)) return 'ln-err';
+  if (/<-- WORSE/.test(line)) return 'ln-worse';
+  if (/^#{3,}|^===|^# /.test(line)) return 'ln-head';
+  if (/^\s+\d+\.\s+\[/.test(line)) return 'ln-rx';        // prescription items
+  if (/^---|^\s+- |^\s{2,}\w/.test(line)) return 'ln-sub';
+  return '';
+}
+
+function append(line) {
+  const span = document.createElement('span');
+  const cls = classify(line);
+  if (cls) span.className = cls;
+  span.textContent = line + '\n';
+  out.appendChild(span);
+  window.scrollTo(0, document.body.scrollHeight);
+}
+
+function setRunning(on) {
+  goBtn.disabled = on;
+  goBtn.textContent = on ? 'Analyzing…' : 'Analyze';
+  statusEl.innerHTML = on ? '<span class="spin"></span>streaming results…' : '';
+}
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  if (es) es.close();
+  out.textContent = '';
+  setRunning(true);
+
+  const data = new FormData(form);
+  const params = new URLSearchParams();
+  params.set('name', data.get('name'));
+  params.set('server', data.get('server'));
+  params.set('region', data.get('region'));
+  params.set('class_name', data.get('class_name'));
+  params.set('spec', data.get('spec'));
+  params.set('difficulty', data.get('difficulty'));
+  params.set('priority', data.get('priority'));
+  document.querySelectorAll('input[name="analysis"]:checked')
+    .forEach(c => params.set(c.value, '1'));
+
+  es = new EventSource('/run?' + params.toString());
+  es.onmessage = (ev) => append(JSON.parse(ev.data));
+  es.addEventListener('done', () => { es.close(); setRunning(false);
+    statusEl.textContent = 'Done.'; });
+  es.onerror = () => {
+    if (es.readyState === EventSource.CLOSED) { setRunning(false); return; }
+    es.close(); setRunning(false);
+    statusEl.textContent = 'Connection lost.';
+    append('[error] connection to server lost');
+  };
+});
+</script>
+</body>
+</html>

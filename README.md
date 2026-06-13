@@ -14,7 +14,41 @@ python3 wcl.py            # smoke test: should print "OK - token acquired"
 
 Create an API client at <https://www.warcraftlogs.com/api/clients/>. The
 `.env` and the cached token are gitignored, so no secret ever lands in git.
-No third-party dependencies — standard library only.
+The CLI uses the standard library only; the optional web app adds Flask.
+
+## Web app
+
+A browser front-end that runs all four analyses and **streams the report live**
+as it computes (each printed line arrives over Server-Sent Events, so you watch
+it build instead of waiting on a spinner).
+
+```bash
+pip install -r requirements.txt
+python webapp.py            # http://localhost:5000
+```
+
+Fill in character / server / region (class, spec, difficulty, and gear-priority
+stat default to Brewmaster Monk / Mythic / crit), tick which analyses to run, and
+hit **Analyze**.
+
+### Deploy free
+
+The app needs a *persistent* host that can hold a 30s–2 min streaming response —
+so **not** GitHub Pages or serverless (Vercel/Netlify), whose function timeouts
+cut the stream off. Free options that work: **Render**, **Fly.io**,
+**Hugging Face Spaces**.
+
+`render.yaml` is a one-click Render Blueprint: push to GitHub → Render → New →
+Blueprint → pick the repo → set `WCL_CLIENT_ID` / `WCL_CLIENT_SECRET` in the
+dashboard. (Free web services sleep when idle — expect a ~30–60s cold start.)
+For any host, the start command is in the `Procfile`:
+
+```bash
+gunicorn -k gthread -w 1 --threads 8 --timeout 0 webapp:app
+```
+
+Credentials are read from env vars exactly like the CLI and never reach the
+browser; the WCL/Wowhead calls all happen server-side.
 
 ## Usage
 
@@ -107,3 +141,9 @@ peer-normalized execution excess into one ordered to-do list.
 - `diagnose.py` — comparative timeline root-cause diagnosis.
 - `gear.py` — automatic gear audit (reads real item stats vs the field).
 - `prescribe.py` — the prioritized, actionable prescription.
+- `webapp.py` — Flask front-end; streams any analysis live over SSE.
+- `templates/index.html` — the single-page UI.
+- `render.yaml` / `Procfile` / `requirements.txt` — free-tier deploy config.
+
+Each analysis module exposes a `run(name, server, region, ...)` function shared
+by both the CLI and the web app, so there's one code path and no duplicated logic.
