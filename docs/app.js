@@ -86,7 +86,7 @@ async function renderMode() {
     b.type = "button"; b.className = "charbtn";
     const cn = document.createElement("span"); cn.className = "cn"; cn.textContent = c.name;
     const cs = document.createElement("span"); cs.className = "cs";
-    cs.textContent = `${label} · ${c.region}` + (c.parses ? ` · ${c.parses} parse${c.parses === 1 ? "" : "s"}` : "");
+    cs.textContent = `${label} · ${c.region}` + (c.kills ? ` · ${c.kills} kill${c.kills === 1 ? "" : "s"}` : "");
     b.append(cn, cs);
     b.onclick = () => runAnalysis({ name: c.name, server: c.server, region: c.region, serverLabel: label });
     grid.appendChild(b);

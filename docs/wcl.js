@@ -372,32 +372,61 @@ export function zoneTooltip(id) {
   return wowhead(`${WOWHEAD_ZONE}${encodeURIComponent(id)}`, `/zone/${id}`);
 }
 
-// The connected user's most-recently-active characters. Just the cheap recency
-// pass: list every claimed character with its most-recent-report time, newest
-// first, capped to ACTIVE_MAX. No per-character zoneRankings -- scoring every
-// claimed character for current-tier parses was point-expensive enough to
-// rate-limit the account, slow, AND it wrongly hid active characters with no
-// *ranked* current-tier kill. Recency is the honest "active" signal and one
-// light query. Connected-only and best-effort; a schema miss degrades to the
-// bare list (or []).
-const ACTIVE_MAX = 15; // most-recently-active characters to surface in the picker
+// The connected user's characters that actually RAIDED the current tier, most
+// kills first. Two bounded phases so we never rank every claimed character (that
+// rate-limited the account):
+//   1) cheap: list all characters + recency, keep the ACTIVE_SCAN most recent.
+//   2) for just those, count current-zone kills across all difficulties; keep
+//      the ones with >0 (so dungeon-only / never-raided characters drop out).
+// Kills are counted regardless of rankPercent -- an unranked kill still means
+// they raided, which is what wrongly hid an active character before. zoneRankings
+// (current zone) + totalKills is exactly what detectContext reads, so this is the
+// proven-correct shape. Best-effort: if scoring fails, fall back to the recency
+// list rather than an empty picker.
+const ACTIVE_SCAN = 20; // most-recently-active characters to check for raid kills
 
 export async function myCharacters() {
   if (IS_NODE || !getAccessToken()) return [];
   const loc = "name server { slug region { slug } }";
+
+  // Phase 1 (cheap): claimed characters + most-recent-report time.
+  let base = null;
   for (const sel of [`${loc} recentReports(limit: 1) { data { startTime } }`, loc]) {
     try {
       const d = await gql(`{ userData { currentUser { characters { ${sel} } } } }`);
       const raw = (d && d.userData && d.userData.currentUser && d.userData.currentUser.characters) || [];
-      const chars = raw.map((c) => ({
+      base = raw.map((c) => ({
         name: c.name,
         server: c.server && c.server.slug,
         region: ((c.server && c.server.region && c.server.region.slug) || "").toUpperCase(),
         last: ((c.recentReports && c.recentReports.data && c.recentReports.data[0]) || {}).startTime || 0,
+        kills: 0,
       })).filter((c) => c.name && c.server && c.region);
-      chars.sort((a, b) => b.last - a.last); // most recently active first
-      return chars.slice(0, ACTIVE_MAX);
-    } catch { /* bad field / no permission -> try the simpler shape */ }
+      break;
+    } catch { base = null; } // try the simpler shape
   }
-  return [];
+  if (!base || !base.length) return base || [];
+  base.sort((a, b) => b.last - a.last);
+  const subset = base.slice(0, ACTIVE_SCAN);
+
+  // Phase 2 (bounded): current-tier kills for the active subset, all difficulties.
+  const killsIn = (zr) => ((zr && zr.rankings) || []).reduce((n, r) => n + ((r && r.totalKills) || 0), 0);
+  const q = (s) => JSON.stringify(s);
+  const fields = subset.map((c, i) =>
+    `c${i}: character(name: ${q(c.name)}, serverSlug: ${q(c.server)}, serverRegion: ${q(c.region)}) {` +
+    " m: zoneRankings(difficulty: 5) h: zoneRankings(difficulty: 4)" +
+    " n: zoneRankings(difficulty: 3) lfr: zoneRankings(difficulty: 1) }").join("\n");
+  try {
+    const d = await gql(`{ characterData { ${fields} } }`);
+    const cd = (d && d.characterData) || {};
+    subset.forEach((c, i) => {
+      const x = cd["c" + i];
+      if (x) c.kills = killsIn(x.m) + killsIn(x.h) + killsIn(x.n) + killsIn(x.lfr);
+    });
+  } catch { /* keep the recency-ordered subset; kills stay 0 */ }
+
+  // Only characters that raided the current tier, most kills first. If scoring
+  // produced nothing (a miss), fall back to recency so the picker isn't empty.
+  const raided = subset.filter((c) => c.kills > 0).sort((a, b) => b.kills - a.kills);
+  return raided.length ? raided : subset;
 }
