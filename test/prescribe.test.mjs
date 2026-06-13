@@ -7,7 +7,9 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { DPS, COMP, INFO, embellishmentRx, rxHeadline } = await import("../docs/prescribe.js");
+const { DPS, COMP, INFO } = await import("../docs/core.js");          // shared Finding currency
+const { rxHeadline } = await import("../docs/prescribe.js");
+const { embellishmentRx } = await import("../docs/gear.js");          // gear-domain lever
 
 test("DPS/COMP/INFO build impact and label together (no drift)", () => {
   assert.deepEqual(DPS(3), { impact: 3, label: "~3% DPS" });

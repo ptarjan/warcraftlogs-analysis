@@ -16,6 +16,7 @@
 // rule is actually about.
 import {
   playerMetrics, topRankings, buffUptimes, bossDebuffs, median, f, mapLimit, bestKill,
+  DPS, COMP, finding,
 } from "./core.js";
 
 const TOPN = 6; // how many top-ranked kills to learn routing/potions from
@@ -151,4 +152,33 @@ export async function run(log, name, server, region, className, specName, diffic
     log(`  potions/kill: top ${fnd.potions.top}, you ${fnd.potions.you}` +
         (fnd.potions.top > fnd.potions.you ? "  <-- pre-pot + a second combat potion" : ""));
   }
+}
+
+// Findings for prescribe.js (chasing-99 domain): levers beyond your own play --
+// the raid-comp amps your kill is missing, damage routing, and potion timing
+// from the actual top parses -- as the shared { dim, impact, label, text }
+// currency. Comp gaps are raid-dependent ("Comp"); potions are yours ("Setup").
+export function topParseLevers(tp) {
+  if (!tp) return [];
+  const out = [];
+  // Raid-comp amps missing from your kill (a buff on you / debuff on the boss).
+  // You can't press these -- it's who's in the raid -- sized by the effect's value.
+  for (const e of (tp.comp ? tp.comp.missing : [])) {
+    out.push(finding("Comp", COMP(e.est),
+      `COMP: your kill is missing ${e.label} (${e.effect}) -- bring ${e.who}. ` +
+      `A raid-comp gap, not execution; it lifts the whole raid's damage.`));
+  }
+  // Damage routing: measured extra cleave/funnel the top parses get.
+  const route = tp.routing ? tp.routing.top - tp.routing.you : 0;
+  if (tp.routing && route >= 5 && tp.routing.addNames.length) {
+    out.push(finding("Comp", DPS(Math.round(route)),
+      `ROUTING: top parses put ${f(tp.routing.top, 0)}% of damage on ${tp.routing.addNames.join(", ")} ` +
+      `(you ${f(tp.routing.you, 0)}%). Cleave/funnel those instead of tunneling the boss.`));
+  }
+  // Potions: pre-pot + a second combat potion (a setup fix you apply yourself).
+  if (tp.potions && tp.potions.top > tp.potions.you) {
+    out.push(finding("Setup", DPS(2),
+      `POTIONS: top parses use ${tp.potions.top}/kill (pre-pot + a combat potion); you used ${tp.potions.you}. Add the missing one.`));
+  }
+  return out;
 }

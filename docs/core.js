@@ -42,6 +42,22 @@ export function median(arr) {
 }
 
 // --------------------------------------------------------------------- //
+// Finding: the shared currency every analysis hands to prescribe.js
+// --------------------------------------------------------------------- //
+// A finding is { dim, impact, label, text }:
+//   dim    -- which analysis it came from ("Execution"|"Rotation"|"Setup"|
+//             "Gear"|"Comp"), set explicitly, used to split "yours" from "comp".
+//   impact -- numeric DPS %, the ONLY thing the change-list sorts by.
+//   label  -- the matching display string ("~3% DPS", "~1-3% DPS", "info").
+// DPS()/COMP()/INFO build impact and label together so they can never disagree
+// (the old bug: a separate sort key that drifted from the shown %).
+export const DPS = (lo, hi = lo) => ({ impact: (lo + hi) / 2, label: hi > lo ? `~${lo}-${hi}% DPS` : `~${lo}% DPS` });
+export const COMP = (pct) => ({ impact: pct, label: `~${pct}% comp` });
+export const INFO = { impact: 0, label: "info" };
+// Assemble one finding: finding("Gear", DPS(1, 3), "STAT via ...").
+export const finding = (dim, score, text) => ({ dim, ...score, text });
+
+// --------------------------------------------------------------------- //
 // Low-level fetchers
 // --------------------------------------------------------------------- //
 export async function characterZone(name, server, region, difficulty) {

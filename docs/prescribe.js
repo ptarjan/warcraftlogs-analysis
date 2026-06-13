@@ -1,65 +1,27 @@
 // Generate a concrete, prioritized prescription. Ported from prescribe.py.
+// prescribe folds every analysis's findings (the shared { dim, impact, label,
+// text } currency from core) into ONE sorted change-list. Each domain owns its
+// own lever-construction (gearLevers/rotationLevers/topParseLevers); prescribe
+// adds the cross-cutting ones (execution, consumables, enchants, stat gap) that
+// need its own peer aggregates, then sorts + splits + renders.
 import {
   ENCHANTABLE_SLOTS, characterZone, characterEncounter, playerMetrics,
   collectPeers, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry, bestRank,
+  DPS, INFO, finding,
 } from "./core.js";
 import { timelineFindings } from "./timeline.js";
-import { gearFindings, sourceText } from "./gear.js";
-import { wowheadItem, wowheadSpell } from "./links.js";
-import { rotationFindings } from "./rotation.js";
-import { topParseFindings } from "./topparse.js";
+import { gearFindings, gearLevers } from "./gear.js";
+import { wowheadSpell } from "./links.js";
+import { rotationFindings, rotationLevers } from "./rotation.js";
+import { topParseFindings, topParseLevers } from "./topparse.js";
 
 const SLOT_NAME = ENCHANTABLE_SLOTS;
-
-// A finding is { dim, impact, label, text }:
-//   dim    -- which analysis it came from (set explicitly at creation, never
-//             re-parsed out of the text), used to split "yours" from "comp".
-//   impact -- numeric DPS %, the ONLY thing the list sorts by (biggest first).
-//   label  -- the matching display string ("~3% DPS", "~1-3% DPS", "info").
-// DPS()/COMP()/INFO build impact and label together so they can never disagree
-// (the old bug: a separate sort key that drifted from the shown %).
-export const DPS = (lo, hi = lo) => ({ impact: (lo + hi) / 2, label: hi > lo ? `~${lo}-${hi}% DPS` : `~${lo}% DPS` });
-export const COMP = (pct) => ({ impact: pct, label: `~${pct}% comp` });
-export const INFO = { impact: 0, label: "info" };
 
 // A short headline for a finding (its keyword + first action clause), for naming
 // the #1 lever in the synthesis without dumping the whole sentence.
 export function rxHeadline(text) {
   const head = String(text).split(/ -- |;|\(/)[0].trim();
   return head.length > 72 ? head.slice(0, 69) + "…" : head;
-}
-
-// ONE embellishment finding (not two): name the specific items to craft, in the
-// slots of the field's #1 combo -- "craft X on Back", not "fill a slot" + "pick
-// a combo" as separate lines. You get 2 embellished slots total. Returns a
-// { dim, impact, label, text } finding, or null when your embellishments already
-// match a top combo. Pure (takes gearFindings output) so it's unit-testable.
-export function embellishmentRx(gf) {
-  if (!gf) return null;
-  const emb = gf.embellishedSlots || [];
-  const ec = gf.embCompare;
-  const matchesTop = ec && ec.yourRank;            // you already run a top combo
-  if (!(emb.length < 2 || (ec && !matchesTop && ec.topCombos && ec.topCombos.length))) return null;
-  const top = ec && ec.topCombos && ec.topCombos[0];
-  const pop = top ? ` (#1 field combo, ${top[1]}/${ec.fieldN})` : "";
-  const yourSlots = new Set(emb);
-  // Short a slot -> name only the slot(s) you're missing; full-but-suboptimal
-  // pair -> name the whole target combo to switch to.
-  const target = (ec && ec.recommended) ? ec.recommended : [];
-  const toCraft = emb.length < 2 ? target.filter(([sl]) => !yourSlots.has(sl)) : target;
-  const recText = toCraft.map(([sl, item]) => `${item} (${sl})`).join(" + ");
-  let msg;
-  if (recText) {
-    const lead = emb.length < 2
-      ? `you run ${emb.length}/2 -- craft ${recText}`
-      : `yours (${ec.yourCombo.join("+") || "none"}) isn't one top performers run -- switch to ${recText}`;
-    msg = `EMBELLISHMENTS: ${lead}${pop}. Throughput drops can't give.`;
-  } else {
-    msg = emb.length < 2
-      ? `EMBELLISHMENTS: you run ${emb.length}/2 -- fill the free slot${pop}. Throughput drops can't give.`
-      : `EMBELLISHMENTS: yours (${ec.yourCombo.join("+") || "none"}) isn't one top performers run${top ? `; the #1 combo is ${top[0].join("+")} (${top[1]}/${ec.fieldN})` : ""}. Match it.`;
-  }
-  return { dim: "Gear", ...DPS(2, 4), text: msg };
 }
 
 async function bestIlvlKill(name, server, region, encounterId, difficulty) {
@@ -189,6 +151,75 @@ const CONSUMABLES = [
     none: DPS(1, 2), missText: "you ran none", tail: "Free parse.", swap: DPS(1) },
 ];
 
+// --- cross-cutting levers prescribe builds from its OWN peer aggregates ------
+// (gear/rotation/comp levers live in their domain modules; these need data only
+// prescribe gathers: cross-boss execution, field consumables/enchants, stat gap.)
+// Each returns Finding[].
+
+function executionLevers(execd) {
+  if (!execd) return [];
+  const out = [];
+  if (execd.pressExcess >= 1.0) {
+    out.push(finding("Execution", DPS(Math.round(execd.pressExcess / 60 * 100)),
+      `PRESS FASTER (every boss): you idle ~${f(execd.pressExcess, 1)}s/min MORE than peers while IN melee range -- not latency (yours matches theirs), just gaps between GCDs. Always queue your next ability so a GCD never sits empty.`));
+  }
+  if (execd.rangeExcess >= 1.0 || execd.worstRange.length) {
+    const where = execd.worstRange.length ? " Worst on: " + execd.worstRange.join(", ") + "." : "";
+    out.push(finding("Execution", DPS(Math.round(Math.max(execd.rangeExcess, 0.1) / 60 * 100)),
+      `UPTIME on specific fights: you're out of melee ~${f(execd.rangeExcess, 1)}s/min more than peers (intermissions excluded).${where} Pre-position and use your mobility / gap-closers to stay on target through mechanics.`));
+  }
+  return out;
+}
+
+function consumableLevers(field, my) {
+  const out = [];
+  for (const cn of CONSUMABLES) {
+    const counter = field[cn.field];
+    if (!counter.size) continue;
+    const top = topEntry(counter)[0];                        // field's most common, by count
+    const mineName = my[cn.mine], mineGuid = my[cn.mine + "Guid"];
+    if (!mineName) {
+      out.push(finding("Setup", cn.none, `${cn.label}: ${cn.missText} -- ${counter.get(top)}/${field.n} peers ` +
+        `${cn.peerVerb} ${wowheadSpell(field.guids.get(top), top)}${cn.note}. ${cn.tail}`));
+    } else if (mineName !== top) {
+      out.push(finding("Setup", cn.swap, `${cn.label}: ${wowheadSpell(mineGuid, mineName)} -> ${wowheadSpell(field.guids.get(top), top)}.`));
+    }
+  }
+  return out;
+}
+
+// Missing enchants (the modern "oil"): slots the field reliably enchants that
+// you left bare -- a free parse, same as a flask.
+function enchantLevers(field, my) {
+  const missing = [];
+  for (const [slotName, counter] of Object.entries(field.enchBySlot)) {
+    if (my.ench.has(slotName)) continue;                 // you already enchant this slot
+    const top = topEntry(counter);
+    if (top && top[1] >= field.n / 2) missing.push([slotName, top[0]]);  // field reliably enchants it
+  }
+  if (!missing.length) return [];
+  const est = Math.min(missing.length, 5);
+  const list = missing.map(([s, e]) => `${s} (${e})`).join(", ");
+  return [finding("Setup", DPS(est), `ENCHANTS: you're missing enchants on ${list}. The field runs them -- a free parse with equal gear.`)];
+}
+
+// Your secondary % trails the field but there's no lever to close it -- either
+// every item is already maxed for the stat (gear/comp-locked), or your gear is
+// optimal for what you own. Only fires when gearLevers found no swap/restat
+// (those ARE the actionable version of this gap).
+function statGapLever(gf, my, field, priority) {
+  const PRI = priority.toUpperCase();
+  const statGap = (my.statPct !== null && field.statPct) ? field.statPct - my.statPct : 0;
+  const hasGearLever = gf && (gf.swaps.length || gf.restats.length);
+  if (statGap >= 4 && !hasGearLever) {
+    return [finding("Gear", INFO, `${PRI}: yours (${f(my.statPct, 0)}%) is below your peers (${f(field.statPct, 0)}%), but NOT actionable now -- every item you own is already ${priority}-maxed and no ${priority}-itemized upgrade exists to swap to. It only rises when ${priority}-itemized drops come.`)];
+  }
+  if (gf && !gf.swaps.length && !gf.restats.length && statGap < 4) {
+    return [finding("Gear", INFO, "GEAR/STATS: optimal for what you own -- no lever; gains are future drops + a sim (Droptimizer).")];
+  }
+  return [];
+}
+
 export async function run(log, name, server, region, className = "Monk", specName = "Brewmaster",
   difficulty = 5, knownPriority = null) {
   const c = await characterZone(name, server, region, difficulty);
@@ -214,154 +245,33 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // caller (app/CLI) already detected it; reuse it instead of re-sampling the
   // field's secondary stats (a whole peer fetch) again.
   const priority = knownPriority || await detectPriority(className, specName, difficulty, gearBoss.encounter.id);
-  const PRI = priority.toUpperCase();
   const you = await playerMetrics(code, fight, name, specName, className);
   const my = await mySetup(code, fight, you.sourceID, you.gear, priority, className);
 
   const field = await fieldGearConsumables(gearBoss.encounter.id, difficulty, className, specName, curIlvl, priority);
   const execd = await aggregateExecution(name, server, region, difficulty, className, specName, ranks);
-
-  const rx = []; // findings: { dim, impact, label, text }
-  const add = (dim, score, text) => rx.push({ dim, ...score, text });
-
-  if (execd) {
-    if (execd.pressExcess >= 1.0) {
-      add("Execution", DPS(Math.round(execd.pressExcess / 60 * 100)),
-        `PRESS FASTER (every boss): you idle ~${f(execd.pressExcess, 1)}s/min MORE than peers while IN melee range -- not latency (yours matches theirs), just gaps between GCDs. Always queue your next ability so a GCD never sits empty.`);
-    }
-    if (execd.rangeExcess >= 1.0 || execd.worstRange.length) {
-      const where = execd.worstRange.length ? " Worst on: " + execd.worstRange.join(", ") + "." : "";
-      add("Execution", DPS(Math.round(Math.max(execd.rangeExcess, 0.1) / 60 * 100)),
-        `UPTIME on specific fights: you're out of melee ~${f(execd.rangeExcess, 1)}s/min more than peers (intermissions excluded).${where} Pre-position and use your mobility / gap-closers to stay on target through mechanics.`);
-    }
-  }
-
-  for (const cn of CONSUMABLES) {
-    const counter = field[cn.field];
-    if (!counter.size) continue;
-    const top = topEntry(counter)[0];                        // field's most common, by count
-    const mineName = my[cn.mine], mineGuid = my[cn.mine + "Guid"];
-    if (!mineName) {
-      add("Setup", cn.none, `${cn.label}: ${cn.missText} -- ${counter.get(top)}/${field.n} peers ` +
-        `${cn.peerVerb} ${wowheadSpell(field.guids.get(top), top)}${cn.note}. ${cn.tail}`);
-    } else if (mineName !== top) {
-      add("Setup", cn.swap, `${cn.label}: ${wowheadSpell(mineGuid, mineName)} -> ${wowheadSpell(field.guids.get(top), top)}.`);
-    }
-  }
-  // Missing enchants (the modern "oil"): slots the field reliably enchants that
-  // you left bare -- a free parse, same as a flask. enchBySlot already holds the
-  // field's most-common enchant per slot; flag the ones you're missing.
-  const missingEnch = [];
-  for (const [slotName, counter] of Object.entries(field.enchBySlot)) {
-    if (my.ench.has(slotName)) continue;                 // you already enchant this slot
-    const top = topEntry(counter);
-    if (top && top[1] >= field.n / 2) missingEnch.push([slotName, top[0]]);  // field reliably enchants it
-  }
-  if (missingEnch.length) {
-    const est = Math.min(missingEnch.length, 5);
-    const list = missingEnch.map(([s, e]) => `${s} (${e})`).join(", ");
-    add("Setup", DPS(est), `ENCHANTS: you're missing enchants on ${list}. The field runs them -- a free parse with equal gear.`);
-  }
-
   const gf = await gearFindings(name, server, region, difficulty, className, specName, priority);
-  const statGap = (my.statPct !== null && field.statPct) ? field.statPct - my.statPct : 0;
-  let howToStat = false;
-  if (gf) {
-    for (const sw of gf.swaps) {
-      howToStat = true;
-      const from = sourceText(sw.source, sw.instance, sw.dropChance);
-      add("Gear", DPS(1, 3), `${PRI} via ${sw.slot}: replace ${wowheadItem(sw.fromId, sw.fromName)} with ${wowheadItem(sw.toId, sw.toName)} (+${sw.gain} ${priority}${from} -- sim to confirm).`);
-    }
-    for (const rs of gf.restats) {
-      howToStat = true;
-      add("Gear", DPS(1, 2), `${PRI} via ${rs.slot}: ${wowheadItem(rs.itemId, rs.itemName)} is selectable -- recraft to ${rs.achievable} ${priority} (you have ${rs.current}).`);
-    }
-    const embRx = embellishmentRx(gf);
-    if (embRx) rx.push(embRx);
-  }
-  if (statGap >= 4 && !howToStat) {
-    add("Gear", INFO, `${PRI}: yours (${f(my.statPct, 0)}%) is below your peers (${f(field.statPct, 0)}%), but NOT actionable now -- every item you own is already ${priority}-maxed and no ${priority}-itemized upgrade exists to swap to. It only rises when ${priority}-itemized drops come.`);
-  } else if (gf && !gf.swaps.length && !gf.restats.length && statGap < 4) {
-    add("Gear", INFO, "GEAR/STATS: optimal for what you own -- no lever; gains are future drops + a sim (Droptimizer).");
-  }
-
-  // Rotation: only a GENUINE proc you under-use is actionable. Crit-driven big
-  // hits are deliberately NOT recommended (a big hit is usually just a crit).
-  // `rot`/`tp` are hoisted so the synthesis can quote their MEASURED numbers.
+  // rot/tp are hoisted so the synthesis below can quote their MEASURED numbers.
+  // Each may be unavailable (private logs, no peers) -- treat that as no findings.
   let rot = null, tp = null;
-  try {
-    rot = await rotationFindings(name, server, region, className, specName, difficulty);
-    // Biggest rotation lever: where your ability USAGE diverges from the field.
-    // Pressing the wrong button (over-use one ability, never press the one the
-    // field uses) or skipping a damage cooldown is usually the largest gap for an
-    // underperformer -- so this sorts above gear. Impact is an estimate (we can't
-    // sim it), sized by whether it's a wrong-button swap vs just under-use.
-    const u = rot && rot.usage;
-    if (u && u.under.length) {
-      const top = u.under[0];
-      const overTop = u.over[0];
-      // If you NEVER cast an ability the field leans on, it's almost certainly a
-      // missing talent, not a priority slip -- you can't press what you don't
-      // have. That's a build/respec fix (a real change to your character), so we
-      // say so instead of "press it more". (We can name the ability reliably; we
-      // can't name the talent NODE -- talentTree ids aren't spell ids -- but the
-      // ability tells you which build to copy.)
-      const neverPress = top.you < 0.2 && top.field >= 1.5;
-      if (neverPress) {
-        add("Rotation", DPS(5, 10),
-          `TALENTS/BUILD: you never press ${top.name}, but the field casts it ${f(top.field, 1)}/min -- ` +
-          `you're almost certainly missing the talent that grants it. Respec to the field's build ` +
-          `(the one with ${top.name}); your rotation can't include it until you do.` +
-          (overTop ? ` Right now you spend those globals on ${overTop.name}.` : ""));
-      } else {
-        const under = u.under.slice(0, 2).map((a) => `${a.name} (peers ${f(a.field, 1)}/min vs your ${f(a.you, 1)})`);
-        const wrongButton = u.over.length > 0;
-        const over = wrongButton
-          ? `; you over-press ${u.over.slice(0, 1).map((a) => `${a.name} (your ${f(a.you, 1)}/min vs peers ${f(a.field, 1)})`).join("")}`
-          : "";
-        add("Rotation", wrongButton ? DPS(5, 10) : DPS(3, 6),
-          `ROTATION: press ${under.join(" and ")} more${over} -- match your peers' ability priority ` +
-          `(likely your biggest lever; verify in a log/sim).`);
-      }
-    }
-    if (rot && rot.proc.isReal && rot.proc.fieldPerMin != null &&
-        rot.proc.youPerMin < rot.proc.fieldPerMin - 0.4) {
-      add("Rotation", DPS(1, 2), `PROC: you land ${f(rot.proc.youPerMin, 1)} ${rot.proc.name} ` +
-        `procs/min vs your peers' ${f(rot.proc.fieldPerMin, 1)} -- generate/use it more.`);
-    }
-  } catch (e) { /* rotation data unavailable -- skip */ }
+  try { rot = await rotationFindings(name, server, region, className, specName, difficulty); }
+  catch (e) { /* rotation data unavailable -- skip */ }
+  try { tp = await topParseFindings(name, server, region, difficulty, className, specName); }
+  catch (e) { /* top-parse data unavailable -- skip */ }
 
-  // Chasing 99: levers beyond your own play -- the standard raid-comp damage
-  // amps your kill is missing, plus damage routing and potions from the actual
-  // top parses. These are usually the difference between a mid parse and a 95+.
-  try {
-    tp = await topParseFindings(name, server, region, difficulty, className, specName);
-    if (tp) {
-      // Raid-comp amps missing from your kill (a buff on you, or a debuff on the
-      // boss). You can't press these -- it's who's in the raid -- so they're
-      // labelled "comp" and sized by the effect's rough value.
-      for (const e of (tp.comp ? tp.comp.missing : [])) {
-        add("Comp", COMP(e.est),
-          `COMP: your kill is missing ${e.label} (${e.effect}) -- bring ${e.who}. ` +
-          `A raid-comp gap, not execution; it lifts the whole raid's damage.`);
-      }
-      // Damage routing: measured extra cleave/funnel the top parses get.
-      const route = tp.routing ? tp.routing.top - tp.routing.you : 0;
-      if (tp.routing && route >= 5 && tp.routing.addNames.length) {
-        add("Comp", DPS(Math.round(route)),
-          `ROUTING: top parses put ${f(tp.routing.top, 0)}% of damage on ${tp.routing.addNames.join(", ")} ` +
-          `(you ${f(tp.routing.you, 0)}%). Cleave/funnel those instead of tunneling the boss.`);
-      }
-      // Potions: pre-pot + a second combat potion (a setup fix you apply yourself).
-      if (tp.potions && tp.potions.top > tp.potions.you) {
-        add("Setup", DPS(2),
-          `POTIONS: top parses use ${tp.potions.top}/kill (pre-pot + a combat potion); you used ${tp.potions.you}. Add the missing one.`);
-      }
-    }
-  } catch (e) { /* top-parse data unavailable -- skip */ }
-
-  // Biggest DPS first -- impact is a real number now, so the order can't disagree
-  // with the displayed labels (the old bug was sorting by a separate, stale key).
+  // Fold every domain's levers into ONE list of findings, then sort biggest-DPS
+  // first. impact is a real number, so the order can't disagree with the shown
+  // labels (the old bug was sorting by a separate, stale key). Each domain owns
+  // its own lever-building; prescribe just concatenates.
+  const rx = [
+    ...executionLevers(execd),
+    ...consumableLevers(field, my),
+    ...enchantLevers(field, my),
+    ...gearLevers(gf, priority),
+    ...statGapLever(gf, my, field, priority),
+    ...rotationLevers(rot),
+    ...topParseLevers(tp),
+  ];
   rx.sort((a, b) => b.impact - a.impact);
 
   // THE SYNTHESIS: pull every analysis into one answer, anchored on the MEASURED

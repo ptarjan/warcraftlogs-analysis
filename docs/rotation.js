@@ -8,7 +8,7 @@
 //   - your opener sequence vs the field's
 import {
   characterZone, characterEncounter, playerMetrics, collectPeers, mapLimit, median,
-  reportCore, fightWindow, fightEvents, paginateEvents,
+  reportCore, fightWindow, fightEvents, paginateEvents, f, DPS, finding,
 } from "./core.js";
 
 // --- pure, unit-tested helpers ----------------------------------------------
@@ -229,4 +229,49 @@ export async function run(log, name, server, region, className = "Monk",
       log(`  OVER-USE   ${a.name.padEnd(20)} you ${a.you.toFixed(1)}/min  peers ${a.field.toFixed(1)}/min  <-- peers barely press this`);
     if (u.under.length) log("  -> Shift presses toward what peers actually cast (likely your biggest lever).");
   }
+}
+
+// Findings for prescribe.js (rotation domain): the actionable levers from
+// rotationFindings() data as the shared { dim, impact, label, text } currency.
+// Only a GENUINE under-used proc is actionable -- crit-driven big hits are
+// deliberately NOT recommended (a big hit is usually just a crit). Pure.
+export function rotationLevers(rot) {
+  const out = [];
+  // Biggest rotation lever: where your ability USAGE diverges from the field.
+  // Pressing the wrong button (over-use one, never press the field's) or skipping
+  // a cooldown is usually the largest gap for an underperformer -- sorts above
+  // gear. Impact is an estimate (we can't sim it), sized by wrong-button vs under-use.
+  const u = rot && rot.usage;
+  if (u && u.under.length) {
+    const top = u.under[0];
+    const overTop = u.over[0];
+    // Never casting an ability the field leans on is almost certainly a missing
+    // talent, not a priority slip -- you can't press what you don't have. That's
+    // a build/respec fix (a real change to your character), so we say so instead
+    // of "press it more". (We can name the ability but not the talent NODE --
+    // talentTree ids aren't spell ids -- yet the ability tells you which build to copy.)
+    const neverPress = top.you < 0.2 && top.field >= 1.5;
+    if (neverPress) {
+      out.push(finding("Rotation", DPS(5, 10),
+        `TALENTS/BUILD: you never press ${top.name}, but the field casts it ${f(top.field, 1)}/min -- ` +
+        `you're almost certainly missing the talent that grants it. Respec to the field's build ` +
+        `(the one with ${top.name}); your rotation can't include it until you do.` +
+        (overTop ? ` Right now you spend those globals on ${overTop.name}.` : "")));
+    } else {
+      const under = u.under.slice(0, 2).map((a) => `${a.name} (peers ${f(a.field, 1)}/min vs your ${f(a.you, 1)})`);
+      const wrongButton = u.over.length > 0;
+      const over = wrongButton
+        ? `; you over-press ${u.over.slice(0, 1).map((a) => `${a.name} (your ${f(a.you, 1)}/min vs peers ${f(a.field, 1)})`).join("")}`
+        : "";
+      out.push(finding("Rotation", wrongButton ? DPS(5, 10) : DPS(3, 6),
+        `ROTATION: press ${under.join(" and ")} more${over} -- match your peers' ability priority ` +
+        `(likely your biggest lever; verify in a log/sim).`));
+    }
+  }
+  if (rot && rot.proc.isReal && rot.proc.fieldPerMin != null &&
+      rot.proc.youPerMin < rot.proc.fieldPerMin - 0.4) {
+    out.push(finding("Rotation", DPS(1, 2), `PROC: you land ${f(rot.proc.youPerMin, 1)} ${rot.proc.name} ` +
+      `procs/min vs your peers' ${f(rot.proc.fieldPerMin, 1)} -- generate/use it more.`));
+  }
+  return out;
 }

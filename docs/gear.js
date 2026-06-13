@@ -2,7 +2,7 @@
 // Wowhead proxy) and compares slot-by-slot to the field. Ported from gear.py.
 import { itemTooltip, itemXml, zoneTooltip, npcTooltip } from "./wcl.js";
 import {
-  playerMetrics, collectPeers, f, mapLimit, topEntry, bestKill,
+  playerMetrics, collectPeers, f, mapLimit, topEntry, bestKill, DPS, finding,
 } from "./core.js";
 import { wowheadItem } from "./links.js";
 
@@ -352,4 +352,58 @@ export async function run(log, name, server, region, difficulty, className, spec
     log("");
     log(`No re-stat gains: on every item you own, no peer runs more ${priority} than you -- your stats are maxed/fixed for the gear you have.`);
   }
+}
+
+// --------------------------------------------------------------------- //
+// Findings for prescribe.js (gear domain): turn gearFindings() data into the
+// shared { dim, impact, label, text } currency. Pure -- unit-testable.
+// --------------------------------------------------------------------- //
+
+// ONE embellishment finding (not two): name the specific items to craft, in the
+// slots of the field's #1 combo -- "craft X on Back", not "fill a slot" + "pick
+// a combo" as separate lines. You get 2 embellished slots total. Returns a
+// finding, or null when your embellishments already match a top combo.
+export function embellishmentRx(gf) {
+  if (!gf) return null;
+  const emb = gf.embellishedSlots || [];
+  const ec = gf.embCompare;
+  const matchesTop = ec && ec.yourRank;            // you already run a top combo
+  if (!(emb.length < 2 || (ec && !matchesTop && ec.topCombos && ec.topCombos.length))) return null;
+  const top = ec && ec.topCombos && ec.topCombos[0];
+  const pop = top ? ` (#1 field combo, ${top[1]}/${ec.fieldN})` : "";
+  const yourSlots = new Set(emb);
+  // Short a slot -> name only the slot(s) you're missing; full-but-suboptimal
+  // pair -> name the whole target combo to switch to.
+  const target = (ec && ec.recommended) ? ec.recommended : [];
+  const toCraft = emb.length < 2 ? target.filter(([sl]) => !yourSlots.has(sl)) : target;
+  const recText = toCraft.map(([sl, item]) => `${item} (${sl})`).join(" + ");
+  let msg;
+  if (recText) {
+    const lead = emb.length < 2
+      ? `you run ${emb.length}/2 -- craft ${recText}`
+      : `yours (${ec.yourCombo.join("+") || "none"}) isn't one top performers run -- switch to ${recText}`;
+    msg = `EMBELLISHMENTS: ${lead}${pop}. Throughput drops can't give.`;
+  } else {
+    msg = emb.length < 2
+      ? `EMBELLISHMENTS: you run ${emb.length}/2 -- fill the free slot${pop}. Throughput drops can't give.`
+      : `EMBELLISHMENTS: yours (${ec.yourCombo.join("+") || "none"}) isn't one top performers run${top ? `; the #1 combo is ${top[0].join("+")} (${top[1]}/${ec.fieldN})` : ""}. Match it.`;
+  }
+  return finding("Gear", DPS(2, 4), msg);
+}
+
+// All gear levers as findings: priority-stat drop swaps, re-stats, embellishment.
+export function gearLevers(gf, priority) {
+  if (!gf) return [];
+  const PRI = priority.toUpperCase();
+  const out = [];
+  for (const sw of gf.swaps) {
+    const from = sourceText(sw.source, sw.instance, sw.dropChance);
+    out.push(finding("Gear", DPS(1, 3), `${PRI} via ${sw.slot}: replace ${wowheadItem(sw.fromId, sw.fromName)} with ${wowheadItem(sw.toId, sw.toName)} (+${sw.gain} ${priority}${from} -- sim to confirm).`));
+  }
+  for (const rs of gf.restats) {
+    out.push(finding("Gear", DPS(1, 2), `${PRI} via ${rs.slot}: ${wowheadItem(rs.itemId, rs.itemName)} is selectable -- recraft to ${rs.achievable} ${priority} (you have ${rs.current}).`));
+  }
+  const embRx = embellishmentRx(gf);
+  if (embRx) out.push(embRx);
+  return out;
 }
