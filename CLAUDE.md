@@ -43,6 +43,12 @@ payoff; the list is sorted **biggest-DPS-first by the impact actually shown**.
   bundled, memoized query per `report+fight`); `test/loader.test.mjs` fails if any
   table/event is fetched twice across a full run. Don't add a parallel fetch path.
 - camelCase all derived fields. Snake_case only for OAuth/HTTP wire formats.
+- **Verify every WCL GraphQL field/arg against the schema — don't guess.** Before
+  adding or changing a query, check `WCL-SCHEMA.md` (our verified query surface +
+  the gotchas) and, for anything new, the official schema browser it links. A
+  wrong field/selection often fails the *whole* query silently. Notably:
+  `ReportActor.server` is a `String`, but `Server` (Character/rankings) is a
+  `{id,name,slug,region}` object — don't conflate them.
 
 ## Hard rules (these are why earlier versions were wrong)
 - **Class-agnostic, always.** It must work for all 39 specs. NEVER hard-code
