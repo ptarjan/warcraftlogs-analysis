@@ -94,6 +94,13 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
     .sort((a, b) => a.t - b.t);
   if (casts.length < 5) return null;
 
+  // Casts/min per ability over the whole fight -- the basis for "do you press
+  // what the field presses". Free: we already have every (damage) cast here.
+  const castRate = {};
+  for (const c of casts) castRate[c.name] = (castRate[c.name] || 0) + 1;
+  const cpm = dur ? 60 / dur : 0;
+  for (const k of Object.keys(castRate)) castRate[k] *= cpm;
+
   if (opts.onlyAbility) {
     const id = name2id[opts.onlyAbility];
     let procPerMin = 0;
@@ -101,7 +108,7 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
       const evs = await pageEvents(code, fight, m.sourceID, "DamageDone", id, s, e);
       procPerMin = perHit(evs).procBig / (dur / 60 || 1);
     }
-    return { opener: openerSequence(casts), procPerMin };
+    return { opener: openerSequence(casts), procPerMin, castRate };
   }
 
   // You: per-hit detail for the top damage abilities (bounded for API cost).
@@ -114,7 +121,36 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
       hits.push({ name: a.name, ...ph, procPerMin: ph.procBig / (dur / 60 || 1) });
     }
   }
-  return { opener: openerSequence(casts), hits, dur };
+  return { opener: openerSequence(casts), hits, dur, castRate };
+}
+
+// Median casts/min per ability across the field's kills (absent in a kill = 0),
+// so one peer who weaves an off ability doesn't skew the "field rate".
+export function fieldCastRates(peerRates) {
+  if (!peerRates.length) return {};
+  const names = new Set(peerRates.flatMap((r) => Object.keys(r)));
+  const out = {};
+  for (const n of names) out[n] = median(peerRates.map((r) => r[n] || 0));
+  return out;
+}
+
+// Where your ability USAGE diverges from the field: `under` = abilities the field
+// presses much more than you (a core spender or damage cooldown you're missing --
+// e.g. pressing Raze where the field presses Ravage shows Ravage under + Raze
+// over); `over` = abilities you press far more than the field (a wrong button).
+// Class-agnostic: the target rates come entirely from the field. `floor` keeps
+// out rarely-cast noise; `ratio` requires a real gap (default: 2x).
+export function usageDivergence(youRate, fieldRate, { floor = 0.5, ratio = 2 } = {}) {
+  const names = new Set([...Object.keys(youRate || {}), ...Object.keys(fieldRate || {})]);
+  const under = [], over = [];
+  for (const n of names) {
+    const y = (youRate || {})[n] || 0, fl = (fieldRate || {})[n] || 0;
+    if (fl >= floor && fl >= y * ratio && fl - y >= floor) under.push({ name: n, you: y, field: fl, gap: fl - y });
+    if (y >= floor && y >= fl * ratio && y - fl >= floor) over.push({ name: n, you: y, field: fl, gap: y - fl });
+  }
+  under.sort((a, b) => b.gap - a.gap);
+  over.sort((a, b) => b.gap - a.gap);
+  return { under, over };
 }
 
 // --- findings (data the prescription consumes) -------------------------------
@@ -139,27 +175,30 @@ export async function rotationFindings(name, server, region, className, specName
   const top = [...you.hits].sort((a, b) => b.procBig - a.procBig)[0];
   const isReal = top.procBig >= 2;            // outsized NON-crit cluster = real proc
 
-  let fieldProc = null, fieldOpener = null;
-  if (isReal) {
-    const peers = [];
-    const myIlvl = (er.ranks[0] || {}).bracketData || 0;
-    outer:
-    for (let page = 1; page <= 4; page++) {
-      for (const r of await topRankings(boss.id, difficulty, className, specName, page)) {
-        if (peers.length >= 4) break outer;
-        if (Math.abs((r.bracketData || 0) - myIlvl) > 4) continue;
-        try {
-          const a = await analyzeKill(r.name, r.report.code, r.report.fightID, specName, className,
-                                      { onlyAbility: top.name });
-          if (a) peers.push(a);
-        } catch (e) { /* skip */ }
-      }
+  // Pull the ilvl-matched field once: it feeds the proc rate, the opener, AND the
+  // ability-usage comparison (the field comparison is the whole point, so we
+  // fetch peers regardless of whether the proc turned out real).
+  const peers = [];
+  const myIlvl = (er.ranks[0] || {}).bracketData || 0;
+  outer:
+  for (let page = 1; page <= 4; page++) {
+    for (const r of await topRankings(boss.id, difficulty, className, specName, page)) {
+      if (peers.length >= 5) break outer;
+      if (Math.abs((r.bracketData || 0) - myIlvl) > 4) continue;
+      try {
+        const a = await analyzeKill(r.name, r.report.code, r.report.fightID, specName, className,
+                                    { onlyAbility: top.name });
+        if (a) peers.push(a);
+      } catch (e) { /* skip */ }
     }
-    fieldProc = peers.length ? median(peers.map((a) => a.procPerMin)) : null;
-    fieldOpener = peers.length ? peers[0].opener : null;
   }
+  const fieldProc = (isReal && peers.length) ? median(peers.map((a) => a.procPerMin)) : null;
+  const fieldOpener = peers.length ? peers[0].opener : null;
+  const fieldRate = fieldCastRates(peers.map((p) => p.castRate || {}));
+  const usage = usageDivergence(you.castRate || {}, fieldRate);
   return {
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener,
+    usage, fieldPeers: peers.length,
     proc: { name: top.name, isReal, youPerMin: top.procPerMin, fieldPerMin: fieldProc },
   };
 }
@@ -200,4 +239,15 @@ export async function run(log, name, server, region, className = "Monk",
   log("=== OPENER ===");
   log(`  your opener:  ${fnd.opener.join(" > ")}`);
   if (fnd.fieldOpener) log(`  field opener: ${fnd.fieldOpener.join(" > ")}`);
+
+  const u = fnd.usage || { under: [], over: [] };
+  if (u.under.length || u.over.length) {
+    log("");
+    log(`=== ABILITY USAGE vs FIELD (casts/min, ${fnd.fieldPeers} peers) ===`);
+    for (const a of u.under.slice(0, 4))
+      log(`  UNDER-USE  ${a.name.padEnd(20)} you ${a.you.toFixed(1)}/min  field ${a.field.toFixed(1)}/min  <-- press it more`);
+    for (const a of u.over.slice(0, 4))
+      log(`  OVER-USE   ${a.name.padEnd(20)} you ${a.you.toFixed(1)}/min  field ${a.field.toFixed(1)}/min  <-- field barely presses this`);
+    if (u.under.length) log("  -> Shift presses toward what the field actually casts (likely your biggest lever).");
+  }
 }

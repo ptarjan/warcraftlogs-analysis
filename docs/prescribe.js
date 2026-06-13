@@ -225,6 +225,22 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // hits are deliberately NOT recommended (a big hit is usually just a crit).
   try {
     const rot = await rotationFindings(N, S, R, CL, SP, D);
+    // Biggest rotation lever: where your ability USAGE diverges from the field.
+    // Pressing the wrong button (over-use one ability, never press the one the
+    // field uses) or skipping a damage cooldown is usually the largest gap for an
+    // underperformer -- so this sorts above gear. Impact is an estimate (we can't
+    // sim it), sized by whether it's a wrong-button swap vs just under-use.
+    const u = rot && rot.usage;
+    if (u && u.under.length) {
+      const under = u.under.slice(0, 2).map((a) => `${a.name} (field ${f(a.field, 1)}/min vs your ${f(a.you, 1)})`);
+      const wrongButton = u.over.length > 0;
+      const over = wrongButton
+        ? `; you over-press ${u.over.slice(0, 1).map((a) => `${a.name} (your ${f(a.you, 1)}/min vs field ${f(a.field, 1)})`).join("")}`
+        : "";
+      rx.push([wrongButton ? -7.5 : -4.5, wrongButton ? "~5-10% DPS" : "~3-6% DPS",
+        `ROTATION: press ${under.join(" and ")} more${over} -- match the field's ability priority ` +
+        `(likely your biggest lever; verify in a log/sim).`]);
+    }
     if (rot && rot.proc.isReal && rot.proc.fieldPerMin != null &&
         rot.proc.youPerMin < rot.proc.fieldPerMin - 0.4) {
       rx.push([-1.0, "~1-2% DPS", `PROC: you land ${f(rot.proc.youPerMin, 1)} ${rot.proc.name} ` +

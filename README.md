@@ -193,6 +193,14 @@ query coalescing), and a smoke test that the browser modules import under Node.
   for all 39 specs. Deriving "Tiger Palm is a filler" was wrong — an empowered
   Tiger Palm is the biggest hit. Derive everything from the data and the field;
   if you can't, ask the player, don't assume.
+- **Compare ability USAGE (casts/min) to the field, not just per-hit damage.**
+  The biggest lever for an underperformer is often pressing the wrong button --
+  spamming an AoE ability on single-target, or never pressing the field's core
+  spender / damage cooldown. `usageDivergence` surfaces under-used and over-used
+  abilities purely from the field's rates (class-agnostic), and it's promoted
+  high in the list (a wrong-button swap dwarfs a gear re-stat). Caveat: ability
+  names map via *damage* abilities, so pure-buff cooldowns (no direct damage,
+  e.g. Berserk) aren't tracked -- only damage-dealing presses.
 - **A "big" hit is usually a crit, not a proc.** Read `hitType` (2 = crit).
   Outsized hits that are all crits mean the player needs *crit + raid buffs*
   (stat/comp, not actionable in the rotation), not a "missed empowerment button."
