@@ -58,8 +58,8 @@ function realmLabel(region, slug) {
 
 // Two modes. Anonymous: the manual form (type character + region + server).
 // Connected: hide just the input form and show a clickable list of YOUR
-// characters that have parses on current content, most first -- click to
-// analyze. Everything else on the page (intro, sample) stays put.
+// most-recently-active characters -- click to analyze. Everything else on the
+// page (intro, sample) stays put.
 // Best-effort: if the list can't be built, fall back to the manual form.
 function showForm(on) {
   form.style.display = on ? "" : "none";
@@ -226,7 +226,9 @@ window.addEventListener("wcl-ratelimit", (e) => {
   if (activeHero && activeHero.det && activeHero.det.isConnected) {
     activeHero.det.textContent = `WCL rate limit reached${when}…`;
   }
-  statusEl.innerHTML = `<span class="spin"></span>rate limited${when}…`;
+  // Keep the inline (next-to-button) status short so it doesn't wrap onto its own
+  // line; the ETA detail lives in the hero line, which has room.
+  statusEl.innerHTML = '<span class="spin"></span>rate limited…';
 });
 
 // Supporting analyses (collapsed by default -- evidence behind the list).
