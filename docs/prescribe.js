@@ -1,9 +1,8 @@
 // Generate a concrete, prioritized prescription. Ported from prescribe.py.
 import {
   ENCHANTABLE_SLOTS, characterZone, characterEncounter, playerMetrics,
-  topRankings, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit,
+  topRankings, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry,
 } from "./core.js";
-import { PrivateReport } from "./wcl.js";
 import { compareBoss } from "./diagnose.js";
 import { gearFindings, sourceText } from "./gear.js";
 import { wowheadItem } from "./links.js";
@@ -18,10 +17,6 @@ export function impactScore(label) {
   const nums = (String(label).match(/\d+(\.\d+)?/g) || []).map(Number);
   return nums.length ? (Math.min(...nums) + Math.max(...nums)) / 2 : 0;
 }
-const mostCommon = (counter) => {
-  if (!counter || !counter.size) return null;
-  return [...counter.entries()].sort((a, b) => b[1] - a[1])[0];
-};
 
 // ONE embellishment finding (not two): name the specific items to craft, in the
 // slots of the field's #1 combo -- "craft X on Back", not "fill a slot" + "pick
@@ -161,7 +156,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
     if (bk) encBest.push([bk[2] || 0, r, bk]);
   }
   encBest.sort((a, b) => b[0] - a[0]);
-  const [curIlvl, gearBoss, [code, fight, ilvl]] = encBest[0];
+  const [curIlvl, gearBoss, [code, fight]] = encBest[0];
   // Stat priority derived from what the field stacks -- never hard-coded.
   const priority = await detectPriority(CL, SP, D, gearBoss.encounter.id);
   const PRI = priority.toUpperCase();
@@ -194,13 +189,13 @@ export async function run(log, name, server, region, className = "Monk", specNam
   }
 
   if (field.flasks.size) {
-    const tf = mostCommon(field.flasks)[0];
+    const tf = topEntry(field.flasks)[0];
     if (my.flask && my.flask !== tf) {
       rx.push([-2.5, "~2% DPS", `FLASK: ${my.flask} -> ${tf} (${field.flasks.get(tf)}/${field.n} peers).`]);
     }
   }
   if (field.foods.size) {
-    const tfo = mostCommon(field.foods)[0];
+    const tfo = topEntry(field.foods)[0];
     if (my.food && my.food !== tfo) rx.push([-1.0, "~1% DPS", `FOOD: ${my.food} -> ${tfo}.`]);
   }
 

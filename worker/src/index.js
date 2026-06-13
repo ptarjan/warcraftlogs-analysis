@@ -81,6 +81,23 @@ function corsHeaders(req, env) {
   };
 }
 
+// Proxy a Wowhead tooltip/XML endpoint with a week-long edge cache (keyed by the
+// upstream URL). Shared by the /item, /spell, /zone, /itemxml routes.
+async function wowheadProxy(ctx, ch, target, contentType = "application/json") {
+  const cache = caches.default;
+  const cacheKey = new Request(target);
+  let resp = await cache.match(cacheKey);
+  if (!resp) {
+    const r = await fetch(target, { headers: { "User-Agent": "Mozilla/5.0" } });
+    resp = new Response(await r.text(), {
+      status: r.status,
+      headers: { "Content-Type": contentType, "Cache-Control": "max-age=604800" },
+    });
+    ctx.waitUntil(cache.put(cacheKey, resp.clone()));
+  }
+  return new Response(await resp.text(), { headers: { ...ch, "Content-Type": contentType } });
+}
+
 export default {
   async fetch(req, env, ctx) {
     const ch = corsHeaders(req, env);
@@ -124,86 +141,28 @@ export default {
         return new Response(text, { status, headers: wh });
       }
 
+      // Wowhead proxies (all week-cached). /item carries an optional bonus query;
+      // /itemxml is XML; the rest are tooltip JSON.
       if (url.pathname.startsWith("/item/") && req.method === "GET") {
-        const id = url.pathname.slice("/item/".length);
+        const id = encodeURIComponent(url.pathname.slice("/item/".length));
         const bonus = url.searchParams.get("bonus");
-        const target = WOWHEAD + encodeURIComponent(id) +
-          (bonus ? `?bonus=${encodeURIComponent(bonus)}` : "");
-        const cache = caches.default;
-        const cacheKey = new Request(target);
-        let resp = await cache.match(cacheKey);
-        if (!resp) {
-          const r = await fetch(target, { headers: { "User-Agent": "Mozilla/5.0" } });
-          const text = await r.text();
-          resp = new Response(text, {
-            status: r.status,
-            headers: { "Content-Type": "application/json", "Cache-Control": "max-age=604800" },
-          });
-          ctx.waitUntil(cache.put(cacheKey, resp.clone()));
-        }
-        const body = await resp.text();
-        return new Response(body, { headers: { ...ch, "Content-Type": "application/json" } });
+        return wowheadProxy(ctx, ch, WOWHEAD + id + (bonus ? `?bonus=${encodeURIComponent(bonus)}` : ""));
       }
-
       if (url.pathname.startsWith("/spell/") && req.method === "GET") {
-        const id = url.pathname.slice("/spell/".length);
-        const target = "https://nether.wowhead.com/tooltip/spell/" + encodeURIComponent(id);
-        const cache = caches.default;
-        const cacheKey = new Request(target);
-        let resp = await cache.match(cacheKey);
-        if (!resp) {
-          const r = await fetch(target, { headers: { "User-Agent": "Mozilla/5.0" } });
-          const text = await r.text();
-          resp = new Response(text, {
-            status: r.status,
-            headers: { "Content-Type": "application/json", "Cache-Control": "max-age=604800" },
-          });
-          ctx.waitUntil(cache.put(cacheKey, resp.clone()));
-        }
-        const body = await resp.text();
-        return new Response(body, { headers: { ...ch, "Content-Type": "application/json" } });
+        const id = encodeURIComponent(url.pathname.slice("/spell/".length));
+        return wowheadProxy(ctx, ch, "https://nether.wowhead.com/tooltip/spell/" + id);
       }
-
-      // Zone tooltip: resolve a Wowhead zone id to its name (instance/dungeon
-      // an item drops in). JSON, same week-long cache as item/spell.
+      // Zone tooltip: resolve a Wowhead zone id to its name (the instance an item
+      // drops in).
       if (url.pathname.startsWith("/zone/") && req.method === "GET") {
-        const id = url.pathname.slice("/zone/".length);
-        const target = "https://nether.wowhead.com/tooltip/zone/" + encodeURIComponent(id);
-        const cache = caches.default;
-        const cacheKey = new Request(target);
-        let resp = await cache.match(cacheKey);
-        if (!resp) {
-          const r = await fetch(target, { headers: { "User-Agent": "Mozilla/5.0" } });
-          const text = await r.text();
-          resp = new Response(text, {
-            status: r.status,
-            headers: { "Content-Type": "application/json", "Cache-Control": "max-age=604800" },
-          });
-          ctx.waitUntil(cache.put(cacheKey, resp.clone()));
-        }
-        const body = await resp.text();
-        return new Response(body, { headers: { ...ch, "Content-Type": "application/json" } });
+        const id = encodeURIComponent(url.pathname.slice("/zone/".length));
+        return wowheadProxy(ctx, ch, "https://nether.wowhead.com/tooltip/zone/" + id);
       }
-
       // Item XML: the tooltip JSON omits the drop source's zone id; the XML's
-      // <json> block carries `sourcemore` (zone id per source). XML text.
+      // <json> block carries `sourcemore` (zone id per source).
       if (url.pathname.startsWith("/itemxml/") && req.method === "GET") {
-        const id = url.pathname.slice("/itemxml/".length);
-        const target = "https://www.wowhead.com/item=" + encodeURIComponent(id) + "&xml";
-        const cache = caches.default;
-        const cacheKey = new Request(target);
-        let resp = await cache.match(cacheKey);
-        if (!resp) {
-          const r = await fetch(target, { headers: { "User-Agent": "Mozilla/5.0" } });
-          const text = await r.text();
-          resp = new Response(text, {
-            status: r.status,
-            headers: { "Content-Type": "application/xml", "Cache-Control": "max-age=604800" },
-          });
-          ctx.waitUntil(cache.put(cacheKey, resp.clone()));
-        }
-        const body = await resp.text();
-        return new Response(body, { headers: { ...ch, "Content-Type": "application/xml" } });
+        const id = encodeURIComponent(url.pathname.slice("/itemxml/".length));
+        return wowheadProxy(ctx, ch, "https://www.wowhead.com/item=" + id + "&xml", "application/xml");
       }
 
       if (url.pathname === "/") return new Response("wcl-proxy ok", { headers: ch });

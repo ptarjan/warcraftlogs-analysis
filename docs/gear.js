@@ -2,7 +2,7 @@
 // Wowhead proxy) and compares slot-by-slot to the field. Ported from gear.py.
 import { itemTooltip, itemXml, zoneTooltip } from "./wcl.js";
 import {
-  characterZone, characterEncounter, playerMetrics, topRankings, f, mapLimit,
+  characterZone, characterEncounter, playerMetrics, topRankings, f, mapLimit, topEntry,
 } from "./core.js";
 import { wowheadItem } from "./links.js";
 
@@ -37,7 +37,6 @@ const TIER_SLOTS = new Set([0, 2, 4, 6, 9]); // Head, Shoulder, Chest, Legs, Han
 export const SHORT = {
   "Critical Strike": "crit", "Haste": "haste", "Mastery": "mastery", "Versatility": "vers",
 };
-export const PRIORITIES = ["crit", "haste", "mastery", "vers"];
 
 // localStorage-backed cache of parsed item stats, keyed by id[:bonus:ids].
 // "item2:" bumps the cache namespace (v1 entries predate the source/crafted
@@ -207,10 +206,7 @@ async function fieldConsensus(className, specName, difficulty, encounters, n = 4
   return { perSlot, bonusSample, variants, gems, gemVariety, n: metrics.length };
 }
 
-const topItem = (counter) => {
-  if (!counter || !counter.size) return null;
-  return [...counter.entries()].sort((a, b) => b[1] - a[1])[0][0];
-};
+const topItem = (counter) => { const e = topEntry(counter); return e ? e[0] : null; };
 
 export async function gearFindings(name, server, region, difficulty, className, specName, priority) {
   const you = await yourGear(name, server, region, difficulty, className);
@@ -284,11 +280,7 @@ export async function gearFindings(name, server, region, difficulty, className, 
   // The concrete recommendation: for the #1 slot-combo the field runs, name the
   // single most popular embellishment ITEM in each of those slots -- so the
   // advice is "craft <item> on your <slot>", not just "pick some combo".
-  const topItemInSlot = (sl) => {
-    const m = fe.perSlotItems.get(sl);
-    if (!m || !m.size) return null;
-    return [...m.entries()].sort((a, b) => b[1] - a[1])[0]; // [name, count]
-  };
+  const topItemInSlot = (sl) => topEntry(fe.perSlotItems.get(sl)); // [name, count] | null
   const recommended = (comboList[0] ? comboList[0][0] : [])
     .map((sl) => { const it = topItemInSlot(sl); return it ? [sl, it[0], it[1]] : null; })
     .filter(Boolean); // [[slot, itemName, count], ...]

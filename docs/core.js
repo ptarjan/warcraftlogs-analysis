@@ -22,6 +22,10 @@ export const padR = (s, n) => String(s).padEnd(n);
 export const slug = (s) => s.toLowerCase().replaceAll(" ", "-");
 const clean = (s) => String(s).replaceAll('"', "");
 
+// Highest-count [key, count] entry of a Map counter, or null when empty.
+export const topEntry = (counter) =>
+  (!counter || !counter.size) ? null : [...counter.entries()].sort((a, b) => b[1] - a[1])[0];
+
 export function median(arr) {
   const a = arr.filter((x) => x !== null && x !== undefined && !Number.isNaN(x))
     .slice().sort((x, y) => x - y);

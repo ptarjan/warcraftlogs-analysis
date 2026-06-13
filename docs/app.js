@@ -177,9 +177,13 @@ function linkify(el, text) {
   }
   if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
 }
+// Render markdown-link text into el (links if it contains "](", else plain text).
+function fillText(el, text) {
+  if (text.includes("](")) linkify(el, text); else el.textContent = text;
+}
 function note(text, cls = "") {
   const d = document.createElement("div"); d.className = "note " + cls;
-  if (text.includes("](")) linkify(d, text); else d.textContent = text;
+  fillText(d, text);
   append(d);
 }
 
@@ -195,7 +199,7 @@ function log(line) {
     const n = document.createElement("div"); n.className = "num"; n.textContent = m[1];
     const b = document.createElement("div"); b.className = "badge"; b.textContent = m[2];
     const t = document.createElement("div"); t.className = "txt";
-    if (m[3].includes("](")) linkify(t, m[3]); else t.textContent = m[3];
+    fillText(t, m[3]);
     d.append(n, b, t); return append(d);
   }
   if (/^\[error]/.test(line)) return note(line.replace(/^\[error]\s*/, ""), "err");
@@ -309,7 +313,8 @@ form.addEventListener("submit", (e) => {
   const region = regionSel.value;
   const server = serverSel.value;
   const serverLabel = serverSel.options[serverSel.selectedIndex]?.text || server;
-  if (!name) { out.innerHTML = ""; cur = makeCard("Error"); note("Enter a character name.", "err"); return; }
-  if (!server) { out.innerHTML = ""; cur = makeCard("Error"); note("Pick a server.", "err"); return; }
+  const fail = (msg) => { out.innerHTML = ""; cur = makeCard("Error"); note(msg, "err"); };
+  if (!name) return fail("Enter a character name.");
+  if (!server) return fail("Pick a server.");
   runAnalysis({ name, server, region, serverLabel });
 });

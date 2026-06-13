@@ -3,7 +3,6 @@ import {
   DIFFICULTY, characterZone, characterEncounter, topRankings, playerMetrics,
   secondaryStats, gearSummary, median, f, padL, padR, mapLimit,
 } from "./core.js";
-import { PrivateReport } from "./wcl.js";
 
 export async function overview(log, name, server, region, difficulty) {
   const c = await characterZone(name, server, region, difficulty);

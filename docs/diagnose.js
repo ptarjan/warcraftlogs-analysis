@@ -1,5 +1,5 @@
 // Comparative timeline root-cause diagnosis. Ported from diagnose.py.
-import { gql, PrivateReport } from "./wcl.js";
+import { gql } from "./wcl.js";
 import {
   characterZone, characterEncounter, playerMetrics, topRankings, median, f, mapLimit,
 } from "./core.js";
