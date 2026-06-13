@@ -243,7 +243,7 @@ export async function run(log, name, server, region, className = "Monk",
   const u = fnd.usage || { under: [], over: [] };
   if (u.under.length || u.over.length) {
     log("");
-    log(`=== ABILITY USAGE vs PEERS (casts/min) ===`);
+    log(`=== ABILITY USAGE vs PEERS (casts/min, ${fnd.fieldPeers} peers) ===`);
     for (const a of u.under.slice(0, 4))
       log(`  UNDER-USE  ${a.name.padEnd(20)} you ${a.you.toFixed(1)}/min  peers ${a.field.toFixed(1)}/min  <-- press it more`);
     for (const a of u.over.slice(0, 4))

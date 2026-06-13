@@ -198,7 +198,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
     const tf = topEntry(field.flasks)[0];
     if (my.flask && my.flask !== tf) {
       rx.push([-2.5, "~2% DPS", `FLASK: ${wowheadSpell(my.flaskGuid, my.flask)} -> ` +
-        `${wowheadSpell(field.guids.get(tf), tf)} (${field.flasks.get(tf)}/${field.n} peers).`]);
+        `${wowheadSpell(field.guids.get(tf), tf)}.`]);
     }
   }
   if (field.foods.size) {
@@ -215,7 +215,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
     for (const [slot, mine, theirs, amt, cnt, tot, src, chance, instance, theirsId, mineId] of gf.swaps) {
       howToStat = true;
       const from = sourceText(src, instance, chance);
-      rx.push([-2.0, "~1-3% DPS", `${PRI} via ${slot}: replace ${wowheadItem(mineId, mine)} with ${wowheadItem(theirsId, theirs)} (+${amt} ${priority}; ${cnt}/${tot} of peers${from} -- sim to confirm).`]);
+      rx.push([-2.0, "~1-3% DPS", `${PRI} via ${slot}: replace ${wowheadItem(mineId, mine)} with ${wowheadItem(theirsId, theirs)} (+${amt} ${priority}${from} -- sim to confirm).`]);
     }
     for (const [slot, name2, mine, best, itemId] of gf.restats) {
       howToStat = true;

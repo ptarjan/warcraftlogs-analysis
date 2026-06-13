@@ -57,7 +57,7 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
   }
   const pmed = (key) => median(peers.map((p) => p[key]).filter((v) => v !== null && v !== undefined));
 
-  log(`  vs ilvl-matched peers:`);
+  log(`  vs ${peers.length} ilvl-matched peers:`);
   log(`    DPS:          you ${padL(f(you.dps, 0), 9)}   peer med ${padL(f(pmed("dps"), 0), 9)}`);
   log(`    casts/min:    you ${padL(f(you.casts_per_min, 1), 9)}   peer med ${padL(f(pmed("casts_per_min"), 1), 9)}`);
   log(`    active %:     you ${padL(f(you.active_pct, 1), 9)}   peer med ${padL(f(pmed("active_pct"), 1), 9)}`);
@@ -65,7 +65,7 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
 
   const near = peers.filter((p) => Math.abs(p.dur - you.dur) <= 40).map((p) => p.dps);
   if (near.length) {
-    log(`    DPS at your kill-time (+/-40s): you ${f(you.dps, 0)}  vs peer med ${f(median(near), 0)}`);
+    log(`    DPS at your kill-time (+/-40s): you ${f(you.dps, 0)}  vs peer med ${f(median(near), 0)}  (n=${near.length})`);
   }
 
   const youStats = await secondaryStats(code, fight, you.sourceID);

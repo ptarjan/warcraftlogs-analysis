@@ -69,7 +69,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
 
   const rows = profileDiff(you.metrics.dmg_by, peers.map((p) => p.dmg_by));
   log("");
-  log(`=== Damage profile vs ilvl-matched ${specName}s (${you.encounter.name}) ===`);
+  log(`=== Damage profile vs ${peers.length} ilvl-matched ${specName}s (${you.encounter.name}) ===`);
   // Only call out gaps of >= 3 percentage points; show the biggest handful.
   const big = rows.filter((r) => Math.abs(r.delta) >= 3).slice(0, 7);
   if (!big.length) {

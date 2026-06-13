@@ -144,7 +144,7 @@ export async function compareBoss(name, server, region, encounter, difficulty, c
 
 function printBossComparison(log, c) {
   log("");
-  log(`  ${c.boss}  (your ${c.your_kills} kills)`);
+  log(`  ${c.boss}  (your ${c.your_kills} kills vs ${c.peers} peers)`);
   const rows = [
     ["lost GCD time /min", "lost_per_min", "s"],
     ["  - out of range/moving /min", "range_lost_per_min", "s"],
