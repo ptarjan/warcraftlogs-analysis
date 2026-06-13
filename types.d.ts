@@ -17,3 +17,18 @@ interface Finding extends Score {
   dim: Dim;
   text: string;
 }
+
+/** Parsed Wowhead item data (gear.js itemStats): secondary stats + where it's from. */
+interface ItemStats {
+  name: string;
+  crit: number;
+  haste: number;
+  mastery: number;
+  vers: number;
+  ilvl: number | null;
+  embellished: boolean;
+  unique: boolean;
+  source: string | null;      // "Dropped by: <boss>"
+  dropChance: string | null;
+  crafted: boolean;
+}

@@ -1,3 +1,4 @@
+// @ts-check
 // Automatic gear audit: reads each item's real secondary stats (via the Worker's
 // Wowhead proxy) and compares slot-by-slot to the field. Ported from gear.py.
 import { itemTooltip, itemXml, zoneTooltip, npcTooltip } from "./wcl.js";
@@ -40,11 +41,15 @@ export async function itemStats(itemId, bonusIds) {
   const key = String(itemId) + (bonus.length ? ":" + bonus.join(":") : "");
   const cached = cacheGet(key);
   if (cached) return cached;
-  let out;
+  // Full shape up front (zeroed defaults), then fill from the tooltip -- so a
+  // parse failure just leaves the defaults, and every field has a stable type.
+  /** @type {ItemStats} */
+  const out = { name: String(itemId), crit: 0, haste: 0, mastery: 0, vers: 0,
+    ilvl: null, embellished: false, unique: false, source: null, dropChance: null, crafted: false };
   try {
     const d = await itemTooltip(itemId, bonus);
     const html = d.tooltip || "";
-    out = { name: d.name || String(itemId), crit: 0, haste: 0, mastery: 0, vers: 0 };
+    out.name = d.name || String(itemId);
     const m = html.match(/<!--ilvl-->(\d+)/);
     out.ilvl = m ? parseInt(m[1], 10) : null;
     const re = /(\d+)\s+(Critical Strike|Haste|Mastery|Versatility)/g;
@@ -61,10 +66,7 @@ export async function itemStats(itemId, bonusIds) {
     const dc = html.match(/whtt-dropchance">Drop Chance:\s*([^<]+)</i);
     out.dropChance = dc ? dc[1].trim() : null;
     out.crafted = out.embellished && !out.source;
-  } catch (e) {
-    out = { name: String(itemId), crit: 0, haste: 0, mastery: 0, vers: 0, ilvl: null,
-            embellished: false, unique: false, source: null, dropChance: null, crafted: false };
-  }
+  } catch (e) { /* keep the zeroed defaults */ }
   cacheSet(key, out);
   return out;
 }

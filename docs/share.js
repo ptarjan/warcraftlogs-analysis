@@ -1,3 +1,4 @@
+// @ts-check
 // Shareable/deep-linkable result URLs: ?char=NAME&region=US&server=slug[&run=1].
 // Pure string helpers so a result is bookmarkable and the address bar can stay
 // in sync -- reinforcing the "just a name / one link" edge. Unit-tested offline.
@@ -15,6 +16,7 @@ export function paramsFromSearch(search) {
 }
 
 // Build the shareable query string (no leading "?") for a given character.
+/** @param {{ name?: string, region?: string, server?: string }} [c] */
 export function shareSearch({ name, region, server } = {}) {
   const p = new URLSearchParams();
   if (name) p.set("char", name);
