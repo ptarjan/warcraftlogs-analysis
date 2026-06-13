@@ -145,6 +145,25 @@ export default {
         return new Response(body, { headers: { ...ch, "Content-Type": "application/json" } });
       }
 
+      if (url.pathname.startsWith("/spell/") && req.method === "GET") {
+        const id = url.pathname.slice("/spell/".length);
+        const target = "https://nether.wowhead.com/tooltip/spell/" + encodeURIComponent(id);
+        const cache = caches.default;
+        const cacheKey = new Request(target);
+        let resp = await cache.match(cacheKey);
+        if (!resp) {
+          const r = await fetch(target, { headers: { "User-Agent": "Mozilla/5.0" } });
+          const text = await r.text();
+          resp = new Response(text, {
+            status: r.status,
+            headers: { "Content-Type": "application/json", "Cache-Control": "max-age=604800" },
+          });
+          ctx.waitUntil(cache.put(cacheKey, resp.clone()));
+        }
+        const body = await resp.text();
+        return new Response(body, { headers: { ...ch, "Content-Type": "application/json" } });
+      }
+
       if (url.pathname === "/") return new Response("wcl-proxy ok", { headers: ch });
       return new Response("not found", { status: 404, headers: ch });
     } catch (e) {

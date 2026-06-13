@@ -163,7 +163,25 @@ function appendMono(line) {
   cur.mono.appendChild(span);
   scroll();
 }
-function note(text, cls = "") { const d = document.createElement("div"); d.className = "note " + cls; d.textContent = text; append(d); }
+// Render text into `el`, turning [label](https://…) markdown links into safe
+// anchors (built as DOM nodes, never innerHTML). Used for Wowhead links.
+function linkify(el, text) {
+  const re = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+  let last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
+    const a = document.createElement("a");
+    a.href = m[2]; a.target = "_blank"; a.rel = "noopener"; a.textContent = m[1];
+    el.appendChild(a);
+    last = re.lastIndex;
+  }
+  if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
+}
+function note(text, cls = "") {
+  const d = document.createElement("div"); d.className = "note " + cls;
+  if (text.includes("](")) linkify(d, text); else d.textContent = text;
+  append(d);
+}
 
 function log(line) {
   if (!cur) cur = makeCard("Results");

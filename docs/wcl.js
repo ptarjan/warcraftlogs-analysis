@@ -258,6 +258,20 @@ export async function itemTooltip(id, bonusIds) {
   try { return await p; } finally { _itemInflight.delete(url); }
 }
 
+// Wowhead tooltip JSON for a spell (for talent names). Same routing as items:
+// direct when trusted/connected, else through the Worker (cached a week).
+const WOWHEAD_SPELL = "https://nether.wowhead.com/tooltip/spell/";
+const _spellInflight = new Map();
+export async function spellTooltip(id) {
+  const direct = IS_NODE || !!getAccessToken();
+  const url = direct ? `${WOWHEAD_SPELL}${encodeURIComponent(id)}` : `${WORKER_URL}/spell/${id}`;
+  if (_spellInflight.has(url)) return _spellInflight.get(url);
+  const opts = IS_NODE ? { headers: { "User-Agent": "Mozilla/5.0" } } : undefined;
+  const p = fetch(url, opts).then((r) => r.json());
+  _spellInflight.set(url, p);
+  try { return await p; } finally { _spellInflight.delete(url); }
+}
+
 // The connected user's own characters that have parses on the CURRENT content,
 // most parses first. "Parses" = ranked kills in the current zone (zoneRankings
 // defaults to the current zone), summed across Mythic + Heroic. Connected-only
