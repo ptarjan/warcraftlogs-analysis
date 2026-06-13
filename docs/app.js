@@ -274,7 +274,7 @@ async function runAnalysis({ name, server, region, serverLabel }) {
     setPills(hero, [
       [`${ctx.specName} ${ctx.className}`, false],
       [DIFFICULTY[ctx.difficulty], true],
-      [`${priority} priority`, true],
+      [`${priority.charAt(0).toUpperCase() + priority.slice(1)} priority`, true],
     ]);
     const p = { name, server, region, cls: ctx.className, spec: ctx.specName, difficulty: ctx.difficulty, priority };
 

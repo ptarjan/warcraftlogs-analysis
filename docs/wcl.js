@@ -343,48 +343,62 @@ export function zoneTooltip(id) {
   return wowhead(`${WOWHEAD_ZONE}${encodeURIComponent(id)}`, `/zone/${id}`);
 }
 
-// The connected user's own characters that have parses on the CURRENT content,
-// most parses first. "Parses" = ranked kills in the current zone (zoneRankings
-// defaults to the current zone), summed across ALL raid difficulties
-// (Mythic/Heroic/Normal/LFR) so every character raided this tier shows -- not
-// just the Mythic/Heroic mains. Connected-only and best-effort with a two-tier
-// fallback: if the ranking shape isn't available we return the bare list
-// (unsorted) so the picker still works; on any miss, [].
+// The connected user's own characters with parses on the CURRENT content, most
+// parses first. Done in two bounded phases so we never ask WCL to rank EVERY
+// claimed character (that one query -- zoneRankings x 4 difficulties x N chars --
+// is point-expensive enough to rate-limit the whole account):
+//   1) cheap: list all characters + each one's most-recent-report time.
+//   2) rank ONLY the most-recently-active RANK_TOP of them for current-tier
+//      parses (Mythic/Heroic/Normal/LFR), via per-character aliases.
+// Connected-only and best-effort: any schema/permission miss degrades to a
+// shorter list rather than failing.
+const RANK_TOP = 12; // how many active characters to score for current-tier parses
+
 export async function myCharacters() {
   if (IS_NODE || !getAccessToken()) return [];
   const loc = "name server { slug region { slug } }";
-  // zoneRankings is a JSON scalar: { rankings: [{ totalKills, rankPercent, ... }] }.
-  // Count ranked kills (rankPercent != null) -- matches what detectContext treats
-  // as analyzable, so everything shown can actually be analyzed.
-  const parsesIn = (zr) => ((zr && zr.rankings) || [])
-    .reduce((n, r) => n + (r && r.rankPercent != null ? (r.totalKills || 0) : 0), 0);
-  const sumParses = (c) => parsesIn(c.m) + parsesIn(c.h) + parsesIn(c.n) + parsesIn(c.lfr);
-  // Current-zone rankings at every difficulty: Mythic 5, Heroic 4, Normal 3, LFR 1.
-  const RANK = "m: zoneRankings(difficulty: 5) h: zoneRankings(difficulty: 4) " +
-    "n: zoneRankings(difficulty: 3) lfr: zoneRankings(difficulty: 1)";
 
-  for (const [sel, ranked] of [
-    [`${loc} ${RANK}`, true],
-    [loc, false], // fallback: bare list (no counts) if zoneRankings isn't usable
-  ]) {
-    let raw;
+  // Phase 1 (cheap): the claimed list + recency. recentReports(limit:1) is far
+  // lighter than zoneRankings, so it stays affordable even for big accounts.
+  let base = null;
+  for (const sel of [`${loc} recentReports(limit: 1) { data { startTime } }`, loc]) {
     try {
       const d = await gql(`{ userData { currentUser { characters { ${sel} } } } }`);
-      raw = (d && d.userData && d.userData.currentUser && d.userData.currentUser.characters) || [];
-    } catch { continue; } // bad field / no permission -> try the simpler shape
-    let chars = raw
-      .map((c) => ({
+      const raw = (d && d.userData && d.userData.currentUser && d.userData.currentUser.characters) || [];
+      base = raw.map((c) => ({
         name: c.name,
         server: c.server && c.server.slug,
         region: ((c.server && c.server.region && c.server.region.slug) || "").toUpperCase(),
-        parses: ranked ? sumParses(c) : 0,
-      }))
-      .filter((c) => c.name && c.server && c.region);
-    // Keep only characters with current-content parses, most first. Guard: if the
-    // shape unexpectedly yields 0 for everyone, don't hide them all -- show the list.
-    if (ranked && chars.some((c) => c.parses > 0))
-      chars = chars.filter((c) => c.parses > 0).sort((a, b) => b.parses - a.parses);
-    return chars;
+        last: ((c.recentReports && c.recentReports.data && c.recentReports.data[0]) || {}).startTime || 0,
+        parses: 0,
+      })).filter((c) => c.name && c.server && c.region);
+      break;
+    } catch { base = null; } // try the simpler shape
   }
-  return [];
+  if (!base || !base.length) return base || [];
+
+  // Phase 2 (bounded): current-tier parse counts for the most-recently-active
+  // subset only -- one query, RANK_TOP characters, 4 difficulties each.
+  base.sort((a, b) => b.last - a.last);
+  const subset = base.slice(0, RANK_TOP);
+  const parsesIn = (zr) => ((zr && zr.rankings) || [])
+    .reduce((n, r) => n + (r && r.rankPercent != null ? (r.totalKills || 0) : 0), 0);
+  const q = (s) => JSON.stringify(s);
+  const fields = subset.map((c, i) =>
+    `c${i}: character(name: ${q(c.name)}, serverSlug: ${q(c.server)}, serverRegion: ${q(c.region)}) {` +
+    " m: zoneRankings(difficulty: 5) h: zoneRankings(difficulty: 4)" +
+    " n: zoneRankings(difficulty: 3) lfr: zoneRankings(difficulty: 1) }").join("\n");
+  try {
+    const d = await gql(`{ characterData { ${fields} } }`);
+    const cd = (d && d.characterData) || {};
+    subset.forEach((c, i) => {
+      const x = cd["c" + i];
+      if (x) c.parses = parsesIn(x.m) + parsesIn(x.h) + parsesIn(x.n) + parsesIn(x.lfr);
+    });
+  } catch { /* keep the recency-ordered subset; parses stay 0 */ }
+
+  // Characters with current-tier parses, most first; if none scored, fall back to
+  // the recency-ordered subset so the picker isn't empty.
+  const withParses = subset.filter((c) => c.parses > 0).sort((a, b) => b.parses - a.parses);
+  return withParses.length ? withParses : subset;
 }
