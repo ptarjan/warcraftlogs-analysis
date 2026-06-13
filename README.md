@@ -151,8 +151,11 @@ query coalescing), and a smoke test that the browser modules import under Node.
 - Buff/consumable names vary by rank/tier (`"Hearty Well Fed"` vs `"Well Fed"`).
   **Match buffs by keyword, never exact string.**
 - A character's ranked parses are logged at the **item level at the time** —
-  usually mid-progression. Use the highest-ilvl / most recent kill for current
-  gear, or you'll critique stale equipment.
+  usually mid-progression. "Current" = the **most recent kill within 1 ilvl of
+  your best** (`bestRank`/`bestKill`), NOT the single highest-ilvl kill: a lucky
+  early high-ilvl drop would otherwise hide enchants/gems/consumables you've
+  fixed since. Gear is a snapshot, so recency matters for the things that change
+  without changing ilvl.
 - Heroic vs Mythic percentiles are **not** comparable; the pools differ.
 - `playerDetails.combatantInfo` is often empty — secondary stats come from
   `events(dataType: CombatantInfo)`, keyed by `sourceID`.

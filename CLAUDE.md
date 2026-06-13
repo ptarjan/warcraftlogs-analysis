@@ -46,7 +46,9 @@ payoff; the list is sorted **biggest-DPS-first by the impact actually shown**.
 
 ## More gotchas
 See README → "Lessons baked in". Highlights: match buffs by keyword not exact
-name; ranked parses use ilvl-at-time (use highest-ilvl kill); Heroic vs Mythic
+name; "current" kill = MOST RECENT within 1 ilvl of your best (`bestRank`/
+`bestKill`), not the single highest-ilvl one, or recent enchant/consumable fixes
+get hidden by an old lucky-drop kill; Heroic vs Mythic
 percentiles aren't comparable; secondary stats live in CombatantInfo *events*;
 `sourceID`-filtered Casts/Buffs *tables* return empty (map names by class);
 crafted item stats + embellishments only render with the item's bonus IDs; tier

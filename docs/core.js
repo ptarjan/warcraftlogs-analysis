@@ -164,30 +164,40 @@ export async function secondaryStats(code, fight, sourceId) {
 // --------------------------------------------------------------------- //
 // "Best kill" helpers (shared by every analysis)
 // --------------------------------------------------------------------- //
-// Ranked parses are logged at the item level AT THE TIME, so the highest-ilvl
-// rank is the closest thing to "current gear". bestRank picks it from one
-// encounter's ranks; bestKill finds the character's single highest-ilvl kill
-// across every boss they've killed (and returns the killed encounter ids).
-export const bestRank = (ranks) =>
-  (ranks && ranks.length)
-    ? ranks.reduce((a, b) => ((a.bracketData || 0) >= (b.bracketData || 0) ? a : b))
-    : null;
+// Ranked parses are logged at the item level AT THE TIME. "Current gear" is your
+// top item level, but among kills at that level we want the MOST RECENT one --
+// otherwise an old high-ilvl kill (a lucky early drop) hides enchant/gem/
+// consumable fixes you've made since. So: keep within 1 ilvl of your best, then
+// take the latest by startTime. bestRank does this for one encounter's ranks;
+// bestKill does it across every boss you've killed.
+const RECENT_ILVL_BAND = 1; // kills within this many ilvls count as "current gear"
+export const bestRank = (ranks) => {
+  if (!ranks || !ranks.length) return null;
+  const maxIl = Math.max(...ranks.map((r) => r.bracketData || 0));
+  return ranks.filter((r) => (r.bracketData || 0) >= maxIl - RECENT_ILVL_BAND)
+    .reduce((a, b) => ((b.startTime || 0) > (a.startTime || 0) ? b : a));
+};
 
 export async function bestKill(name, server, region, difficulty) {
   const c = await characterZone(name, server, region, difficulty);
   const ranks = (c.zoneRankings.rankings || []).filter((r) => (r.totalKills || 0) > 0);
   const ers = await mapLimit(ranks, 5, (r) =>
     characterEncounter(name, server, region, r.encounter.id, difficulty));
-  let best = null;
+  // Every individual kill, tagged with its boss, so we can pick the most recent
+  // at ~your top item level rather than the single highest-ilvl one.
+  const all = [];
   ranks.forEach((r, i) => {
-    const bk = bestRank(ers[i] && ers[i].ranks);
-    if (!bk) return;
-    const il = bk.bracketData || 0;
-    if (!best || il > best.ilvl) {
-      best = { code: bk.report.code, fight: bk.report.fightID, ilvl: il,
-               encounter: r.encounter, rankPercent: bk.rankPercent };
+    for (const k of ((ers[i] && ers[i].ranks) || [])) {
+      all.push({ code: k.report.code, fight: k.report.fightID, ilvl: k.bracketData || 0,
+        startTime: k.startTime || 0, encounter: r.encounter, rankPercent: k.rankPercent });
     }
   });
+  let best = null;
+  if (all.length) {
+    const maxIl = Math.max(...all.map((k) => k.ilvl));
+    best = all.filter((k) => k.ilvl >= maxIl - RECENT_ILVL_BAND)
+      .reduce((a, b) => (b.startTime > a.startTime ? b : a));
+  }
   if (best) best.killedIds = ranks.map((r) => r.encounter.id);
   return best;
 }
