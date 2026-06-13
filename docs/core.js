@@ -21,6 +21,13 @@ export const padL = (s, n) => String(s).padStart(n);
 export const padR = (s, n) => String(s).padEnd(n);
 export const slug = (s) => s.toLowerCase().replaceAll(" ", "-");
 const clean = (s) => String(s).replaceAll('"', "");
+// Character lookups are case-insensitive on WCL, so normalize to WoW's canonical
+// casing (first letter upper, rest lower -- a no-op for caseless scripts) and the
+// region to upper. This makes the query string -- and therefore every cache key
+// (gql memo + IndexedDB) -- identical regardless of the input's case, so "Hadryan"
+// and "hadryan" share one fetch instead of paying twice.
+const cName = (s) => { const c = clean(s).trim(); return c ? c[0].toUpperCase() + c.slice(1).toLowerCase() : c; };
+const cRegion = (s) => clean(s).trim().toUpperCase();
 
 // Highest-count [key, count] entry of a Map counter, or null when empty.
 export const topEntry = (counter) =>
@@ -39,7 +46,7 @@ export function median(arr) {
 // --------------------------------------------------------------------- //
 export async function characterZone(name, server, region, difficulty) {
   const q = `query { characterData { character(
-    name:"${clean(name)}", serverSlug:"${slug(clean(server))}", serverRegion:"${clean(region)}") {
+    name:"${cName(name)}", serverSlug:"${slug(clean(server))}", serverRegion:"${cRegion(region)}") {
     id classID zoneRankings(difficulty:${difficulty}) } } }`;
   const c = (await gql(q)).characterData.character;
   if (!c) throw new Error(`Character not found: ${name}-${server}-${region}`);
@@ -48,7 +55,7 @@ export async function characterZone(name, server, region, difficulty) {
 
 export async function characterEncounter(name, server, region, encounterId, difficulty) {
   const q = `query { characterData { character(
-    name:"${clean(name)}", serverSlug:"${slug(clean(server))}", serverRegion:"${clean(region)}") {
+    name:"${cName(name)}", serverSlug:"${slug(clean(server))}", serverRegion:"${cRegion(region)}") {
     encounterRankings(encounterID:${encounterId}, difficulty:${difficulty}, metric:dps) } } }`;
   const c = (await gql(q)).characterData.character;
   return c ? c.encounterRankings : null;
@@ -80,7 +87,8 @@ export async function mapLimit(items, limit, fn) {
 
 function entry(tableData, name, specName) {
   const entries = tableData.entries || [];
-  let hit = entries.filter((e) => e.name === name);
+  const lc = String(name || "").toLowerCase();
+  let hit = entries.filter((e) => String(e.name || "").toLowerCase() === lc);
   if (!hit.length) hit = entries.filter((e) => specName && String(e.icon || "").includes(specName));
   return hit.length ? hit[0] : null;
 }
