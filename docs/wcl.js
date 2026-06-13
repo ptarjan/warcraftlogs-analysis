@@ -124,60 +124,71 @@ const _gqlCache = new Map();
 
 // --- Persistent (cross-reload) query cache -----------------------------------
 // The in-memory cache above dies on refresh; on the connected path that means a
-// reload re-spends the user's own quota. So also stash successful results in
-// localStorage with a 1h TTL (WCL rankings/reports are static enough within the
-// hour -- the same window the Worker uses). Browser only: the CLI/tests keep the
-// in-memory cache so their behavior is unchanged. Every storage access is
-// wrapped -- a failure (quota, private mode) just falls through to the network.
-const PERSIST = !IS_NODE;
-const LS_PREFIX = "gqlc:";
-const LS_TTL = 60 * 60 * 1000;     // 1 hour
-const LS_MAX_ENTRY = 400 * 1024;   // skip persisting responses bigger than ~400 KB
+// reload re-spends the user's own quota (a full analysis is many big requests).
+// So stash successful results across reloads with a 1h TTL (WCL rankings/reports
+// are static enough within the hour). Backed by IndexedDB, NOT localStorage:
+// ranking/event responses are far too big for localStorage's ~5MB budget, but
+// IndexedDB holds large blobs and many of them. Browser only (PERSIST); the
+// CLI/tests use the in-memory + on-disk caches. Every access is wrapped, so a
+// storage failure just falls through to the network.
+// Browser-only normally; tests force it on under Node (WCL_PERSIST_TEST=1) where
+// the store falls back to an in-memory map, so the cross-reload behavior is testable.
+const PERSIST = !IS_NODE ||
+  (typeof process !== "undefined" && process.env && process.env.WCL_PERSIST_TEST === "1");
+const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 // Short, stable key from the query text (FNV-1a). Collisions are made safe by
 // storing the query alongside the value and verifying it on read.
 function _hash(s) {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
-  return LS_PREFIX + (h >>> 0).toString(36);
+  return "q" + (h >>> 0).toString(36);
 }
 
-// Exported for tests. Read returns undefined on miss / stale / collision / error.
-export function _cacheRead(query) {
-  try {
-    const raw = localStorage.getItem(_hash(query));
-    if (!raw) return undefined;
-    const e = JSON.parse(raw);
-    if (e.q !== query || Date.now() - e.t > LS_TTL) return undefined;
-    return e.d;
-  } catch { return undefined; }
+// Backing store: IndexedDB in the browser, an in-memory Map otherwise (Node tests).
+const _memStore = new Map();
+let _idbPromise = null;
+function _openIdb() {
+  if (_idbPromise) return _idbPromise;
+  _idbPromise = new Promise((resolve) => {
+    try {
+      const req = indexedDB.open("wcl-gql-cache", 1);
+      req.onupgradeneeded = () => { try { req.result.createObjectStore("q"); } catch { /* exists */ } };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch { resolve(null); }
+  });
+  return _idbPromise;
 }
-export function _cacheWrite(query, data) {
-  let raw;
-  try { raw = JSON.stringify({ q: query, t: Date.now(), d: data }); } catch { return; }
-  if (raw.length > LS_MAX_ENTRY) return; // memory cache still holds it for this session
-  const key = _hash(query);
-  for (let i = 0; i < 4; i++) {
-    try { localStorage.setItem(key, raw); return; }
-    catch { if (!_evictOldest()) return; } // quota: drop oldest 25% and retry
-  }
+function _idbOp(mode, fn) {
+  return _openIdb().then((db) => db && new Promise((resolve) => {
+    try {
+      const tx = db.transaction("q", mode);
+      const rq = fn(tx.objectStore("q"));
+      tx.oncomplete = () => resolve(rq && rq.result);
+      tx.onerror = tx.onabort = () => resolve(undefined);
+    } catch { resolve(undefined); }
+  }));
 }
-// Drop the oldest ~quarter of persisted queries. Returns false when there's
-// nothing left to evict, so the caller stops retrying.
-function _evictOldest() {
+async function _storeGet(key) {
+  if (typeof indexedDB !== "undefined") return _idbOp("readonly", (s) => s.get(key));
+  return _memStore.get(key);
+}
+async function _storeSet(key, val) {
+  if (typeof indexedDB !== "undefined") { await _idbOp("readwrite", (s) => s.put(val, key)); return; }
+  _memStore.set(key, val);
+}
+
+// Exported for tests. Async. Returns undefined on miss / stale / collision / error.
+export async function _cacheRead(query) {
   try {
-    const items = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (!k || !k.startsWith(LS_PREFIX)) continue;
-      let t = 0; try { t = JSON.parse(localStorage.getItem(k)).t || 0; } catch { /* keep 0 */ }
-      items.push([k, t]);
-    }
-    if (!items.length) return false;
-    items.sort((a, b) => a[1] - b[1]);
-    for (let i = 0, n = Math.max(1, items.length >> 2); i < n; i++) localStorage.removeItem(items[i][0]);
-    return true;
-  } catch { return false; }
+    const e = await _storeGet(_hash(query));
+    if (e && e.q === query && Date.now() - e.t < CACHE_TTL) return e.d;
+  } catch { /* fall through to network */ }
+  return undefined;
+}
+export async function _cacheWrite(query, data) {
+  try { await _storeSet(_hash(query), { q: query, t: Date.now(), d: data }); } catch { /* skip caching */ }
 }
 
 export function clearGqlCache() { _gqlCache.clear(); }
@@ -283,17 +294,23 @@ export async function gql(query, retries = 6) {
   await initDisk();                 // seeds _gqlCache from disk on first call (Node)
   if (_gqlCache.has(query)) return _gqlCache.get(query);
   if (_gqlInflight.has(query)) return _gqlInflight.get(query);
-  if (PERSIST) {
-    const stored = _cacheRead(query);
-    if (stored !== undefined) { _gqlCache.set(query, stored); return stored; }
-  }
-  const p = _gqlRun(query, retries);
+  // Build the work as ONE promise before awaiting -- the persistent read is now
+  // async (IndexedDB), so doing it outside the inflight map would let concurrent
+  // callers all miss the cache and double-fetch. Set inflight synchronously.
+  const p = (async () => {
+    if (PERSIST) {
+      const stored = await _cacheRead(query);
+      if (stored !== undefined) return stored; // cross-reload hit -- no network
+    }
+    const fresh = await _gqlRun(query, retries);
+    diskPut(query, fresh);              // Node CLI disk cache (no-op in the browser)
+    if (PERSIST) _cacheWrite(query, fresh); // browser IndexedDB cache (1h TTL), fire-and-forget
+    return fresh;
+  })();
   _gqlInflight.set(query, p);
   try {
     const data = await p;
     _gqlCache.set(query, data);
-    diskPut(query, data);              // Node CLI disk cache (no-op in the browser)
-    if (PERSIST) _cacheWrite(query, data); // browser localStorage cache (1h TTL)
     return data;
   } finally {
     _gqlInflight.delete(query);

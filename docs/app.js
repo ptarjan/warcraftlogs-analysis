@@ -97,6 +97,7 @@ async function renderMode() {
 
 // A ?char=&region=&server= deep link prefills the form and, when it has enough
 // to run (a shared result link), analyzes immediately -- overriding the picker.
+// The analysis itself is cheap on reload because the fetches are cached (wcl.js).
 async function deepLink() {
   const q = paramsFromSearch(location.search);
   if (!q.name) return false;
@@ -384,6 +385,7 @@ async function runAnalysis({ name, server, region, serverLabel }) {
     }
 
     statusEl.textContent = "Done.";
+
   } catch (err) {
     // Sections that never got to run (e.g. detection failed) shouldn't keep
     // spinning -- remove the ones still pending.
