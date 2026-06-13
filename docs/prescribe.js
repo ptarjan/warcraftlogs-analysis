@@ -3,7 +3,7 @@ import {
   ENCHANTABLE_SLOTS, characterZone, characterEncounter, playerMetrics,
   collectPeers, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry, bestRank,
 } from "./core.js";
-import { compareBoss } from "./timeline.js";
+import { timelineFindings } from "./timeline.js";
 import { gearFindings, sourceText } from "./gear.js";
 import { wowheadItem, wowheadSpell } from "./links.js";
 import { rotationFindings } from "./rotation.js";
@@ -158,7 +158,7 @@ async function aggregateExecution(name, server, region, difficulty, className, s
   const perBoss = [];
   for (const r of bosses) {
     let c;
-    try { c = await compareBoss(name, server, region, r.encounter, difficulty, className, specName); }
+    try { c = await timelineFindings(name, server, region, r.encounter, difficulty, className, specName); }
     catch (e) { c = null; }
     if (c) perBoss.push(c);
   }

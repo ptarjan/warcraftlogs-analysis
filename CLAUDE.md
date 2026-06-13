@@ -24,9 +24,9 @@ payoff; the list is sorted **biggest-DPS-first by the impact actually shown**.
   not a secret) only switches the browser from the proxy to the user's own token.
 - A connected token that 401s throws `NeedsAuth` (reconnect) — we don't silently
   fall back to the proxy, so the active identity stays honest.
-- Each analysis module exports `run(log, …)` (gear: `audit`) AND a data function
-  (`gearFindings`, `rotationFindings`, …) so `prescribe.js` can fold findings
-  into the list.
+- Each analysis module exports `run(log, …)` (the card entrypoint) AND a
+  `…Findings` data function (`gearFindings`, `rotationFindings`,
+  `timelineFindings`, …) so `prescribe.js` can fold findings into the list.
 
 ## Hard rules (these are why earlier versions were wrong)
 - **Class-agnostic, always.** It must work for all 39 specs. NEVER hard-code

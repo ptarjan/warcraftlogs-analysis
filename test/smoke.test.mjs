@@ -32,7 +32,7 @@ test("modules import under Node and expose their entry points", async () => {
 
   const gear = await import("../docs/gear.js");
   assert.equal(typeof gear.itemStats, "function");
-  assert.equal(typeof gear.audit, "function");
+  assert.equal(typeof gear.run, "function");
 
   const prescribe = await import("../docs/prescribe.js");
   assert.equal(typeof prescribe.run, "function");

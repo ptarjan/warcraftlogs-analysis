@@ -289,7 +289,7 @@ export async function gearFindings(name, server, region, difficulty, className, 
   return { rows, swaps: reconciledSwaps, embellishedSlots, restats, emb_compare: embCompare, n: fc.n, priority, gems: gemInfo };
 }
 
-export async function audit(log, name, server, region, difficulty, className, specName, priority) {
+export async function run(log, name, server, region, difficulty, className, specName, priority) {
   const ff = await gearFindings(name, server, region, difficulty, className, specName, priority);
   if (!ff) throw new Error("No gear found.");
   log("");

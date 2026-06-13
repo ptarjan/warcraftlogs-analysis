@@ -129,7 +129,7 @@ async function peerMetricsFor(encounterId, difficulty, className, specName, targ
 // the single biggest, most redundant draw on the hourly budget; cap it.
 const KILLS_PER_BOSS = 3;
 
-export async function compareBoss(name, server, region, encounter, difficulty, className, specName) {
+export async function timelineFindings(name, server, region, encounter, difficulty, className, specName) {
   const er = await characterEncounter(name, server, region, encounter.id, difficulty);
   if (!er || !er.ranks || !er.ranks.length) return null;
   const perKill = await mapLimit(er.ranks.slice(0, KILLS_PER_BOSS), 4, async (rk) => {
@@ -182,7 +182,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   for (const r of ranks) {
     let comp;
     try {
-      comp = await compareBoss(name, server, region, r.encounter, difficulty, className, specName);
+      comp = await timelineFindings(name, server, region, r.encounter, difficulty, className, specName);
     } catch (e) {
       log(`  (${r.encounter.name}: ${e.message || e})`);
       continue;

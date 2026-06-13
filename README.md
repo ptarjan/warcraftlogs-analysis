@@ -125,7 +125,7 @@ node cli.mjs "Name" server EU --class Monk --spec Brewmaster --difficulty 4   # 
 Class, spec, difficulty, and gear priority are **auto-detected from your logs**
 (same as the web app) — the flags only override individual fields. `cli.mjs`
 shims the one browser global the analyses use (`localStorage`, for gear.js's item
-cache — persisted to `.cli-cache.json`) and calls the same `run()`/`audit()`
+cache — persisted to `.cli-cache.json`) and calls the same `run()`
 functions the web UI does. `wcl.js` is multi-mode: **Node** uses
 client-credentials against `/api/v2/client`; the **browser** uses the visitor's
 own PKCE token against `/api/v2/user` when connected, else falls back to the

@@ -6,7 +6,7 @@
  * dodge CORS); under Node neither applies, so wcl.js talks straight to WCL with
  * your credentials. This driver just shims the one browser global the analysis
  * modules touch (localStorage, used by gear.js for its item-stat cache) and
- * calls each module's run()/audit() with console.log as the line emitter.
+ * calls each module's run() with console.log as the line emitter.
  *
  * Credentials: WCL_CLIENT_ID / WCL_CLIENT_SECRET via env, .env, or
  * worker/.dev.vars (all gitignored).
@@ -71,7 +71,7 @@ const [name, server, region] = positional;
 if (!name || !server || !region) {
   console.error("usage: node cli.mjs <name> <server> <region> " +
     "[--class Monk] [--spec Brewmaster] [--difficulty 5] [--priority crit] " +
-    "[--only overview,diagnose,gear,prescribe]\n" +
+    "[--only overview,timeline,gear,prescribe]\n" +
     "(class/spec/difficulty/priority are auto-detected from your logs if omitted)");
   process.exit(1);
 }
@@ -79,8 +79,8 @@ const only = opt.only ? new Set(opt.only.split(",").map((s) => s.trim())) : null
 
 // --- run ---
 const { detectContext, detectPriority, DIFFICULTY } = await import("./docs/core.js");
-const analyze = await import("./docs/analyze.js");
-const diagnose = await import("./docs/diagnose.js");
+const overview = await import("./docs/overview.js");
+const timeline = await import("./docs/timeline.js");
 const rotation = await import("./docs/rotation.js");
 const topparse = await import("./docs/topparse.js");
 const gear = await import("./docs/gear.js");
@@ -106,15 +106,15 @@ if (!cls || !spec || difficulty === undefined || !priority) {
 const p = { name, server, region, cls, spec, difficulty, priority };
 const SECTIONS = {
   overview: ["OVERVIEW & ITEM-LEVEL-MATCHED COMPARISON",
-    () => analyze.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-  diagnose: ["TIMELINE DIAGNOSIS",
-    () => diagnose.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+    () => overview.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  timeline: ["TIMELINE DIAGNOSIS",
+    () => timeline.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   rotation: ["ROTATION: OPENER & PRIORITY",
     () => rotation.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   chasing99: ["CHASING 99: YOU vs THE TOP PARSES",
     () => topparse.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   gear: ["GEAR AUDIT",
-    () => gear.audit(log, p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority)],
+    () => gear.run(log, p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority)],
   prescribe: ["PRESCRIPTION",
     () => prescribe.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty, p.priority)],
 };

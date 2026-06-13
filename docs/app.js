@@ -288,7 +288,7 @@ const SUPPORTING = [
   ["Timeline diagnosis", (p, log) => timeline.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Rotation: opener & priority", (p, log) => rotation.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Chasing 99: you vs the top parses", (p, log) => topparse.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-  ["Gear audit", (p, log) => gear.audit(log, p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority)],
+  ["Gear audit", (p, log) => gear.run(log, p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority)],
 ];
 
 function buildHero(name, server, region) {
