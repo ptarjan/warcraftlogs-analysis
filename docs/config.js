@@ -1,7 +1,7 @@
 // Set this to your deployed Worker URL (wrangler prints it after `deploy`,
 // e.g. https://wcl-proxy.<your-subdomain>.workers.dev).
 // You can also override at runtime with ?worker=https://... in the page URL.
-const FALLBACK = "https://wcl-proxy.example.workers.dev";
+const FALLBACK = "https://wcl-proxy.curly-unit-b9e0.workers.dev";
 
 const fromQuery = new URLSearchParams(location.search).get("worker");
 const fromStore = localStorage.getItem("workerUrl");
