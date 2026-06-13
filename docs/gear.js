@@ -39,12 +39,14 @@ export const SHORT = {
 export const PRIORITIES = ["crit", "haste", "mastery", "vers"];
 
 // localStorage-backed cache of parsed item stats, keyed by id[:bonus:ids].
+// "item2:" bumps the cache namespace (v1 entries predate the source/crafted
+// fields); old keys are simply ignored and re-fetched.
 function cacheGet(key) {
-  try { const v = localStorage.getItem("item:" + key); return v ? JSON.parse(v) : null; }
+  try { const v = localStorage.getItem("item2:" + key); return v ? JSON.parse(v) : null; }
   catch (e) { return null; }
 }
 function cacheSet(key, val) {
-  try { localStorage.setItem("item:" + key, JSON.stringify(val)); } catch (e) {}
+  try { localStorage.setItem("item2:" + key, JSON.stringify(val)); } catch (e) {}
 }
 
 export async function itemStats(itemId, bonusIds) {
@@ -64,8 +66,18 @@ export async function itemStats(itemId, bonusIds) {
     while ((mm = re.exec(html))) out[SHORT[mm[2]]] += parseInt(mm[1], 10);
     out.embellished = html.includes("Embellished");
     out.unique = html.includes("Unique-Equipped");
+    // Where it comes from, straight from the tooltip Wowhead already gives us:
+    // the boss that drops it (+ drop chance). Embellished gear is always crafted
+    // (no drop), so flag that instead. We deliberately don't map boss -> instance
+    // name: that needs a hardcoded, per-tier table (against this repo's rules).
+    const dm = html.match(/whtt-droppedby">Dropped by:\s*([^<]+)</i);
+    out.source = dm ? dm[1].trim() : null;
+    const dc = html.match(/whtt-dropchance">Drop Chance:\s*([^<]+)</i);
+    out.dropChance = dc ? dc[1].trim() : null;
+    out.crafted = out.embellished && !out.source;
   } catch (e) {
-    out = { name: String(itemId), crit: 0, haste: 0, mastery: 0, vers: 0, ilvl: null, embellished: false, unique: false };
+    out = { name: String(itemId), crit: 0, haste: 0, mastery: 0, vers: 0, ilvl: null,
+            embellished: false, unique: false, source: null, dropChance: null, crafted: false };
   }
   cacheSet(key, out);
   return out;
@@ -205,11 +217,11 @@ export async function gearFindings(name, server, region, difficulty, className, 
         if (cst.unique && myItemIds.has(candId)) continue;
         // require real adoption (>=3 of the field) to skip off-meta noise
         if ((cst[priority] || 0) - yoursPri >= 30 && cnt >= 3) {
-          if (!bestAlt || cst[priority] > bestAlt[1]) bestAlt = [cst.name, cst[priority], cnt];
+          if (!bestAlt || cst[priority] > bestAlt[1]) bestAlt = [cst.name, cst[priority], cnt, cst.source, cst.dropChance];
         }
       }
     }
-    if (bestAlt) swaps.push([SLOT[s], ist.name, bestAlt[0], bestAlt[1], bestAlt[2], slotTotal]);
+    if (bestAlt) swaps.push([SLOT[s], ist.name, bestAlt[0], bestAlt[1], bestAlt[2], slotTotal, bestAlt[3], bestAlt[4]]);
   }
 
   // Embellishment combo vs the field -- empirical: how does YOUR pair of
@@ -241,6 +253,13 @@ export async function gearFindings(name, server, region, difficulty, className, 
     field_n: fe.n, your_items_pop: yourItemsPop, top_items: topItems, recommended,
   };
 
+  // Holistic per-slot reconciliation: a slot earmarked for an embellishment
+  // (your current ones, or the combo we recommend) gets ONE plan -- the
+  // embellishment -- not also a "swap to a drop here" line for the same slot.
+  // (A crafted embellished piece is itemized to your stat anyway.)
+  const embPlanSlots = new Set([...yourCombo, ...recommended.map((r) => r[0])]);
+  const reconciledSwaps = swaps.filter((sw) => !embPlanSlots.has(sw[0]));
+
   const myGems = you.gear.flatMap((g) => (g.gems || []).map((gm) => gm.id)).filter(Boolean);
   const gemCount = new Map();
   for (const id of myGems) gemCount.set(id, (gemCount.get(id) || 0) + 1);
@@ -251,7 +270,7 @@ export async function gearFindings(name, server, region, difficulty, className, 
     field_top: fieldTop,
     field_variety_med: variety.length ? variety[Math.floor(variety.length / 2)] : null,
   };
-  return { rows, swaps, embellishedSlots, restats, emb_compare: embCompare, n: fc.n, priority, gems: gemInfo };
+  return { rows, swaps: reconciledSwaps, embellishedSlots, restats, emb_compare: embCompare, n: fc.n, priority, gems: gemInfo };
 }
 
 export async function audit(log, name, server, region, difficulty, className, specName, priority) {
@@ -294,7 +313,10 @@ export async function audit(log, name, server, region, difficulty, className, sp
   if (ff.swaps.length) {
     log("");
     log(`${priority[0].toUpperCase() + priority.slice(1)} drop CANDIDATES (a crit-itemized item the field runs in a non-tier/non-embellished slot of yours -- sim to confirm net gain):`);
-    for (const [slot, mine, theirs, amt, cnt, tot] of ff.swaps) log(`  ${slot}: '${mine}' -> '${theirs}' (+${amt} ${priority}; ${cnt}/${tot} of field)`);
+    for (const [slot, mine, theirs, amt, cnt, tot, src, chance] of ff.swaps) {
+      const from = src ? ` -- from ${src}${chance ? ` (${chance})` : ""}` : "";
+      log(`  ${slot}: '${mine}' -> '${theirs}' (+${amt} ${priority}; ${cnt}/${tot} of field)${from}`);
+    }
   } else {
     log("");
     log(`No ${priority} drop-swap available -- no field item in any slot beats your ${priority} by enough to matter.`);

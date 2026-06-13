@@ -161,6 +161,14 @@ query coalescing), and a smoke test that the browser modules import under Node.
 - WoW only exposes item IDs in logs; real per-item stats come from Wowhead's
   tooltip API, and **crafted gear shows 0/0/0/0 without its bonus IDs** (which
   also reveal the Embellishment).
+- An item's **source comes from the same tooltip** — `whtt-droppedby` ("Dropped
+  by: <boss>") and `whtt-dropchance`. Use the boss name; **don't map boss →
+  instance/dungeon name** — that needs a hardcoded, per-tier table that goes
+  stale (against the no-hardcoding rule). Embellished gear is crafted (no drop).
+- **Gear advice is reconciled per slot — one plan per slot.** A slot earmarked
+  for an embellishment (yours, or the combo we recommend) must NOT also get a
+  "swap to a drop here" line; otherwise the list contradicts itself (the bug:
+  Back recommended for both an embellishment and a haste cloak).
 - Uptime/range stats MUST be compared to peers on the same fight —
   intermissions otherwise look like your mistakes.
 - WCL enforces an hourly request limit **per token**; a full analysis makes many

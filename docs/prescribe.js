@@ -207,9 +207,10 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const statGap = (my.statPct !== null && field.stat_pct) ? field.stat_pct - my.statPct : 0;
   let howToStat = false;
   if (gf) {
-    for (const [slot, mine, theirs, amt, cnt, tot] of gf.swaps) {
+    for (const [slot, mine, theirs, amt, cnt, tot, src, chance] of gf.swaps) {
       howToStat = true;
-      rx.push([-2.0, "~1-3% DPS", `${PRI} via ${slot}: replace '${mine}' with '${theirs}' (+${amt} ${priority}; ${cnt}/${tot} of field -- sim to confirm).`]);
+      const from = src ? ` -- from ${src}${chance ? ` (${chance})` : ""}` : "";
+      rx.push([-2.0, "~1-3% DPS", `${PRI} via ${slot}: replace '${mine}' with '${theirs}' (+${amt} ${priority}; ${cnt}/${tot} of field${from} -- sim to confirm).`]);
     }
     for (const [slot, name2, mine, best] of gf.restats) {
       howToStat = true;

@@ -47,6 +47,32 @@ test("a mastery/vers belt has zero crit", async () => {
   assert.equal(s.vers, 39);
 });
 
+test("parses drop source + chance from the tooltip", async () => {
+  globalThis.fetch = mockFetch([
+    ["wowhead", () => tooltip("Soulletting Ruby",
+      "<!--ilvl-->37 +8 Intellect" +
+      '<div class="whtt-extra whtt-droppedby">Dropped by: Kul\'tharok</div>' +
+      '<div class="whtt-extra whtt-dropchance">Drop Chance: 10.25%</div>')],
+  ]);
+  const { itemStats } = await import("../docs/gear.js");
+  const s = await itemStats(178809, []);
+  assert.equal(s.source, "Kul'tharok");
+  assert.equal(s.dropChance, "10.25%");
+  assert.equal(s.crafted, false);
+});
+
+test("an embellished item with no drop source is flagged crafted", async () => {
+  globalThis.fetch = mockFetch([
+    ["wowhead", () => tooltip("Adherent's Silken Shroud",
+      "<!--ilvl-->723 +200 Haste Embellished")],
+  ]);
+  const { itemStats } = await import("../docs/gear.js");
+  const s = await itemStats(222820, []);
+  assert.equal(s.embellished, true);
+  assert.equal(s.source, null);
+  assert.equal(s.crafted, true);
+});
+
 test("result is cached: identical lookup does not refetch", async () => {
   const fx = mockFetch([["wowhead", () => tooltip("X", "+10 Haste")]]);
   globalThis.fetch = fx;
