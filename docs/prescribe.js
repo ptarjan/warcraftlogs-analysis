@@ -157,12 +157,21 @@ const CONSUMABLES = [
 // prescribe gathers: cross-boss execution, field consumables/enchants, stat gap.)
 // Each returns Finding[].
 
-function executionLevers(execd) {
+function executionLevers(execd, rot) {
   if (!execd) return [];
   const out = [];
-  if (execd.pressExcess >= 1.0) {
-    out.push(finding("Execution", DPS(Math.round(execd.pressExcess / 60 * 100)),
-      `PRESS FASTER (every boss): you idle ~${f(execd.pressExcess, 1)}s/min MORE than peers while IN melee range -- not latency (yours matches theirs), just gaps between GCDs. Always queue your next ability so a GCD never sits empty.`));
+  // Size press-faster from the MEASURED cast deficit (you cast N fewer damaging
+  // abilities/min than the field) when that's bigger than the idle-time proxy --
+  // the idle-seconds estimate under-counts (it misses slow-but-not-idle play).
+  const cg = rot && rot.castGap;
+  const idlePct = Math.round(execd.pressExcess / 60 * 100);
+  if (execd.pressExcess >= 1.0 || (cg && cg.pct >= 3)) {
+    const pct = Math.max(idlePct, (cg && cg.pct > 0) ? cg.pct : 0) || 1;
+    const cite = (cg && cg.pct > 0)
+      ? ` You cast ${f(cg.you, 0)} damaging abilities/min vs the field's ${f(cg.field, 0)} (${cg.pct}% fewer) -- that's the measured gap.`
+      : "";
+    out.push(finding("Execution", DPS(pct),
+      `PRESS FASTER (every boss): you idle ~${f(execd.pressExcess, 1)}s/min MORE than peers while IN melee range -- not latency (yours matches theirs), just gaps between GCDs.${cite} Always queue your next ability so a GCD never sits empty.`));
   }
   if (execd.rangeExcess >= 1.0 || execd.worstRange.length) {
     const where = execd.worstRange.length ? " Worst on: " + execd.worstRange.join(", ") + "." : "";
@@ -242,6 +251,19 @@ function renderPrescription(log, d) {
     const vsField = peerGap > 0 ? `${peerGap}% behind` : `${Math.abs(peerGap)}% ahead of`;
     log(`Measured on ${d.gearBoss.encounter.name}: you do ${k(you.dps)} DPS -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
         (topGap != null ? `, ${topGap}% behind the top parses` : "") + `. That gap is your headroom.`);
+  }
+  // A blunt, character-specific VERDICT: name the situation so the report never
+  // reads like a template -- and always points at an action (respec / the few
+  // setup fixes / "tighten your play, there's no shortcut").
+  const compList0 = rx.filter(isComp);
+  const setupFixes = yours.filter((r) => r.dim === "Gear" || r.dim === "Setup");
+  const hasBuild = yours.some((r) => /^TALENTS\/BUILD/.test(r.text));
+  if (hasBuild) {
+    log("VERDICT: you're on the WRONG BUILD -- respec to the field's first (you never press their main ability), then do the free enchant/gear fixes below.");
+  } else if (setupFixes.length) {
+    log(`VERDICT: your build & rotation already match the field -- your character levers are the ${setupFixes.length} gear/setup fix${setupFixes.length > 1 ? "es" : ""} below + pressing faster. The big gap is ${compList0.length ? "comp + " : ""}reps, not a setup overhaul.`);
+  } else {
+    log(`VERDICT: build, gear, enchants, and rotation all match the field -- there's NO setup or talent fix to make. Your gap is ${compList0.length ? "comp + " : ""}execution (press faster / uptime). Tighten your play; there's no gear/talent shortcut.`);
   }
   if (yours.length) log(`Biggest fix YOU control: ${rxHeadline(yours[0].text)} -- start here.`);
   // What the gap is made of -- MEASURED quantities (no per-lever DPS guess).
@@ -324,7 +346,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // labels (the old bug was sorting by a separate, stale key). Each domain owns
   // its own lever-building; prescribe just concatenates.
   const rx = [
-    ...executionLevers(execd),
+    ...executionLevers(execd, rot),
     ...consumableLevers(field, my),
     ...enchantLevers(field, my),
     ...gearLevers(gf, priority),

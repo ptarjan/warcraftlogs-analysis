@@ -175,9 +175,14 @@ export async function rotationFindings(name, server, region, className, specName
   const fieldOpener = peers.length ? peers[0].opener : null;
   const fieldRate = fieldCastRates(peers.map((p) => p.castRate || {}));
   const usage = usageDivergence(you.castRate || {}, fieldRate);
+  // Measured total damaging-ability casts/min, you vs field -- the direct "are
+  // you pressing as often as they are" gap (sizes the press-faster lever).
+  const sum = (o) => Object.values(o || {}).reduce((a, b) => a + b, 0);
+  const youCpm = sum(you.castRate), fieldCpm = sum(fieldRate);
+  const castGap = { you: youCpm, field: fieldCpm, pct: fieldCpm > 0 ? Math.round(((fieldCpm - youCpm) / fieldCpm) * 100) : 0 };
   return {
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener,
-    usage, fieldPeers: peers.length,
+    usage, castGap, fieldPeers: peers.length,
     proc: { name: top.name, isReal, youPerMin: top.procPerMin, fieldPerMin: fieldProc },
   };
 }
