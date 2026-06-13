@@ -1,3 +1,4 @@
+// @ts-check
 // Talent build vs the field. WCL's CombatantInfo carries a `talentTree` --
 // [{id, rank, nodeID}] -- so we compare YOUR chosen talent nodes against what
 // the ilvl/spec field actually runs on a boss, and flag the meta talents you're

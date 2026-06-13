@@ -1,3 +1,4 @@
+// @ts-check
 // Comparative timeline root-cause analysis: where in the fight your DPS leaks
 // vs ilvl-matched peers on the SAME boss (phase/intermission aware).
 import { gql } from "./wcl.js";
@@ -13,7 +14,7 @@ function estimateGcd(gapsMs) {
 
 // Pure computation: timeline diagnostic for one actor on one fight.
 async function fightMetrics(code, fight, sourceId, className = "Monk") {
-  const [fStart, fEnd] = await fightWindow(code, fight, className);
+  const [fStart, fEnd] = await fightWindow(code, fight);
   const dur = (fEnd - fStart) / 1000.0;
   // Casts + auto-attacks in one query. Autos anchor the "in range vs not pressing"
   // split (melee=ability 1, Hunters=Auto Shot 75; casters have none -> no autos,

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 /**
  * Command-line runner for the analysis modules -- no Worker needed.
  *
@@ -53,7 +54,7 @@ export const SECTION_SPECS = [
 
 // Import a spec's module, resolved relative to THIS file (so the test can load
 // it from test/ too). Returns the module namespace.
-export const loadSectionModule = (spec) => import(new URL(spec.module, import.meta.url));
+export const loadSectionModule = (spec) => import(new URL(spec.module, import.meta.url).href);
 
 // Persist WCL GraphQL results to disk between runs (wcl.js, Node-only) so
 // iterating on one character doesn't re-spend points and trip WCL's per-IP 429
@@ -92,6 +93,9 @@ globalThis.localStorage = {
   getItem: (k) => (k in _store ? _store[k] : null),
   setItem: (k, v) => { _store[k] = String(v); _save(); },
   removeItem: (k) => { delete _store[k]; _save(); },
+  clear: () => { _store = {}; _save(); },
+  key: (i) => Object.keys(_store)[i] ?? null,
+  get length() { return Object.keys(_store).length; },
 };
 
 // --- args ---

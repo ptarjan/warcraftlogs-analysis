@@ -3,6 +3,11 @@
 // opts into checking with `// @ts-check` (referenced in JSDoc as {Finding} etc.).
 // Type-check only; emits nothing.
 
+/** Wowhead's tooltip widget (power.js), loaded via a <script> in index.html. */
+interface Window {
+  $WowheadPower?: { refreshLinks?: () => void };
+}
+
 /** Which analysis a finding came from (splits "yours to do" from raid comp). */
 type Dim = "Execution" | "Rotation" | "Setup" | "Gear" | "Comp";
 

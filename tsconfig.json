@@ -14,7 +14,7 @@
     "strict": false,
     "noImplicitAny": false,
     "skipLibCheck": true,
-    "types": []
+    "types": ["node"]
   },
   "include": ["docs/**/*.js", "cli.mjs", "types.d.ts"]
 }

@@ -1,3 +1,4 @@
+// @ts-check
 // Browser config. No secret ever lives in the page. Connect-only:
 //   the user clicks Connect once (OAuth PKCE "public client", auth.js) and the
 //   browser holds THEIR own token, calling /api/v2/user directly -- their own

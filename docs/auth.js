@@ -1,3 +1,4 @@
+// @ts-check
 // OAuth 2.0 PKCE ("public client") for the browser -- no client secret. On the
 // way out we send a SHA-256 code *challenge*; on the token exchange we send the
 // matching *verifier*, proving we started the flow. The access token lives in

@@ -1,3 +1,4 @@
+// @ts-check
 // UI wiring: pick character/region/server, auto-detect the rest, then render
 // the result as a web report -- the prioritized list of changes up top, with
 // the supporting analyses as collapsible cards below.
@@ -13,6 +14,9 @@ import * as topparse from "./topparse.js";
 import * as gear from "./gear.js";
 import * as prescribe from "./prescribe.js";
 
+/** Look up a known element. Typed loosely (any) on purpose -- this is DOM glue;
+ *  the analysis modules are where type-checking earns its keep.
+ *  @param {string} id @returns {any} */
 const $ = (id) => document.getElementById(id);
 const out = $("out"), statusEl = $("status"), goBtn = $("go"), form = $("form");
 const regionSel = $("region"), serverSel = $("server"), authEl = $("auth");
@@ -329,7 +333,8 @@ function setRunning(on) {
 // reset ETA when WCL provides one (Retry-After).
 let activeHero = null;
 window.addEventListener("wcl-ratelimit", (e) => {
-  const s = e && e.detail && e.detail.retryAfter;
+  const detail = /** @type {CustomEvent} */ (e).detail;
+  const s = detail && detail.retryAfter;
   const when = (typeof s === "number" && s > 0)
     ? ` — retry in ~${s >= 60 ? Math.ceil(s / 60) + " min" : Math.ceil(s) + "s"}`
     : " — waiting a moment";
@@ -342,6 +347,7 @@ window.addEventListener("wcl-ratelimit", (e) => {
 });
 
 // Supporting analyses (collapsed by default -- evidence behind the list).
+/** @type {[string, (p: any, log: (line?: string) => void) => any][]} */
 const SUPPORTING = [
   ["Overview & item-level comparison", (p, log) => overview.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Timeline diagnosis", (p, log) => timeline.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
@@ -451,7 +457,8 @@ async function runAnalysis({ name, server, region, serverLabel }) {
         },
       );
     }));
-    const reconnect = settled.find((s) => s.status === "rejected" && s.reason instanceof NeedsAuth);
+    const reconnect = /** @type {PromiseRejectedResult | undefined} */ (
+      settled.find((s) => s.status === "rejected" && /** @type {PromiseRejectedResult} */ (s).reason instanceof NeedsAuth));
     if (reconnect) throw reconnect.reason;
 
     // The prioritized list depends on the analyses above (cache now warm), so it

@@ -1,3 +1,4 @@
+// @ts-check
 // Overview + item-level / duration-controlled comparison vs the field.
 import {
   DIFFICULTY, characterZone, characterEncounter, topRankings, playerMetrics,

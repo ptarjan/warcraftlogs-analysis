@@ -1,3 +1,4 @@
+// @ts-check
 // WCL GraphQL + Wowhead tooltips. Two paths, no secret in the page:
 //   Node/CLI  -> client-credentials (env/.env) -> /api/v2/client, direct.
 //   browser   -> the user's own PKCE token (auth.js) -> /api/v2/user, direct.
