@@ -1,4 +1,5 @@
-// Comparative timeline root-cause diagnosis. Ported from diagnose.py.
+// Comparative timeline root-cause analysis: where in the fight your DPS leaks
+// vs ilvl-matched peers on the SAME boss (phase/intermission aware).
 import { gql } from "./wcl.js";
 import {
   characterZone, characterEncounter, playerMetrics, collectPeers, median, f, mapLimit, fightWindow,

@@ -8,7 +8,7 @@
 ## The goal (north star)
 **Pull a bunch of Warcraft Logs data, do a bunch of analysis, and spit out ONE
 prioritized list of changes the player should make.** Everything else (overview,
-diagnose, rotation, gear) is an *input* to that list. `prescribe.js` is the
+timeline, rotation, gear) is an *input* to that list. `prescribe.js` is the
 payoff; the list is sorted **biggest-DPS-first by the impact actually shown**.
 
 ## Architecture

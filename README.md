@@ -237,8 +237,8 @@ query coalescing), and a smoke test that the browser modules import under Node.
 - `docs/auth.js` — OAuth PKCE (connect / token / redirect callback), browser-only.
 - `docs/wcl.js` — WCL GraphQL + Wowhead tooltips (Node creds / browser PKCE / proxy).
 - `docs/core.js` — shared constants, formatting, and low-level fetchers.
-- `docs/analyze.js` — overview + ilvl/duration-controlled comparison.
-- `docs/diagnose.js` — comparative timeline root-cause diagnosis.
+- `docs/overview.js` — overview + ilvl/duration-controlled comparison.
+- `docs/timeline.js` — comparative timeline root-cause analysis.
 - `docs/gear.js` — automatic gear audit (real item stats vs the field).
 - `docs/prescribe.js` — the prioritized, actionable prescription.
 - `docs/app.js` / `docs/index.html` — the UI.

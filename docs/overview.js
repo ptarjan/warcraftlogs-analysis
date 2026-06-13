@@ -1,4 +1,4 @@
-// Overview + item-level / duration-controlled comparison. Ported from analyze.py.
+// Overview + item-level / duration-controlled comparison vs the field.
 import {
   DIFFICULTY, characterZone, characterEncounter, topRankings, playerMetrics,
   secondaryStats, gearSummary, median, f, padL, padR, mapLimit, bestRank, collectPeers,

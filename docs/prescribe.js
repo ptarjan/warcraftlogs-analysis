@@ -3,7 +3,7 @@ import {
   ENCHANTABLE_SLOTS, characterZone, characterEncounter, playerMetrics,
   collectPeers, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry, bestRank,
 } from "./core.js";
-import { compareBoss } from "./diagnose.js";
+import { compareBoss } from "./timeline.js";
 import { gearFindings, sourceText } from "./gear.js";
 import { wowheadItem, wowheadSpell } from "./links.js";
 import { rotationFindings } from "./rotation.js";

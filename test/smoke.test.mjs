@@ -24,11 +24,11 @@ test("modules import under Node and expose their entry points", async () => {
   assert.equal(typeof auth.handleRedirectCallback, "function");
   assert.equal(typeof auth.getAccessToken, "function");
 
-  const analyze = await import("../docs/analyze.js");
-  assert.equal(typeof analyze.run, "function");
+  const overview = await import("../docs/overview.js");
+  assert.equal(typeof overview.run, "function");
 
-  const diagnose = await import("../docs/diagnose.js");
-  assert.equal(typeof diagnose.run, "function");
+  const timeline = await import("../docs/timeline.js");
+  assert.equal(typeof timeline.run, "function");
 
   const gear = await import("../docs/gear.js");
   assert.equal(typeof gear.itemStats, "function");

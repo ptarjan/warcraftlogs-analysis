@@ -5,8 +5,8 @@ import { detectContext, detectPriority, DIFFICULTY } from "./core.js";
 import { isAuthed, beginLogin, handleRedirectCallback, logout } from "./auth.js";
 import { NeedsAuth, myCharacters, primeRateReset } from "./wcl.js";
 import { paramsFromSearch, shareSearch } from "./share.js";
-import * as analyze from "./analyze.js";
-import * as diagnose from "./diagnose.js";
+import * as overview from "./overview.js";
+import * as timeline from "./timeline.js";
 import * as rotation from "./rotation.js";
 import * as topparse from "./topparse.js";
 import * as gear from "./gear.js";
@@ -284,8 +284,8 @@ window.addEventListener("wcl-ratelimit", (e) => {
 
 // Supporting analyses (collapsed by default -- evidence behind the list).
 const SUPPORTING = [
-  ["Overview & item-level comparison", (p, log) => analyze.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-  ["Timeline diagnosis", (p, log) => diagnose.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  ["Overview & item-level comparison", (p, log) => overview.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  ["Timeline diagnosis", (p, log) => timeline.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Rotation: opener & priority", (p, log) => rotation.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Chasing 99: you vs the top parses", (p, log) => topparse.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Gear audit", (p, log) => gear.audit(log, p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority)],
