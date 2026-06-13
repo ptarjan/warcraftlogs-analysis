@@ -300,67 +300,47 @@ async function _gqlRun(query, retries = 6) {
   throw last;
 }
 
-// Wowhead tooltip JSON for an item (real per-instance stats need the bonus IDs).
-// Direct to Wowhead when trusted (Node) or connected (own token); anonymous
-// browser sessions go through the Worker (which also caches these for a week).
-// Coalesces concurrent identical fetches within a session.
-const _itemInflight = new Map();
-export async function itemTooltip(id, bonusIds) {
-  const bonus = (bonusIds || []).map(String);
-  const q = bonus.length ? `?bonus=${bonus.join(":")}` : "";
-  const direct = IS_NODE || !!getAccessToken();
-  const url = direct
-    ? `${WOWHEAD}${encodeURIComponent(id)}${q}`
-    : `${WORKER_URL}/item/${id}${q}`;
-  if (_itemInflight.has(url)) return _itemInflight.get(url);
+// ---- Wowhead lookups (tooltips + item XML) ----------------------------------
+// One path for all of them: direct to Wowhead when trusted (Node) or connected
+// (own token), else through the Worker proxy (which caches a week). Coalesces
+// concurrent identical fetches within a session and times out hung sockets.
+const WOWHEAD_SPELL = "https://nether.wowhead.com/tooltip/spell/";
+const WOWHEAD_ZONE = "https://nether.wowhead.com/tooltip/zone/";
+const WOWHEAD_ITEM_XML = "https://www.wowhead.com/item=";
+const _whInflight = new Map();
+async function wowhead(directUrl, workerPath, parse = "json") {
+  const url = (IS_NODE || !!getAccessToken()) ? directUrl : `${WORKER_URL}${workerPath}`;
+  if (_whInflight.has(url)) return _whInflight.get(url);
   // Node has no default UA Wowhead likes; the browser sends its own (and can't
   // override it anyway), so only set it under Node.
   const opts = withTimeout(IS_NODE ? { headers: { "User-Agent": "Mozilla/5.0" } } : {});
-  const p = fetch(url, opts).then((r) => r.json());
-  _itemInflight.set(url, p);
-  try { return await p; } finally { _itemInflight.delete(url); }
+  const p = fetch(url, opts).then((r) => (parse === "text" ? r.text() : r.json()));
+  _whInflight.set(url, p);
+  try { return await p; } finally { _whInflight.delete(url); }
 }
 
-// Wowhead tooltip JSON for a spell (for talent names). Same routing as items:
-// direct when trusted/connected, else through the Worker (cached a week).
-const WOWHEAD_SPELL = "https://nether.wowhead.com/tooltip/spell/";
-const _spellInflight = new Map();
-export async function spellTooltip(id) {
-  const direct = IS_NODE || !!getAccessToken();
-  const url = direct ? `${WOWHEAD_SPELL}${encodeURIComponent(id)}` : `${WORKER_URL}/spell/${id}`;
-  if (_spellInflight.has(url)) return _spellInflight.get(url);
-  const opts = IS_NODE ? { headers: { "User-Agent": "Mozilla/5.0" } } : undefined;
-  const p = fetch(url, opts).then((r) => r.json());
-  _spellInflight.set(url, p);
-  try { return await p; } finally { _spellInflight.delete(url); }
+// Item tooltip JSON (real per-instance stats need the bonus IDs).
+export function itemTooltip(id, bonusIds) {
+  const bonus = (bonusIds || []).map(String);
+  const q = bonus.length ? `?bonus=${bonus.join(":")}` : "";
+  return wowhead(`${WOWHEAD}${encodeURIComponent(id)}${q}`, `/item/${id}${q}`);
+}
+
+// Spell tooltip JSON (for talent names).
+export function spellTooltip(id) {
+  return wowhead(`${WOWHEAD_SPELL}${encodeURIComponent(id)}`, `/spell/${id}`);
 }
 
 // Item XML (text): the tooltip JSON omits the drop source's zone id, but the
 // XML's <json> block has `sourcemore` (zone id per source) so we can name the
-// instance an item drops in. Same routing/caching as the tooltips.
-const WOWHEAD_ITEM_XML = "https://www.wowhead.com/item=";
-const _itemXmlInflight = new Map();
-export async function itemXml(id) {
-  const direct = IS_NODE || !!getAccessToken();
-  const url = direct ? `${WOWHEAD_ITEM_XML}${encodeURIComponent(id)}&xml` : `${WORKER_URL}/itemxml/${id}`;
-  if (_itemXmlInflight.has(url)) return _itemXmlInflight.get(url);
-  const opts = withTimeout(IS_NODE ? { headers: { "User-Agent": "Mozilla/5.0" } } : {});
-  const p = fetch(url, opts).then((r) => r.text());
-  _itemXmlInflight.set(url, p);
-  try { return await p; } finally { _itemXmlInflight.delete(url); }
+// instance an item drops in.
+export function itemXml(id) {
+  return wowhead(`${WOWHEAD_ITEM_XML}${encodeURIComponent(id)}&xml`, `/itemxml/${id}`, "text");
 }
 
-// Wowhead zone tooltip JSON ({name, ...}) -- resolves a zone id to its name.
-const WOWHEAD_ZONE = "https://nether.wowhead.com/tooltip/zone/";
-const _zoneInflight = new Map();
-export async function zoneTooltip(id) {
-  const direct = IS_NODE || !!getAccessToken();
-  const url = direct ? `${WOWHEAD_ZONE}${encodeURIComponent(id)}` : `${WORKER_URL}/zone/${id}`;
-  if (_zoneInflight.has(url)) return _zoneInflight.get(url);
-  const opts = withTimeout(IS_NODE ? { headers: { "User-Agent": "Mozilla/5.0" } } : {});
-  const p = fetch(url, opts).then((r) => r.json());
-  _zoneInflight.set(url, p);
-  try { return await p; } finally { _zoneInflight.delete(url); }
+// Zone tooltip JSON ({name, ...}) -- resolves a zone id to its name.
+export function zoneTooltip(id) {
+  return wowhead(`${WOWHEAD_ZONE}${encodeURIComponent(id)}`, `/zone/${id}`);
 }
 
 // The connected user's own characters that have parses on the CURRENT content,
