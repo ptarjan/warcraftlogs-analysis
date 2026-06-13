@@ -60,7 +60,7 @@ async function bestIlvlKill(name, server, region, encounterId, difficulty) {
 
 async function fieldGearConsumables(encounterId, difficulty, className, specName, targetIlvl, priority = "crit", n = 10) {
   const enchBySlot = {};   // slot -> Map(name -> count)
-  const trinkets = new Map(), flasks = new Map(), foods = new Map();
+  const trinkets = new Map(), flasks = new Map(), foods = new Map(), potions = new Map();
   const guids = new Map(); // flask/food name -> spell guid (for Wowhead links)
   const statPcts = [];
   // Collect ilvl-matched candidates, then fetch each peer's gear/buffs/stats
@@ -96,6 +96,8 @@ async function fieldGearConsumables(encounterId, difficulty, className, specName
       const lc = nm.toLowerCase();
       if (b.pct > 50 && lc.includes("flask")) { flasks.set(nm, (flasks.get(nm) || 0) + 1); guids.set(nm, b.guid); }
       if (b.pct > 50 && lc.includes("well fed")) { foods.set(nm, (foods.get(nm) || 0) + 1); guids.set(nm, b.guid); }
+      // Combat potions are brief (a few uses), so any uptime counts; exclude heals.
+      if (b.pct > 0 && lc.includes("potion") && !lc.includes("healing")) { potions.set(nm, (potions.get(nm) || 0) + 1); guids.set(nm, b.guid); }
     }
     if (s) {
       const sec = ["crit", "haste", "mastery", "vers"].reduce((acc, k) => acc + s[k], 0) || 1;
@@ -103,7 +105,7 @@ async function fieldGearConsumables(encounterId, difficulty, className, specName
     }
   }
   return {
-    ench_by_slot: enchBySlot, trinkets, flasks, foods, guids,
+    ench_by_slot: enchBySlot, trinkets, flasks, foods, potions, guids,
     stat_pct: statPcts.length ? median(statPcts) : null, n: peers.length,
   };
 }
@@ -112,6 +114,10 @@ async function mySetup(code, fight, sourceId, gear, priority = "crit") {
   const bf = await buffUptimes(code, fight, sourceId);
   const flask = Object.entries(bf).find(([n, b]) => n.toLowerCase().includes("flask") && b.pct > 50);
   const food = Object.entries(bf).find(([n, b]) => n.toLowerCase().includes("well fed") && b.pct > 50);
+  const potion = Object.entries(bf).find(([n, b]) => {
+    const lc = n.toLowerCase();
+    return lc.includes("potion") && !lc.includes("healing") && b.pct > 0;
+  });
   const stats = await secondaryStats(code, fight, sourceId);
   const statPct = stats
     ? 100 * stats[priority] / (["crit", "haste", "mastery", "vers"].reduce((a, k) => a + stats[k], 0) || 1)
@@ -121,6 +127,7 @@ async function mySetup(code, fight, sourceId, gear, priority = "crit") {
   return {
     flask: flask ? flask[0] : null, flaskGuid: flask ? flask[1].guid : null,
     food: food ? food[0] : null, foodGuid: food ? food[1].guid : null,
+    potion: potion ? potion[0] : null, potionGuid: potion ? potion[1].guid : null,
     statPct, trinkets, ench,
   };
 }
@@ -205,6 +212,15 @@ export async function run(log, name, server, region, className = "Monk", specNam
     const tfo = topEntry(field.foods)[0];
     if (my.food && my.food !== tfo) {
       rx.push([-1.0, "~1% DPS", `FOOD: ${wowheadSpell(my.foodGuid, my.food)} -> ${wowheadSpell(field.guids.get(tfo), tfo)}.`]);
+    }
+  }
+  if (field.potions.size) {
+    const tp = topEntry(field.potions)[0];
+    if (!my.potion) {
+      rx.push([-3.0, "~1-3% DPS", `COMBAT POTION: you used none -- ${field.potions.get(tp)}/${field.n} peers pop ` +
+        `${wowheadSpell(field.guids.get(tp), tp)} (pre-pull + again on cooldown/burst = 2 per fight). Free parse with equal gear.`]);
+    } else if (my.potion !== tp) {
+      rx.push([-1.0, "~1% DPS", `COMBAT POTION: ${wowheadSpell(my.potionGuid, my.potion)} -> ${wowheadSpell(field.guids.get(tp), tp)}.`]);
     }
   }
 
