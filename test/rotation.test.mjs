@@ -5,7 +5,39 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse } = await import("../docs/rotation.js");
+
+test("classifyUnderUse: baseline button you skip is NOT a missing talent", () => {
+  // Shield of the Righteous is baseline -- in neither your talents nor the spec's
+  // talent universe. Skipping it must fall through to an ordinary rotation fix,
+  // never "respec" (the Prot Paladin over-reach this guards against).
+  const top = { name: "Shield of the Righteous", you: 0, field: 20 };
+  const talent = { taken: new Set(["Crusader's Reprieve"]), universe: new Set(["Crusader's Reprieve", "Sentinel"]) };
+  assert.equal(classifyUnderUse(top, talent), null);
+});
+
+test("classifyUnderUse: a talent you skipped (peers run it) -> respec", () => {
+  const top = { name: "Rupture", you: 0, field: 2.1 };
+  const talent = { taken: new Set(["Garrote"]), universe: new Set(["Garrote", "Rupture"]) };
+  assert.equal(classifyUnderUse(top, talent), "missing-talent");
+});
+
+test("classifyUnderUse: a talent you took but never press -> build/usage problem", () => {
+  const top = { name: "Rupture", you: 0, field: 2.1 };
+  const talent = { taken: new Set(["Rupture"]), universe: new Set(["Garrote", "Rupture"]) };
+  assert.equal(classifyUnderUse(top, talent), "talented-unused");
+});
+
+test("classifyUnderUse: only fires when you NEVER press it (not a mild gap)", () => {
+  const talent = { taken: new Set(), universe: new Set(["Rupture"]) };
+  assert.equal(classifyUnderUse({ name: "Rupture", you: 1.0, field: 2.1 }, talent), null); // you do press it
+  assert.equal(classifyUnderUse({ name: "Rupture", you: 0, field: 1.0 }, talent), null);   // field rarely casts it
+});
+
+test("classifyUnderUse: no talent data -> never claim a talent fix", () => {
+  const top = { name: "Rupture", you: 0, field: 2.1 };
+  assert.equal(classifyUnderUse(top, null), null);
+});
 
 test("fieldCastRates takes the per-ability median across peers (absent = 0)", () => {
   const peers = [

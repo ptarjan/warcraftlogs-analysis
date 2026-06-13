@@ -10,6 +10,7 @@ import {
   characterZone, characterEncounter, playerMetrics, collectPeers, mapLimit, median,
   reportCore, fightWindow, fightEvents, paginateEvents, f, DPS, finding,
 } from "./core.js";
+import { talentedAbilities } from "./talents.js";
 
 // --- pure, unit-tested helpers ----------------------------------------------
 
@@ -105,7 +106,7 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
       hits.push({ name: a.name, ...ph, procPerMin: ph.procBig / (dur / 60 || 1) });
     }
   }
-  return { opener: openerSequence(casts), hits, dur, castRate };
+  return { opener: openerSequence(casts), hits, dur, castRate, sourceID: m.sourceID };
 }
 
 // Median casts/min per ability across the field's kills (absent in a kill = 0),
@@ -135,6 +136,24 @@ export function usageDivergence(youRate, fieldRate, { floor = 0.5, ratio = 2 } =
   under.sort((a, b) => b.gap - a.gap);
   over.sort((a, b) => b.gap - a.gap);
   return { under, over };
+}
+
+// Classify the field's top under-used ability against YOUR talents, so we only
+// say "respec" when it's actually a talent you lack. `talent` is the
+// { taken, universe } from talentedAbilities (or null when unknown).
+//   - "talented-unused": you specced it but never press it -> build/usage problem
+//   - "missing-talent":  it's a talent you skipped (peers run it) -> respec
+//   - null:              baseline ability you simply aren't pressing (e.g. Shield
+//                        of the Righteous), OR not a never-pressed case, OR no
+//                        talent data -> handle as an ordinary rotation/priority fix
+//                        (NEVER claim a missing talent we can't prove).
+export function classifyUnderUse(top, talent) {
+  if (!top) return null;
+  const neverPress = top.you < 0.2 && top.field >= 1.5;
+  if (!neverPress || !talent || !talent.universe) return null;
+  if (talent.taken.has(top.name)) return "talented-unused";
+  if (talent.universe.has(top.name)) return "missing-talent";
+  return null;                              // baseline -> press it, don't respec
 }
 
 // --- findings (data the prescription consumes) -------------------------------
@@ -180,9 +199,16 @@ export async function rotationFindings(name, server, region, className, specName
   const sum = (o) => Object.values(o || {}).reduce((a, b) => a + b, 0);
   const youCpm = sum(you.castRate), fieldCpm = sum(fieldRate);
   const castGap = { you: youCpm, field: fieldCpm, pct: fieldCpm > 0 ? Math.round(((fieldCpm - youCpm) / fieldCpm) * 100) : 0 };
+  // Your talented abilities, so the prescription can tell a skipped talent from a
+  // baseline ability you simply aren't pressing (don't tell people to "respec"
+  // for a baseline button). Best-effort: null if CombatantInfo/Raidbots missing.
+  let talent = null;
+  try {
+    talent = await talentedAbilities(er.ranks[0].report.code, er.ranks[0].report.fightID, you.sourceID);
+  } catch (e) { /* no talent data -> levers treat under-use as a rotation fix */ }
   return {
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener,
-    usage, castGap, fieldPeers: peers.length,
+    usage, castGap, fieldPeers: peers.length, talent,
     proc: { name: top.name, isReal, youPerMin: top.procPerMin, fieldPerMin: fieldProc },
   };
 }
@@ -250,18 +276,24 @@ export function rotationLevers(rot) {
   if (u && u.under.length) {
     const top = u.under[0];
     const overTop = u.over[0];
-    // Never casting an ability the field leans on is almost certainly a missing
-    // talent, not a priority slip -- you can't press what you don't have. That's
-    // a build/respec fix (a real change to your character), so we say so instead
-    // of "press it more". (We can name the ability but not the talent NODE --
-    // talentTree ids aren't spell ids -- yet the ability tells you which build to copy.)
-    const neverPress = top.you < 0.2 && top.field >= 1.5;
-    if (neverPress) {
+    // Never casting an ability the field leans on USED to be reported as "missing
+    // the talent -- respec". That over-reached on baseline buttons (a Prot Paladin
+    // told to respec for Shield of the Righteous). Now we check YOUR talents:
+    // only call it a missing talent if it's actually a talent you skipped; if you
+    // specced it but don't press it, it's a build/usage problem; a baseline button
+    // you skip falls through to the ordinary "press it more" rotation fix.
+    const cls = classifyUnderUse(top, rot && rot.talent);
+    const onGlobals = overTop ? ` Right now you spend those globals on ${overTop.name}.` : "";
+    if (cls === "missing-talent") {
       out.push(finding("Rotation", DPS(5, 10),
-        `TALENTS/BUILD: you never press ${top.name}, but the field casts it ${f(top.field, 1)}/min -- ` +
-        `you're almost certainly missing the talent that grants it. Respec to the field's build ` +
-        `(the one with ${top.name}); your rotation can't include it until you do.` +
-        (overTop ? ` Right now you spend those globals on ${overTop.name}.` : "")));
+        `TALENTS/BUILD: you never press ${top.name}, and you haven't talented it while the field casts it ` +
+        `${f(top.field, 1)}/min -- respec to the field's build (the one with ${top.name}); your rotation ` +
+        `can't include it until you do.${onGlobals}`));
+    } else if (cls === "talented-unused") {
+      out.push(finding("Rotation", DPS(5, 10),
+        `TALENTS/BUILD: you've talented ${top.name} but never press it, while the field casts it ` +
+        `${f(top.field, 1)}/min -- a wasted talent. Work it into your rotation, or respec the point into ` +
+        `something you'll actually use.${onGlobals}`));
     } else {
       const under = u.under.slice(0, 2).map((a) => `${a.name} (peers ${f(a.field, 1)}/min vs your ${f(a.you, 1)})`);
       const wrongButton = u.over.length > 0;

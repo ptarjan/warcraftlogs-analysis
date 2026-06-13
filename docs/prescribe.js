@@ -265,7 +265,7 @@ function renderPrescription(log, d) {
   const setupFixes = yours.filter((r) => r.dim === "Gear" || r.dim === "Setup");
   const hasBuild = yours.some((r) => /^TALENTS\/BUILD/.test(r.text));
   if (hasBuild) {
-    log("VERDICT: you're on the WRONG BUILD -- respec to the field's first (you never press their main ability), then do the free enchant/gear fixes below.");
+    log("VERDICT: your biggest lever is a TALENT/BUILD fix -- you're not pressing an ability the field leans on (see #1). Sort that first, then do the free enchant/gear fixes below.");
   } else if (setupFixes.length) {
     log(`VERDICT: your build & rotation already match the field -- your character levers are the ${setupFixes.length} gear/setup fix${setupFixes.length > 1 ? "es" : ""} below + pressing faster. The big gap is ${compList0.length ? "comp + " : ""}reps, not a setup overhaul.`);
   } else {

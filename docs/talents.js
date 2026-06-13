@@ -145,6 +145,30 @@ async function fieldLoadouts(encounterId, difficulty, className, specName, n = 1
   return outs.filter(Boolean).slice(0, n);
 }
 
+// The abilities a player has TALENTED on a fight, plus the full set of ability
+// names that EXIST as talents in their spec. The two together let a caller tell
+// three cases apart for an ability the field presses but the player doesn't:
+//   - in `taken`     -> they specced it but don't press it (a build/usage problem)
+//   - in `universe`  -> it's a talent they skipped (respec to pick it up)
+//   - in neither     -> it's BASELINE (e.g. Shield of the Righteous) -- they have
+//                       it, they're just not pressing it (a rotation problem, NOT
+//                       a missing talent). This is the SotR over-reach guard.
+// Returns null when talent data is unavailable (no CombatantInfo / Raidbots).
+export async function talentedAbilities(code, fight, sourceId) {
+  const you = await loadout(code, fight, sourceId);
+  if (!you) return null;
+  const idx = await talentIndex(you.specID);
+  const universe = new Set();
+  for (const n of idx.byNode.values()) if (n) universe.add(n);
+  for (const e of idx.byEntry.values()) if (e && e.name) universe.add(e.name);
+  const taken = new Set();
+  for (const [node, info] of you.map) {
+    const { name } = talentLabel(idx, node, info.id);
+    if (name) taken.add(name);
+  }
+  return { taken, universe };
+}
+
 // --- findings (data the prescription + card consume) -------------------------
 
 // Named talent findings vs the field on your benchmark boss. Returns null when
