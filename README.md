@@ -206,6 +206,12 @@ query coalescing), and a smoke test that the browser modules import under Node.
   Outsized hits that are all crits mean the player needs *crit + raid buffs*
   (stat/comp, not actionable in the rotation), not a "missed empowerment button."
   Only outsized NON-crit hits indicate a real proc to maintain.
+- **Anchor the answer on MEASURED DPS, not a sum of per-lever guesses.** We have
+  your kill's DPS, the ilvl-matched field's, and the top parses' -- so the
+  headline gap is real ("you 68k vs the field's 96k, 41% behind"). Break that gap
+  into measured facts (lost GCD s/min, cast rates, buff uptimes, routing %). Only
+  gear needs an estimate (a stat→DPS value wants a sim) -- say so; never present a
+  summed estimate as if it were the measured total.
 - **Derive the stat priority** from what the field stacks (`detectPriority`),
   never assume crit. And only tell someone to raise a stat with a concrete HOW
   (which item to swap/recraft) — otherwise say it's not actionable and why.

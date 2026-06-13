@@ -127,6 +127,7 @@ async function fieldGearConsumables(encounterId, difficulty, className, specName
   return {
     ench_by_slot: enchBySlot, trinkets, flasks, foods, potions, augRunes, guids,
     stat_pct: statPcts.length ? median(statPcts) : null, n: peers.length,
+    dps_med: peers.length ? median(peers.map((p) => p.m.dps)) : null, // measured field DPS
   };
 }
 
@@ -303,8 +304,10 @@ export async function run(log, name, server, region, className = "Monk", specNam
 
   // Rotation: only a GENUINE proc you under-use is actionable. Crit-driven big
   // hits are deliberately NOT recommended (a big hit is usually just a crit).
+  // `rot`/`tp` are hoisted so the synthesis can quote their MEASURED numbers.
+  let rot = null, tp = null;
   try {
-    const rot = await rotationFindings(N, S, R, CL, SP, D);
+    rot = await rotationFindings(N, S, R, CL, SP, D);
     // Biggest rotation lever: where your ability USAGE diverges from the field.
     // Pressing the wrong button (over-use one ability, never press the one the
     // field uses) or skipping a damage cooldown is usually the largest gap for an
@@ -332,7 +335,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // amps your kill is missing, plus damage routing and potions from the actual
   // top parses. These are usually the difference between a mid parse and a 95+.
   try {
-    const tp = await topParseFindings(N, S, R, D, CL, SP);
+    tp = await topParseFindings(N, S, R, D, CL, SP);
     if (tp) {
       // Raid-comp amps missing from your kill (a buff on you, or a debuff on the
       // boss). You can't press these -- it's who's in the raid -- so they're
@@ -361,40 +364,40 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // match the "% DPS" the user sees (the bug was an unrelated sort key).
   rx.sort((a, b) => impactScore(b[1]) - impactScore(a[1]));
 
-  // THE SYNTHESIS: this card pulls every other analysis's verdict into one direct
-  // answer -- where you parse now, the single biggest lever, and where your DPS is
-  // leaking by area. Built from the same findings the list below details.
+  // THE SYNTHESIS: pull every analysis into one answer, anchored on the MEASURED
+  // DPS gap (your kill vs the ilvl-matched field vs the top parses -- real numbers,
+  // not a sum of per-lever guesses), then break that gap into measured facts. The
+  // only place we estimate is gear (a stat -> DPS needs a sim), and we say so.
   const act = rx.filter((r) => impactScore(r[1]) > 0);
   const isComp = (r) => dimensionOf(r[2]) === "Comp";       // raid-dependent, not yours to press
   const yours = act.filter((r) => !isComp(r));
-  const buckets = new Map();   // area -> summed estimated %
-  for (const [, impact, text] of act) {
-    const area = dimensionOf(text);
-    buckets.set(area, (buckets.get(area) || 0) + impactScore(impact));
-  }
-  const byArea = [...buckets.entries()].sort((a, b) => b[1] - a[1]);
-  const yoursTop3 = Math.round(yours.slice(0, 3).reduce((s, r) => s + impactScore(r[1]), 0));
-  const compTotal = Math.round(buckets.get("Comp") || 0);
-  const jump = (medP != null && medP < 55)
-    ? "near the median, a few % is a big percentile jump"
-    : "at this level gains are harder-won, but each % still moves you up";
+  const k = (n) => `${f((n || 0) / 1000, 1)}k`;
+  const peerGap = (you.dps && field.dps_med) ? Math.round(((field.dps_med - you.dps) / you.dps) * 100) : null;
+  const topGap = (tp && tp.dpsGapPct) ? Math.round(tp.dpsGapPct) : null;
 
   log("");
   log("=".repeat(66));
   log(`HOW TO PARSE BETTER -- ${N}-${S} (${SP} ${CL}), ilvl ~${curIlvl}`);
   log("=".repeat(66));
-  if (medP != null) log(`You parse ${medP}th percentile (median of ${ranks.length} bosses; best ${bestP}th on ${bestRank.encounter.name}).`);
-  if (yours.length) log(`Biggest fix YOU control: ${rxHeadline(yours[0][2])} (${yours[0][1].trim()}) -- start here.`);
-  if (act.length) log(`Where your DPS leaks (sum of fixes): ${byArea.map(([a, p]) => `${a} ~${Math.round(p)}%`).join("  ·  ")}.`);
-  if (yours.length) {
-    let line = `Your top 3 controllable fixes ≈ ~${yoursTop3}% more DPS`;
-    if (compTotal) line += `; comp (raid buffs you lack) ~${compTotal}% on top`;
-    log(`${line} -- ${jump}.`);
+  if (medP != null) log(`You parse ${medP}th percentile overall (median of ${ranks.length} bosses; best ${bestP}th on ${bestRank.encounter.name}).`);
+  if (peerGap != null) {
+    const vsField = peerGap > 0 ? `${peerGap}% behind` : `${Math.abs(peerGap)}% ahead of`;
+    log(`Measured on ${gearBoss.encounter.name}: you do ${k(you.dps)} DPS -- ${vsField} the ilvl-matched field (${k(field.dps_med)})` +
+        (topGap != null ? `, ${topGap}% behind the top parses` : "") + `. That gap is your headroom.`);
   }
-  log(`(Gear/setup vs ilvl-matched peers; rotation/execution vs your own kills; comp vs the top parses.)`);
+  if (yours.length) log(`Biggest fix YOU control: ${rxHeadline(yours[0][2])} -- start here.`);
+  // What the gap is made of -- MEASURED quantities (no per-lever DPS guess).
+  const facts = [];
+  if (execd && execd.total_excess >= 1) facts.push(`Execution -- you lose ${f(execd.total_excess, 1)}s/min of GCD uptime vs peers`);
+  if (rot && rot.usage && rot.usage.under.length) { const a = rot.usage.under[0]; facts.push(`Rotation -- you press ${a.name} ${f(a.you, 1)}/min vs the field's ${f(a.field, 1)}`); }
+  if (tp && tp.routing && (tp.routing.top - tp.routing.you) >= 5) facts.push(`Routing -- ${f(tp.routing.you, 0)}% of your damage hits adds vs the top parses' ${f(tp.routing.top, 0)}%`);
+  if (tp && tp.buffGaps) { const g = tp.buffGaps.find((x) => x.comp); if (g) facts.push(`Comp -- you're missing ${g.name} (${f(g.you, 0)}% vs ${f(g.top, 0)}% uptime; raid-dependent)`); }
+  if (gf && gf.swaps.length) facts.push(`Gear -- ${gf.swaps.length} ${priority}-itemized upgrade${gf.swaps.length > 1 ? "s" : ""} the field runs (DPS value needs a sim)`);
+  if (facts.length) { log("What the gap is made of (measured):"); for (const ff of facts) log(`  ${ff}`); }
+  log(`(Field = top-ranked players at your item level; top parses = the rank-1 kills.)`);
 
   log("");
-  log("DO THESE IN ORDER (biggest DPS first):");
+  log("DO THESE IN ORDER (biggest first; execution/routing/comp are measured, gear/rotation % are sim estimates):");
   if (!rx.length) {
     log("  You match your peers on gear, consumables, stats, and execution. Remaining gains are farm kills + raid comp.");
   }
