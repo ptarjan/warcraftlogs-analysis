@@ -59,10 +59,21 @@ async function pageEvents(code, fight, sourceId, dataType, abilityId, s, e) {
   return out;
 }
 
-function perHit(amounts) {
+// Per-hit stats from raw damage events. Separates crit-driven big hits (a stat
+// outcome, not rotation) from genuine empowerment procs (non-crit outsized hits),
+// so we never tell someone to "use a proc" when they just need crit.
+function perHit(events) {
+  const amounts = events.map((x) => x.amount || 0);
   const s = [...amounts].sort((a, b) => a - b);
-  return { count: s.length, med: s.length ? s[Math.floor(s.length / 2)] : 0,
-           max: s.length ? s[s.length - 1] : 0, emp: empoweredCount(amounts) };
+  const crits = events.filter((x) => x.hitType === 2).length;
+  const nonCrit = events.filter((x) => x.hitType !== 2).map((x) => x.amount || 0);
+  return {
+    count: s.length,
+    med: s.length ? s[Math.floor(s.length / 2)] : 0,
+    max: s.length ? s[s.length - 1] : 0,
+    critPct: s.length ? (100 * crits) / s.length : 0,
+    procBig: empoweredCount(nonCrit),   // outsized NON-crit hits = a real proc
+  };
 }
 
 // Analyze one kill. `topN` damage abilities get per-hit detail (you); peers pass
@@ -85,20 +96,23 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
 
   if (opts.onlyAbility) {
     const id = name2id[opts.onlyAbility];
-    let emp = 0;
+    let procPerMin = 0;
     if (id) {
-      const amts = (await pageEvents(code, fight, m.sourceID, "DamageDone", id, s, e)).map((x) => x.amount || 0);
-      emp = empoweredCount(amts) / (dur / 60 || 1);
+      const evs = await pageEvents(code, fight, m.sourceID, "DamageDone", id, s, e);
+      procPerMin = perHit(evs).procBig / (dur / 60 || 1);
     }
-    return { opener: openerSequence(casts), empPerMin: emp };
+    return { opener: openerSequence(casts), procPerMin };
   }
 
   // You: per-hit detail for the top damage abilities (bounded for API cost).
   const top = abils.slice(0, opts.topN || 4);
   const hits = [];
   for (const a of top) {
-    const amts = (await pageEvents(code, fight, m.sourceID, "DamageDone", a.guid, s, e)).map((x) => x.amount || 0);
-    if (amts.length) hits.push({ name: a.name, ...perHit(amts), perMin: empoweredCount(amts) / (dur / 60 || 1) });
+    const evs = await pageEvents(code, fight, m.sourceID, "DamageDone", a.guid, s, e);
+    if (evs.length) {
+      const ph = perHit(evs);
+      hits.push({ name: a.name, ...ph, procPerMin: ph.procBig / (dur / 60 || 1) });
+    }
   }
   return { opener: openerSequence(casts), hits, dur };
 }
@@ -122,39 +136,47 @@ export async function run(log, name, server, region, className = "Monk",
   if (!you || !you.hits.length) { log("[error] could not read your casts/damage"); return; }
 
   const biggest = [...you.hits].sort((a, b) => b.med - a.med)[0];      // hardest per hit
-  const empAbil = [...you.hits].sort((a, b) => b.emp - a.emp)[0];      // most "empowered" -> the proc
+  const proc = [...you.hits].sort((a, b) => b.procBig - a.procBig)[0]; // real (non-crit) proc
 
   log("");
   log("=== YOUR HARDEST-HITTING ABILITIES (per hit) ===");
   for (const h of [...you.hits].sort((a, b) => b.med - a.med))
     log(`  ${h.name.padEnd(20)} median ${Math.round(h.med).toLocaleString().padStart(8)}  ` +
-        `max ${Math.round(h.max).toLocaleString().padStart(8)}  (${h.emp} empowered hits)`);
+        `max ${Math.round(h.max).toLocaleString().padStart(8)}  (${Math.round(h.critPct)}% crit, ` +
+        `${h.procBig} non-crit big hits)`);
   log(`  -> biggest single-hit ability: ${biggest.name}`);
 
-  // Compare the empowerment proc to the field, by the SAME ability name.
-  const peers = [];
-  const myIlvl = (er.ranks[0] || {}).bracketData || 0;
-  outer:
-  for (let page = 1; page <= 4; page++) {
-    for (const r of await topRankings(boss.id, difficulty, className, specName, page)) {
-      if (peers.length >= 4) break outer;
-      if (Math.abs((r.bracketData || 0) - myIlvl) > 4) continue;
-      try {
-        const a = await analyzeKill(r.name, r.report.code, r.report.fightID, specName, className,
-                                    { onlyAbility: empAbil.name });
-        if (a) peers.push(a);
-      } catch (e) { /* private/skip */ }
+  // Does a genuine empowerment proc exist (outsized NON-crit hits)? If not, big
+  // hits are just crits -- a stat/comp outcome, not a rotation lever.
+  let peers = [];
+  if (proc.procBig < 2) {
+    log("");
+    log("=== BIG HITS ARE CRIT-DRIVEN, NOT A PROC ===");
+    log("  Your outsized hits are crits, not a missed empowerment button. More big");
+    log("  hits = more crit + raid damage buffs (comp), not a rotation change.");
+  } else {
+    const myIlvl = (er.ranks[0] || {}).bracketData || 0;
+    outer:
+    for (let page = 1; page <= 4; page++) {
+      for (const r of await topRankings(boss.id, difficulty, className, specName, page)) {
+        if (peers.length >= 4) break outer;
+        if (Math.abs((r.bracketData || 0) - myIlvl) > 4) continue;
+        try {
+          const a = await analyzeKill(r.name, r.report.code, r.report.fightID, specName, className,
+                                      { onlyAbility: proc.name });
+          if (a) peers.push(a);
+        } catch (e) { /* private/skip */ }
+      }
     }
+    const pProc = peers.length ? median(peers.map((a) => a.procPerMin)) : NaN;
+    log("");
+    log(`=== EMPOWERMENT PROC (${proc.name}, non-crit big hits) ===`);
+    log(`  proc hits/min:  you ${proc.procPerMin.toFixed(1)}   field ${Number.isNaN(pProc) ? "?" : pProc.toFixed(1)}`);
+    if (!Number.isNaN(pProc))
+      log(proc.procPerMin >= pProc - 0.4
+        ? "  -> About the same as the field. Good."
+        : "  -> Fewer than the field -- you're under-generating/using the proc.");
   }
-  const pEmp = peers.length ? median(peers.map((a) => a.empPerMin)) : NaN;
-  log("");
-  log(`=== EMPOWERED PROC (${empAbil.name} -- your most-empowered ability) ===`);
-  log(`  empowered ${empAbil.name}/min:  you ${empAbil.perMin.toFixed(1)}   ` +
-      `field ${Number.isNaN(pEmp) ? "?" : pEmp.toFixed(1)}`);
-  if (!Number.isNaN(pEmp))
-    log(empAbil.perMin >= pEmp - 0.4
-      ? "  -> You're landing empowered procs about as often as the field. Good."
-      : "  -> Fewer empowered procs than the field -- you're under-generating/using it.");
 
   log("");
   log("=== OPENER ===");
