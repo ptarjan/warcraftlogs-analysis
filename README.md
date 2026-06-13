@@ -135,6 +135,27 @@ query coalescing), and a smoke test that the browser modules import under Node.
   intermissions otherwise look like your mistakes.
 - Your WCL API key has an hourly request limit; a full analysis makes many
   calls, so back-to-back runs can hit a 429 (raise it via the WCL Patreon).
+- **Never hard-code class abilities, priorities, or stat weights.** It must work
+  for all 39 specs. Deriving "Tiger Palm is a filler" was wrong — an empowered
+  Tiger Palm is the biggest hit. Derive everything from the data and the field;
+  if you can't, ask the player, don't assume.
+- **A "big" hit is usually a crit, not a proc.** Read `hitType` (2 = crit).
+  Outsized hits that are all crits mean the player needs *crit + raid buffs*
+  (stat/comp, not actionable in the rotation), not a "missed empowerment button."
+  Only outsized NON-crit hits indicate a real proc to maintain.
+- **Derive the stat priority** from what the field stacks (`detectPriority`),
+  never assume crit. And only tell someone to raise a stat with a concrete HOW
+  (which item to swap/recraft) — otherwise say it's not actionable and why.
+- **Auto-attack is melee-only (ability 1).** Hunters use Auto Shot (75); casters
+  have none. Without autos you can't tell "out of range" from "not pressing", so
+  don't label caster gaps as range problems.
+- **Tier sets need only 4 of 5 pieces** — one is a free "flex" slot. Don't
+  suggest swapping a tier piece for stats; the flex slot is the swappable one,
+  and which 4 to wear is the player's call (it's combinatorial).
+- **A `sourceID`-filtered Casts/Buffs table returns empty abilities/auras** —
+  build ability/aura name maps by class (or use `sourceID` only on `events`).
+- A crit/secondary gap is often **gear- or comp-locked** (your items are already
+  maxed for that stat): real, but not something to grind the rotation over.
 
 ## Files
 
