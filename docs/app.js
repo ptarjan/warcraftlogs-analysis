@@ -102,7 +102,7 @@ function setRunning(on) {
 let activeHero = null;
 window.addEventListener("wcl-ratelimit", () => {
   if (activeHero && activeHero.det && activeHero.det.isConnected) {
-    activeHero.det.innerHTML = '<span class="spin"></span>WCL rate limit reached — waiting a moment…';
+    activeHero.det.textContent = "WCL rate limit reached — waiting a moment…";
   }
   statusEl.innerHTML = '<span class="spin"></span>rate limited — waiting…';
 });
@@ -122,7 +122,7 @@ function buildHero(name, server, region) {
   const small = document.createElement("small"); small.textContent = `${server} · ${region}`;
   who.appendChild(small);
   const det = document.createElement("div"); det.className = "detecting";
-  det.innerHTML = '<span class="spin"></span>Detecting class, spec, and difficulty…';
+  det.textContent = "Detecting class, spec, and difficulty…";
   const pills = document.createElement("div"); pills.className = "pills";
   h.append(who, det, pills); out.appendChild(h);
   return { det, pills };
