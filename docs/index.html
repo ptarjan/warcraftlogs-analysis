@@ -95,12 +95,12 @@
   .card-status .spin { width: 11px; height: 11px; margin-right: 0; }
 
   /* ---------- landing intro (hidden once analysis starts) ---------- */
-  .intro { margin-top: 34px; }
-  .intro-lead { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
-    color: var(--accent); }
-  .intro-body { color: var(--muted); font-size: 15px; line-height: 1.65;
-    margin: 10px 0 20px; max-width: 720px; }
-  .intro-body b { color: var(--ink); font-weight: 600; }
+  .intro { margin-top: 30px; }
+  /* the sample result -- the page's main "show, don't tell" */
+  .sample .measured { font-size: 14px; line-height: 1.55; color: var(--ink); padding-bottom: 2px; }
+  .sample .measured b { color: var(--ink); font-weight: 700; }
+  .sample .measured b.behind { color: var(--warn); }
+  .sample .measured .muted { color: var(--muted); }
 
   /* "one list instead of five tools" */
   .combines { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); }
@@ -112,32 +112,12 @@
   .unify .arw { color: var(--accent); font-weight: 800; }
   .unify b { color: var(--accent); }
 
-  .feature-row { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-top: 26px; }
-  .feature { padding: 18px; background: linear-gradient(180deg, var(--panel2), var(--panel));
-    border: 1px solid var(--edge); border-radius: 14px; transition: transform .15s, border-color .15s; }
-  .feature:hover { transform: translateY(-3px); border-color: var(--edge2); }
-  .feature .f-ic { width: 38px; height: 38px; display: grid; place-items: center; font-size: 19px;
-    border-radius: 10px; background: rgba(245,196,81,.12); border: 1px solid rgba(245,196,81,.25);
-    margin-bottom: 12px; }
-  .feature b { display: block; font-size: 14.5px; color: var(--ink); }
-  .feature span { display: block; font-size: 13px; color: var(--muted); margin-top: 5px; line-height: 1.5; }
-
-  .steps { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-top: 16px; }
-  .step { display: flex; gap: 12px; align-items: flex-start; }
-  .step .n { flex: none; width: 26px; height: 26px; display: grid; place-items: center;
-    border-radius: 999px; background: rgba(143,184,255,.12); border: 1px solid rgba(143,184,255,.3);
-    color: var(--info); font-weight: 700; font-size: 13px; }
-  .step b { display: block; font-size: 14px; color: var(--ink); }
-  .step span { display: block; font-size: 12.5px; color: var(--muted); margin-top: 3px; line-height: 1.5; }
-
   .section-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
-    color: var(--muted); margin: 34px 0 14px; display: flex; align-items: center; gap: 10px; }
+    color: var(--muted); margin: 30px 0 14px; display: flex; align-items: center; gap: 10px; }
   .section-label::after { content: ""; flex: 1; height: 1px; background: var(--edge); }
   .example-tag { font-size: 10.5px; font-weight: 700; color: var(--accent);
     background: rgba(245,196,81,.12); border: 1px solid rgba(245,196,81,.28);
     padding: 2px 8px; border-radius: 6px; letter-spacing: .5px; }
-  .pairs { margin-top: 20px; font-size: 12.5px; color: var(--muted); line-height: 1.65; }
-  .pairs b { color: var(--ink); font-weight: 600; }
 
   /* ---------- connected: click-a-character picker ---------- */
   .picker { margin-top: 8px; }
@@ -241,9 +221,9 @@
 <header>
   <div class="eyebrow reveal"><span class="blade">⚔</span> WORLD OF WARCRAFT · DPS ANALYSIS</div>
   <h1 class="reveal d1">Find exactly what's<br>costing you DPS.</h1>
-  <p class="tagline reveal d2">One ranked to-do list — <b>gear, enchants, gems, consumables, and rotation,
-    every fix scored by DPS</b> — from just your character name. The shortlist you'd otherwise piece
-    together across a sim, a log analyzer, and a meta site.</p>
+  <p class="tagline reveal d2">One to-do list, <b>ranked by DPS</b> — every gear, enchant, gem, consumable,
+    and rotation fix between you and the top of your item-level bracket. From just a character name —
+    no report links, no sim exports.</p>
   <div id="auth" class="auth reveal d2"></div>
 </header>
 <main>
@@ -265,39 +245,14 @@
   <section id="picker" class="picker reveal d2" style="display:none"></section>
 
   <section class="intro reveal d3" id="intro">
-    <div class="intro-lead">One list — not five browser tabs</div>
-    <p class="intro-body">Improving your DPS usually means bouncing between a sim, a log analyzer, a meta
-      site, and your own logs — then guessing which change matters most. This does the cross-referencing
-      for you and returns <b>one list, ranked by impact</b>, comparing you to the players at your exact
-      item level. Class, spec, difficulty, and stat priority are detected automatically.</p>
-
-    <div class="combines">
-      <div class="combine"><div class="t">🧪 Gear &amp; stats</div><div class="s">what a sim like Raidbots tells you</div></div>
-      <div class="combine"><div class="t">🎮 Rotation</div><div class="s">what WoWAnalyzer tells you</div></div>
-      <div class="combine"><div class="t">📈 The meta</div><div class="s">what Archon shows peers running</div></div>
-      <div class="combine"><div class="t">📜 Your logs</div><div class="s">what Warcraft Logs records</div></div>
-    </div>
-    <div class="unify"><span class="arw">→</span><span><b>one ranked, DPS-scored to-do list</b>, from a character name.</span></div>
-
-    <div class="feature-row">
-      <div class="feature"><div class="f-ic">🎯</div>
-        <b>Ranked by impact</b><span>Biggest DPS gain at the top — gear, consumables, and play in one ordered list, not four dashboards.</span></div>
-      <div class="feature"><div class="f-ic">⚡</div>
-        <b>Just a character name</b><span>No report links, no addon exports. Type a name; everything else is detected and fetched.</span></div>
-      <div class="feature"><div class="f-ic">📊</div>
-        <b>Your bracket, empirically</b><span>Measured against players at your exact item level — what they actually wear and press.</span></div>
-    </div>
-
-    <div class="steps">
-      <div class="step"><div class="n">1</div><div><b>Pick your character</b><span>Region, realm, name. Connect Warcraft Logs to prefill your own.</span></div></div>
-      <div class="step"><div class="n">2</div><div><b>We pull the data</b><span>Your logs and item-level-matched peers, fetched in parallel.</span></div></div>
-      <div class="step"><div class="n">3</div><div><b>Get your to-do list</b><span>Ranked changes, each with a DPS estimate and the evidence behind it.</span></div></div>
-    </div>
-
-    <div class="section-label">A sample report <span class="example-tag">EXAMPLE</span></div>
-    <section class="card primary">
-      <h2>What to change</h2>
+    <!-- Lead with the payoff: a real-looking result, so the page shows what you
+         get instead of describing it five different ways. -->
+    <div class="section-label">What you get <span class="example-tag">EXAMPLE</span></div>
+    <section class="card primary sample">
+      <div class="card-head"><span class="card-title">How to parse better — Hadryan-Proudmoore · Brewmaster Monk · ilvl 639</span></div>
       <div class="body">
+        <div class="measured">You parse <b>47th</b> percentile. You do <b>612k</b> DPS — <b class="behind">18% behind</b>
+          the players at your exact item level. <span class="muted">That gap is your headroom.</span></div>
         <div class="rx"><div class="num">1</div><div class="badge">~3% DPS</div><div class="txt">
           <b>Press faster.</b> You idle ~2.1s/min more than peers while in melee range — not latency, just gaps between GCDs. Queue your next ability so a global never sits empty.</div></div>
         <div class="rx"><div class="num">2</div><div class="badge">~2% DPS</div><div class="txt">
@@ -306,12 +261,20 @@
           <b>Crit via belt:</b> a crit-itemized drop the field wears in that slot — sim to confirm the net gain.</div></div>
         <div class="rx info"><div class="num">4</div><div class="badge">info</div><div class="txt">
           <b>Embellishments:</b> your combo matches the #1 the field runs — no change needed.</div></div>
+        <div class="note muted">Raid-comp gaps (bring a Bloodlust, an Aug Evoker…) are listed separately — real DPS, but not something you change on your own character.</div>
       </div>
     </section>
 
-    <p class="pairs">Built to get you the <b>ranked shortlist first</b>, then hand off to the specialists:
-      sim the gear candidates in Raidbots for exact numbers, or open WoWAnalyzer for deep per-spec rotation rules.
-      One pass here usually tells you which of those is even worth your time.</p>
+    <!-- The one differentiator: four tools' worth of answers, cross-referenced
+         into a single ranked list. -->
+    <div class="section-label">One list, not five tabs</div>
+    <div class="combines">
+      <div class="combine"><div class="t">🧪 Gear &amp; stats</div><div class="s">what a sim (Raidbots) tells you</div></div>
+      <div class="combine"><div class="t">🎮 Rotation</div><div class="s">what WoWAnalyzer tells you</div></div>
+      <div class="combine"><div class="t">📈 The meta</div><div class="s">what Archon shows peers running</div></div>
+      <div class="combine"><div class="t">📜 Your logs</div><div class="s">what Warcraft Logs records</div></div>
+    </div>
+    <div class="unify"><span class="arw">→</span><span>cross-referenced into <b>one ranked, DPS-scored to-do list</b>. Class, spec, difficulty, and stat priority detected automatically.</span></div>
   </section>
 
   <div id="out"></div>
