@@ -189,29 +189,40 @@ export async function itemTooltip(id, bonusIds) {
   try { return await p; } finally { _itemInflight.delete(url); }
 }
 
-// The connected user's own characters, ordered most-recently-logged first (the
-// closest the API gets to "most used"). Connected-only and best-effort: any
-// schema/permission miss returns [] so the UI just doesn't prefill. Two-tier:
-// try with per-character recency for ordering, else fall back to the bare list.
+// The connected user's own characters that have parses on the CURRENT content,
+// most parses first. "Parses" = ranked kills in the current zone (zoneRankings
+// defaults to the current zone), summed across Mythic + Heroic. Connected-only
+// and best-effort with a two-tier fallback: if the ranking shape isn't available
+// we return the bare list (unsorted) so the picker still works; on any miss, [].
 export async function myCharacters() {
   if (IS_NODE || !getAccessToken()) return [];
-  const base = "name server { slug region { slug } }";
-  let chars = null;
-  for (const sel of [`${base} recentReports(limit: 1) { data { startTime } }`, base]) {
+  const loc = "name server { slug region { slug } }";
+  // zoneRankings is a JSON scalar: { rankings: [{ totalKills, rankPercent, ... }] }.
+  const parsesIn = (zr) => ((zr && zr.rankings) || [])
+    .reduce((n, r) => n + (r && r.rankPercent != null ? (r.totalKills || 0) : 0), 0);
+
+  for (const [sel, ranked] of [
+    [`${loc} m: zoneRankings(difficulty: 5) h: zoneRankings(difficulty: 4)`, true],
+    [loc, false], // fallback: bare list (no counts) if zoneRankings isn't usable
+  ]) {
+    let raw;
     try {
       const d = await gql(`{ userData { currentUser { characters { ${sel} } } } }`);
-      chars = (d && d.userData && d.userData.currentUser && d.userData.currentUser.characters) || [];
-      break;
-    } catch { chars = null; } // bad field / no permission -> try the simpler shape
+      raw = (d && d.userData && d.userData.currentUser && d.userData.currentUser.characters) || [];
+    } catch { continue; } // bad field / no permission -> try the simpler shape
+    let chars = raw
+      .map((c) => ({
+        name: c.name,
+        server: c.server && c.server.slug,
+        region: ((c.server && c.server.region && c.server.region.slug) || "").toUpperCase(),
+        parses: ranked ? parsesIn(c.m) + parsesIn(c.h) : 0,
+      }))
+      .filter((c) => c.name && c.server && c.region);
+    // Keep only characters with current-content parses, most first. Guard: if the
+    // shape unexpectedly yields 0 for everyone, don't hide them all -- show the list.
+    if (ranked && chars.some((c) => c.parses > 0))
+      chars = chars.filter((c) => c.parses > 0).sort((a, b) => b.parses - a.parses);
+    return chars;
   }
-  if (!chars) return [];
-  return chars
-    .map((c) => ({
-      name: c.name,
-      server: c.server && c.server.slug,
-      region: ((c.server && c.server.region && c.server.region.slug) || "").toUpperCase(),
-      last: (c.recentReports && c.recentReports.data && c.recentReports.data[0] || {}).startTime || 0,
-    }))
-    .filter((c) => c.name && c.server && c.region)
-    .sort((a, b) => b.last - a.last);
+  return [];
 }

@@ -116,6 +116,24 @@
     background: rgba(245,196,81,.12); border: 1px solid rgba(245,196,81,.28);
     padding: 2px 8px; border-radius: 6px; letter-spacing: .5px; }
 
+  /* ---------- connected: click-a-character picker ---------- */
+  .picker { margin-top: 8px; }
+  .picker-h { font-size: 11px; text-transform: uppercase; letter-spacing: .7px;
+    color: var(--muted); font-weight: 600; margin-bottom: 12px; }
+  .picker-grid { display: grid; gap: 10px;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+  .charbtn { display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+    text-align: left; background: linear-gradient(180deg, var(--panel2), var(--panel));
+    color: var(--ink); border: 1px solid var(--edge); border-radius: 12px;
+    padding: 13px 15px; cursor: pointer; box-shadow: none;
+    transition: border-color .15s, box-shadow .15s, transform .05s; }
+  .charbtn:hover { filter: none; border-color: var(--accent);
+    box-shadow: 0 6px 18px rgba(245,196,81,.14); }
+  .charbtn:active { transform: translateY(1px); }
+  .charbtn .cn { font-size: 15.5px; font-weight: 700; letter-spacing: .2px; }
+  .charbtn .cs { font-size: 12px; color: var(--muted); }
+  .picker .muted { font-size: 13px; color: var(--muted); }
+
   /* ---------- results (cards) ---------- */
   #out { margin-top: 24px; display: flex; flex-direction: column; gap: 16px; }
   .card { background: linear-gradient(180deg, var(--panel2), var(--panel));
@@ -190,8 +208,7 @@
 <main>
   <form id="form" class="reveal d2">
     <div><label for="name">Character</label>
-      <input id="name" placeholder="Hadryan" required autofocus list="charlist" autocomplete="off">
-      <datalist id="charlist"></datalist></div>
+      <input id="name" placeholder="Hadryan" required autofocus></div>
     <div><label for="region">Region</label>
       <select id="region">
         <option>US</option><option>EU</option><option>KR</option><option>TW</option><option>CN</option>
@@ -203,6 +220,8 @@
       <span class="status" id="status"></span>
     </div>
   </form>
+
+  <section id="picker" class="picker reveal d2" style="display:none"></section>
 
   <section class="intro reveal d3" id="intro">
     <div class="intro-lead">Stop guessing — get the list</div>

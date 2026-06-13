@@ -39,7 +39,7 @@ function renderAuth() {
     authEl.innerHTML =
       '<span class="conn ok">✓ Connected · using your Warcraft Logs account</span>' +
       '<button type="button" id="disconnect" class="linkbtn">Disconnect</button>';
-    $("disconnect").onclick = () => { logout(); renderAuth(); };
+    $("disconnect").onclick = () => { logout(); renderAuth(); renderMode(); };
   } else {
     authEl.innerHTML =
       '<button type="button" id="connect" class="linkbtn accent">Connect Warcraft Logs</button>' +
@@ -49,42 +49,57 @@ function renderAuth() {
 }
 function showAuthErr(e) { cur = makeCard("Connection error"); note(e.message || String(e), "err"); }
 
-// When connected, fill the character box with the user's own characters
-// (most-recently-logged first) -- a datalist for autocomplete, and the top one
-// prefilled. Best-effort: failure just leaves the form blank as before.
-let charMap = new Map(); // lower(name) -> { name, server, region }
-async function prefillCharacters() {
-  if (!isAuthed()) return;
-  let chars = [];
-  try { chars = await myCharacters(); } catch { return; }
-  if (!chars.length) return;
-  const dl = $("charlist");
-  if (dl) dl.innerHTML = chars
-    .map((c) => `<option value="${c.name}">${c.name} · ${c.server} (${c.region})</option>`).join("");
-  charMap = new Map(chars.map((c) => [c.name.toLowerCase(), c]));
-  if (!$("name").value.trim()) await applyChar(chars[0]); // top = most recent
+// Display name for a realm slug (characters from WCL carry only the slug).
+function realmLabel(region, slug) {
+  const r = (REALMS[region] || []).find((s) => s.slug === slug);
+  return r ? r.name : slug;
 }
-// Set name + its region/server together (server needs the realm list loaded).
-async function applyChar(c) {
-  $("name").value = c.name;
-  regionSel.value = c.region;
-  await realmsReady;
-  fillServers();
-  serverSel.value = c.server;
-}
-// Picking/typing one of your characters auto-fills its server + region.
-$("name").addEventListener("change", () => {
-  const c = charMap.get($("name").value.trim().toLowerCase());
-  if (c) applyChar(c);
-});
 
-// On load: finish any returning OAuth redirect, reflect auth state, then (if
-// connected) prefill the character box.
+// Two modes. Anonymous: the manual form (type character + region + server).
+// Connected: hide the form and show a clickable list of YOUR characters that
+// have parses on current content, most parses first -- click one to analyze.
+// Best-effort: if the list can't be built, fall back to the manual form.
+function showForm(on) {
+  form.style.display = on ? "" : "none";
+  const intro = $("intro"); if (intro) intro.style.display = on ? "" : "none";
+  const picker = $("picker"); if (picker) picker.style.display = on ? "none" : "";
+}
+async function renderMode() {
+  if (!isAuthed()) { showForm(true); const p = $("picker"); if (p) p.innerHTML = ""; return; }
+  let chars = [];
+  try { chars = await myCharacters(); } catch { chars = []; }
+  await realmsReady;
+  const picker = $("picker");
+  if (!chars.length || !picker) { showForm(true); return; } // nothing to click -> manual form
+  showForm(false);
+  picker.innerHTML = "";
+  const h = document.createElement("div");
+  h.className = "picker-h";
+  h.textContent = "Your characters — click one to analyze";
+  picker.appendChild(h);
+  const grid = document.createElement("div");
+  grid.className = "picker-grid";
+  for (const c of chars) {
+    const label = realmLabel(c.region, c.server);
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "charbtn";
+    const cn = document.createElement("span"); cn.className = "cn"; cn.textContent = c.name;
+    const cs = document.createElement("span"); cs.className = "cs";
+    cs.textContent = `${label} · ${c.region}` + (c.parses ? ` · ${c.parses} parse${c.parses === 1 ? "" : "s"}` : "");
+    b.append(cn, cs);
+    b.onclick = () => runAnalysis({ name: c.name, server: c.server, region: c.region, serverLabel: label });
+    grid.appendChild(b);
+  }
+  picker.appendChild(grid);
+}
+
+// On load: finish any returning OAuth redirect, reflect auth state, then show
+// the right mode (form for anonymous, character picker for connected).
 (async () => {
   try { await handleRedirectCallback(); }
   catch (e) { showAuthErr(e); }
   renderAuth();
-  prefillCharacters();
+  renderMode();
 })();
 
 // --------------------------------------------------------------------------- //
@@ -200,21 +215,14 @@ function setPills(hero, items) {
   }
 }
 
-form.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const name = $("name").value.trim();
-  const region = regionSel.value;
-  const server = serverSel.value;
-  const serverLabel = serverSel.options[serverSel.selectedIndex]?.text || server;
-
+// Run the full analysis for one character. Called by the manual form (anonymous)
+// and by clicking a character in the connected picker.
+async function runAnalysis({ name, server, region, serverLabel }) {
   out.innerHTML = ""; cur = null;
-  if (!name) { cur = makeCard("Error"); note("Enter a character name.", "err"); return; }
-  if (!server) { cur = makeCard("Error"); note("Pick a server.", "err"); return; }
-
   setRunning(true);
   const intro = document.getElementById("intro");
   if (intro) intro.style.display = "none";
-  const hero = buildHero(name, serverLabel, region);
+  const hero = buildHero(name, serverLabel || server, region);
   activeHero = hero;
   // Pin the action list at the top (filled last, once analyses warm the cache).
   const rxCard = makeCard("What to change", { primary: true });
@@ -244,7 +252,7 @@ form.addEventListener("submit", async (e) => {
   } catch (err) {
     rxCard.body.innerHTML = ""; cur = rxCard;
     if (err instanceof NeedsAuth) {
-      logout(); renderAuth();
+      logout(); renderAuth(); renderMode();
       note(err.message || "Reconnect to Warcraft Logs to continue.", "err");
     } else {
       note(err.message || String(err), "err");
@@ -252,4 +260,16 @@ form.addEventListener("submit", async (e) => {
   } finally {
     setRunning(false);
   }
+}
+
+// Manual form (anonymous mode; hidden when connected in favor of the picker).
+form.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const name = $("name").value.trim();
+  const region = regionSel.value;
+  const server = serverSel.value;
+  const serverLabel = serverSel.options[serverSel.selectedIndex]?.text || server;
+  if (!name) { out.innerHTML = ""; cur = makeCard("Error"); note("Enter a character name.", "err"); return; }
+  if (!server) { out.innerHTML = ""; cur = makeCard("Error"); note("Pick a server.", "err"); return; }
+  runAnalysis({ name, server, region, serverLabel });
 });
