@@ -1,3 +1,4 @@
+// @ts-check
 // Generate a concrete, prioritized prescription. Ported from prescribe.py.
 // prescribe folds every analysis's findings (the shared { dim, impact, label,
 // text } currency from core) into ONE sorted change-list. Each domain owns its
@@ -351,6 +352,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // first. impact is a real number, so the order can't disagree with the shown
   // labels (the old bug was sorting by a separate, stale key). Each domain owns
   // its own lever-building; prescribe just concatenates.
+  /** @type {Finding[]} */
   const rx = [
     ...executionLevers(execd, rot),
     ...consumableLevers(field, my),

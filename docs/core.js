@@ -1,3 +1,4 @@
+// @ts-check
 // Shared constants, formatting helpers, and low-level WCL fetchers.
 // Ported from analyze.py's fetcher layer; imported by the analysis modules.
 import { gql } from "./wcl.js";
@@ -51,10 +52,14 @@ export function median(arr) {
 //   label  -- the matching display string ("~3% DPS", "~1-3% DPS", "info").
 // DPS()/COMP()/INFO build impact and label together so they can never disagree
 // (the old bug: a separate sort key that drifted from the shown %).
+/** @param {number} lo @param {number} [hi] @returns {Score} */
 export const DPS = (lo, hi = lo) => ({ impact: (lo + hi) / 2, label: hi > lo ? `~${lo}-${hi}% DPS` : `~${lo}% DPS` });
+/** @param {number} pct @returns {Score} */
 export const COMP = (pct) => ({ impact: pct, label: `~${pct}% comp` });
+/** @type {Score} */
 export const INFO = { impact: 0, label: "info" };
 // Assemble one finding: finding("Gear", DPS(1, 3), "STAT via ...").
+/** @param {Dim} dim @param {Score} score @param {string} text @returns {Finding} */
 export const finding = (dim, score, text) => ({ dim, ...score, text });
 
 // --------------------------------------------------------------------- //
