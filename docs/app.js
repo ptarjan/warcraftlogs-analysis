@@ -194,7 +194,8 @@ function log(line) {
     const d = document.createElement("div"); d.className = "rx" + (info ? " info" : "");
     const n = document.createElement("div"); n.className = "num"; n.textContent = m[1];
     const b = document.createElement("div"); b.className = "badge"; b.textContent = m[2];
-    const t = document.createElement("div"); t.className = "txt"; t.textContent = m[3];
+    const t = document.createElement("div"); t.className = "txt";
+    if (m[3].includes("](")) linkify(t, m[3]); else t.textContent = m[3];
     d.append(n, b, t); return append(d);
   }
   if (/^\[error]/.test(line)) return note(line.replace(/^\[error]\s*/, ""), "err");

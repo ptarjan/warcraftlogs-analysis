@@ -4,6 +4,7 @@ import { itemTooltip, itemXml, zoneTooltip } from "./wcl.js";
 import {
   characterZone, characterEncounter, playerMetrics, topRankings, f, mapLimit,
 } from "./core.js";
+import { wowheadItem } from "./links.js";
 
 // Collect up to n unique (by name+server) top-ranked candidates across the
 // given encounters, so the heavy per-peer fetches can run concurrently.
@@ -238,7 +239,7 @@ export async function gearFindings(name, server, region, difficulty, className, 
       const v = (await itemStats(g.id, JSON.parse(bk)))[priority] || 0;
       if (v > best) best = v;
     }
-    if (best > (ist[priority] || 0) + 15) restats.push([SLOT[s], ist.name, ist[priority] || 0, best]);
+    if (best > (ist[priority] || 0) + 15) restats.push([SLOT[s], ist.name, ist[priority] || 0, best, g.id]);
 
     // Drop swap: scan EVERY item the field runs in this slot for one with
     // meaningfully more of the priority stat. ONLY where a swap costs nothing
@@ -262,7 +263,8 @@ export async function gearFindings(name, server, region, difficulty, className, 
     }
     if (bestAlt) {
       const instance = await itemInstance(bestAlt[5], bestAlt[3]); // resolve dungeon/raid name
-      swaps.push([SLOT[s], ist.name, bestAlt[0], bestAlt[1], bestAlt[2], slotTotal, bestAlt[3], bestAlt[4], instance]);
+      // tuple: ...src, chance, instance, then theirsId/mineId for Wowhead links.
+      swaps.push([SLOT[s], ist.name, bestAlt[0], bestAlt[1], bestAlt[2], slotTotal, bestAlt[3], bestAlt[4], instance, bestAlt[5], g.id]);
     }
   }
 
@@ -355,8 +357,8 @@ export async function audit(log, name, server, region, difficulty, className, sp
   if (ff.swaps.length) {
     log("");
     log(`${priority[0].toUpperCase() + priority.slice(1)} drop CANDIDATES (a crit-itemized item the field runs in a non-tier/non-embellished slot of yours -- sim to confirm net gain):`);
-    for (const [slot, mine, theirs, amt, cnt, tot, src, chance, instance] of ff.swaps) {
-      log(`  ${slot}: '${mine}' -> '${theirs}' (+${amt} ${priority}; ${cnt}/${tot} of field)${sourceText(src, instance, chance)}`);
+    for (const [slot, mine, theirs, amt, cnt, tot, src, chance, instance, theirsId, mineId] of ff.swaps) {
+      log(`  ${slot}: ${wowheadItem(mineId, mine)} -> ${wowheadItem(theirsId, theirs)} (+${amt} ${priority}; ${cnt}/${tot} of field)${sourceText(src, instance, chance)}`);
     }
   } else {
     log("");
@@ -365,7 +367,7 @@ export async function audit(log, name, server, region, difficulty, className, sp
   if (ff.restats.length) {
     log("");
     log(`Re-stat opportunities (others run MORE ${priority} on your SAME item, so the stats are selectable):`);
-    for (const [slot, name2, mine, best] of ff.restats) log(`  ${slot} '${name2}': you ${mine} ${priority} -> achievable ${best}`);
+    for (const [slot, name2, mine, best, itemId] of ff.restats) log(`  ${slot} ${wowheadItem(itemId, name2)}: you ${mine} ${priority} -> achievable ${best}`);
   } else {
     log("");
     log(`No re-stat gains: on every item you own, nobody in the field runs more ${priority} than you -- your stats are maxed/fixed for the gear you have.`);
