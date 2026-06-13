@@ -285,8 +285,9 @@ export async function run(log, name, server, region, className = "Monk", specNam
     if (tp) {
       // External buffs you simply don't get (comp/source gap, not execution).
       // Estimated %, labelled "comp" so it reads as a raid ask, but sized so it
-      // sorts among the big levers it usually is.
-      for (const g of tp.buffGaps.filter((x) => x.comp).slice(0, 2)) {
+      // sorts among the big levers it usually is. Gated on >=3 top parses so a
+      // single fluke log's incidental buffs don't become recommendations.
+      for (const g of (tp.nTop >= 3 ? tp.buffGaps.filter((x) => x.comp) : []).slice(0, 2)) {
         const pct = compImpactPct(g.top);
         rx.push([-pct, `~${pct}% comp`,
           `BUFF (comp): top parses run ${wowheadSpell(g.guid, g.name)} (~${f(g.top, 0)}% uptime); you had ${f(g.you, 0)}%. ` +

@@ -22,13 +22,17 @@ import path from "node:path";
 
 // Persist WCL GraphQL results to disk between runs (wcl.js, Node-only) so
 // iterating on one character doesn't re-spend points and trip WCL's per-IP 429
-// throttle. Must be set before importing anything that pulls in wcl.js.
+// throttle. Must be set before importing anything that pulls in wcl.js. Point it
+// at the SHARED home cache (next to the item cache below) so every git worktree
+// reuses the same GraphQL results -- otherwise each worktree kept its own
+// repo-root cache and re-spent points the others had already paid for.
+const CACHE_DIR = path.join(os.homedir(), ".cache", "warcraftlogs-analysis");
 process.env.WCL_GQL_CACHE = "1";
+process.env.WCL_GQL_CACHE_FILE = process.env.WCL_GQL_CACHE_FILE || path.join(CACHE_DIR, "gql-cache.json");
 
 // --- file-backed localStorage shim (persists gear.js's item-stat/instance cache
 // between runs). Shared across git worktrees -- one cache in the home dir, like
 // the GraphQL cache -- so parallel worktrees reuse each other's Wowhead lookups.
-const CACHE_DIR = path.join(os.homedir(), ".cache", "warcraftlogs-analysis");
 const CACHE_FILE = path.join(CACHE_DIR, "item-cache.json");
 try { fs.mkdirSync(CACHE_DIR, { recursive: true }); } catch { /* ignore */ }
 let _store = {};

@@ -143,7 +143,8 @@ export async function run(log, name, server, region, className, specName, diffic
   if (!fnd) { log("(couldn't build a top-parse comparison for this character)"); return; }
 
   log(`=== Chasing 99: you vs the top ${fnd.nTop} parses on ${fnd.boss} ===`);
-  log(`Your kill sits at ${f(fnd.yourPct, 0)}%ile; the top parses do ~${f(fnd.dpsGapPct, 0)}% more DPS.`);
+  log(`Your kill sits at ${f(fnd.yourPct, 0)}%ile.` +
+      (fnd.nTop < 3 ? "  (only a few top parses available -- treat as indicative)" : ""));
   log("");
 
   if (fnd.buffGaps.length) {
