@@ -131,6 +131,20 @@ export async function buffUptimes(code, fight, sourceId) {
   return out;
 }
 
+// Debuff uptime % on the ENEMIES, keyed by debuff name -- for raid-comp amps
+// that live on the boss, not on you (Chaos Brand, Mystic Touch). Same shape as
+// buffUptimes. Uptime is relative to the table's total enemy time, so it's a
+// presence signal (a maintained debuff reads high), not an exact per-target %.
+export async function bossDebuffs(code, fight) {
+  const q = `query { reportData { report(code:"${code}") {
+    table(fightIDs:${fight}, dataType:Debuffs, hostilityType:Enemies) } } }`;
+  const d = (await gql(q)).reportData.report.table.data;
+  const tt = d.totalTime;
+  const out = {};
+  for (const a of (d.auras || [])) if (tt) out[a.name] = { pct: 100 * (a.totalUptime || 0) / tt, guid: a.guid };
+  return out;
+}
+
 // Crit/haste/mastery/vers ratings from CombatantInfo events.
 export async function secondaryStats(code, fight, sourceId) {
   const q = `query { reportData { report(code:"${code}") { events(

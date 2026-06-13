@@ -1,52 +1,63 @@
-// "Chasing 99": benchmark you against the ACTUAL top-ranked kills, not the
-// median field. Matching the median makes you a 50; the 99 recipe lives in the
-// top parses. Surfaces the levers that separate a top parse from yours:
-//   - external BUFFS/comp you're missing (Aug Evoker's Ebon Might, Power
-//     Infusion, Bloodlust...) -- usually the single biggest driver, and not
-//     something you fix by pressing buttons.
+// "Chasing 99": the levers beyond your own play that separate a top parse from
+// yours -- benchmarked against the actual top-ranked kills, not the median.
+//   - RAID-COMP coverage: the standard class-provided damage amps your kill is
+//     missing (Chaos Brand, Bloodlust, Power Infusion, Augmentation, ...).
 //   - damage ROUTING: what the top parses cleave/funnel that you tunnel past.
 //   - POTIONS: pre-pot + a second combat potion the top parses use.
 //
-// Class-agnostic by construction: nothing is hard-coded. Buff names come
-// straight from the data (so it finds Ebon Might / PI / Lust without a list),
-// and the "boss vs adds" split uses the encounter name, not a per-tier table.
+// Why a curated table for comp (and not a generic "buffs you lack" diff): you
+// CANNOT tell from a log alone whether an aura adds damage. A flat, always-on
+// multiplier like Chaos Brand (+5% magic taken, a debuff ON THE BOSS, ~100%
+// uptime) looks identical by uptime and by damage-concentration to pure utility
+// like Atonement or a Soulstone. The only thing that separates them is knowing
+// what the effect does -- so the damage-relevant raid amps and who brings each
+// are listed explicitly. This is class UTILITY (a small, stable per-expansion
+// list), NOT a spec's rotation/stat weights -- which is what the no-hard-coding
+// rule is actually about.
 import {
-  playerMetrics, topRankings, buffUptimes, median, f, mapLimit, bestKill,
+  playerMetrics, topRankings, buffUptimes, bossDebuffs, median, f, mapLimit, bestKill,
 } from "./core.js";
 
-const TOPN = 6; // how many top-ranked kills to learn the recipe from
+const TOPN = 6; // how many top-ranked kills to learn routing/potions from
+
+// The canonical raid-wide DAMAGE buffs/debuffs and who provides each. `on`:
+// "self" = a buff on the player, "boss" = a debuff on the enemy (so it needs the
+// boss's debuff table, not your buffs). `est` is a rough DPS-% used only to size
+// the action-list item. Match by name keyword (like flask/food), tolerant of the
+// rank/variant suffixes WoW buff names carry.
+export const RAID_DAMAGE = [
+  { key: "lust", label: "Bloodlust/Heroism", who: "a Shaman, Mage, Hunter, or Evoker", effect: "+30% haste burst", on: "self", est: 4, match: /bloodlust|heroism|time warp|primal rage|fury of the aspects|ancient hysteria|drums of/i },
+  { key: "ai", label: "Arcane Intellect", who: "a Mage", effect: "+intellect", on: "self", est: 2, match: /arcane intellect/i },
+  { key: "battleshout", label: "Battle Shout", who: "a Warrior", effect: "+attack power", on: "self", est: 2, match: /battle shout/i },
+  { key: "motw", label: "Mark of the Wild", who: "a Druid", effect: "+versatility", on: "self", est: 2, match: /mark of the wild/i },
+  { key: "skyfury", label: "Skyfury", who: "a Shaman", effect: "+mastery & attack power", on: "self", est: 2, match: /skyfury/i },
+  { key: "pi", label: "Power Infusion", who: "a Priest (cast on you)", effect: "+25% haste burst", on: "self", est: 6, match: /power infusion/i },
+  { key: "aug", label: "Augmentation (Ebon Might / Prescience)", who: "an Augmentation Evoker", effect: "re-attributed throughput", on: "self", est: 8, match: /ebon might|prescience|shifting sands/i },
+  { key: "chaosbrand", label: "Chaos Brand", who: "a Demon Hunter", effect: "+5% magic damage taken", on: "boss", est: 5, match: /chaos brand/i },
+  { key: "mystictouch", label: "Mystic Touch", who: "a Monk", effect: "+5% physical damage taken", on: "boss", est: 5, match: /mystic touch/i },
+];
 
 // --- pure, unit-tested helpers ----------------------------------------------
 
-// Buffs the top parses have that you're missing or under-running. `youBuffs` is
-// { name: {pct, guid} }; `topBuffsList` is one such map per top parse. A buff
-// qualifies when the top parses keep it up (>= minTop%) and you're well behind
-// (>= minGap below their median). `comp: true` marks buffs you had basically
-// none of -- you can't apply them yourself, so it's a raid-comp/source gap, not
-// execution. Names come from the data, so this finds Ebon Might / Power Infusion
-// / Bloodlust with no hard-coded ability list.
-// Consumable buffs you apply YOURSELF -- a gap here is a setup fix (eat/flask/pot),
-// never a comp/source gap, no matter how low your uptime is.
-const SELF_BUFF = /well fed|\bfood\b|flask|phial|potion|\brune\b|\boil\b|sharpening|weightstone|whetstone/i;
-
-export function buffGaps(youBuffs, topBuffsList, { minTop = 40, minGap = 20 } = {}) {
-  const names = new Set(topBuffsList.flatMap((b) => Object.keys(b || {})));
-  const out = [];
-  for (const name of names) {
-    const top = median(topBuffsList.map((b) => (b && b[name] ? b[name].pct : 0)));
-    const you = youBuffs && youBuffs[name] ? youBuffs[name].pct : 0;
-    if (top >= minTop && top - you >= minGap) {
-      const withGuid = topBuffsList.find((b) => b && b[name]);
-      // comp = you have ~none AND you can't apply it yourself (a raid-source gap).
-      out.push({ name, you, top, guid: withGuid ? withGuid[name].guid : null, comp: you < 5 && !SELF_BUFF.test(name) });
-    }
+// Which canonical raid-damage amps were present on a kill, and which were
+// missing. `selfBuffs` = aura map on the player; `boss` = aura map on the boss
+// (or null if we couldn't read it -> boss-side amps are SKIPPED entirely, never
+// guessed as missing). An amp counts as present when a matching aura is up for
+// more than the threshold (self amps can be brief, e.g. Lust; boss debuffs are
+// maintained, so they need real uptime).
+export function raidCoverage(selfBuffs, boss, { minSelf = 1, minBoss = 20 } = {}) {
+  const has = (auras, re, min) => Object.entries(auras || {}).some(([n, b]) => re.test(n) && b.pct > min);
+  const present = [], missing = [];
+  for (const e of RAID_DAMAGE) {
+    if (e.on === "boss" && !boss) continue;          // couldn't read the boss -> don't guess
+    const auras = e.on === "boss" ? boss : selfBuffs;
+    (has(auras, e.match, e.on === "boss" ? minBoss : minSelf) ? present : missing).push(e);
   }
-  return out.sort((a, b) => (b.top - b.you) - (a.top - a.you));
+  return { present, missing };
 }
 
 // Share of damage that lands on NON-boss targets (cleave / funnel). The boss is
 // the target whose name matches the encounter; everything else counts as adds.
-// Returns { pct, byAdd: Map(name -> total) }.
 export function nonBossShare(targets, bossName) {
   let boss = 0, other = 0;
   const byAdd = new Map();
@@ -60,19 +71,10 @@ export function nonBossShare(targets, bossName) {
 }
 
 // Total potions used in a kill, from the casts counter ({ abilityName: count }).
-// Keyword match (like flask/food) -- no class assumptions.
 export function potionCount(casts) {
   let n = 0;
   for (const [name, c] of Object.entries(casts || {})) if (/potion/i.test(name)) n += c;
   return n;
-}
-
-// Rough DPS-% estimate for a missing external buff, scaled by how much uptime
-// the top parses get. Deliberately conservative and clamped; it exists only to
-// order the action list sensibly (comp gaps are usually the biggest lever), and
-// is always shown as an estimate.
-export function compImpactPct(topUptime) {
-  return Math.max(4, Math.min(14, Math.round((topUptime / 100) * 12)));
 }
 
 // --- data layer --------------------------------------------------------------
@@ -85,38 +87,37 @@ export async function topParseFindings(name, server, region, difficulty, classNa
   if (!mine) return null;
   const you = await playerMetrics(mine.code, mine.fight, name, specName, className);
   if (!you) return null;
-  const youBuffs = await buffUptimes(mine.code, mine.fight, you.sourceID);
 
-  // The 99 recipe: rank 1..N kills, not the ilvl-matched median.
+  // Raid-comp coverage on YOUR kill: buffs on you + debuffs on the boss. The boss
+  // debuffs are a separate table; if it can't be read, those amps are skipped.
+  const youBuffs = await buffUptimes(mine.code, mine.fight, you.sourceID);
+  let youBoss = null;
+  try { youBoss = await bossDebuffs(mine.code, mine.fight); } catch (e) { youBoss = null; }
+  const comp = raidCoverage(youBuffs, youBoss);
+
+  // Routing / potions: learn from the actual top-ranked kills (rank 1..N).
   const ranked = (await topRankings(mine.encounter.id, difficulty, className, specName, 1)).slice(0, TOPN);
   const tops = (await mapLimit(ranked, 4, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
-    if (!m) return null;
-    const b = await buffUptimes(r.report.code, r.report.fightID, m.sourceID);
-    return { m, b };
+    return m ? { m } : null;
   })).filter(Boolean);
-  if (!tops.length) return null;
-
-  const gaps = buffGaps(youBuffs, tops.map((t) => t.b));
 
   const youRoute = nonBossShare(you.dmg_targets, mine.encounter.name);
-  const topRoutes = tops.map((t) => nonBossShare(t.m.dmg_targets, mine.encounter.name));
-  const topRoutePct = median(topRoutes.map((r) => r.pct));
-  const addAgg = new Map();
-  for (const r of topRoutes) for (const [nm, tot] of r.byAdd) addAgg.set(nm, (addAgg.get(nm) || 0) + tot);
-  const youHits = new Set([...youRoute.byAdd.keys()]);
-  const addNames = [...addAgg.entries()].sort((a, b) => b[1] - a[1])
-    .map(([n]) => n).filter((n) => !youHits.has(n)).slice(0, 3);
+  let routing = null, potions = null;
+  if (tops.length) {
+    const topRoutes = tops.map((t) => nonBossShare(t.m.dmg_targets, mine.encounter.name));
+    const addAgg = new Map();
+    for (const r of topRoutes) for (const [nm, tot] of r.byAdd) addAgg.set(nm, (addAgg.get(nm) || 0) + tot);
+    const youHits = new Set([...youRoute.byAdd.keys()]);
+    const addNames = [...addAgg.entries()].sort((a, b) => b[1] - a[1])
+      .map(([n]) => n).filter((n) => !youHits.has(n)).slice(0, 3);
+    routing = { you: youRoute.pct, top: median(topRoutes.map((r) => r.pct)), addNames };
+    potions = { you: potionCount(you.casts), top: Math.round(median(tops.map((t) => potionCount(t.m.casts)))) };
+  }
 
-  const topDps = median(tops.map((t) => t.m.dps));
   return {
-    boss: mine.encounter.name,
-    nTop: tops.length,
-    yourPct: mine.rankPercent,
-    dpsGapPct: you.dps ? (100 * (topDps - you.dps)) / you.dps : 0,
-    buffGaps: gaps,
-    routing: { you: youRoute.pct, top: topRoutePct, addNames },
-    potions: { you: potionCount(you.casts), top: Math.round(median(tops.map((t) => potionCount(t.m.casts)))) },
+    boss: mine.encounter.name, nTop: tops.length, yourPct: mine.rankPercent,
+    bossReadable: youBoss !== null, comp, routing, potions,
   };
 }
 
@@ -126,29 +127,28 @@ export async function run(log, name, server, region, className, specName, diffic
   const fnd = await topParseFindings(name, server, region, difficulty, className, specName);
   if (!fnd) { log("(couldn't build a top-parse comparison for this character)"); return; }
 
-  log(`=== Chasing 99: you vs the top ${fnd.nTop} parses on ${fnd.boss} ===`);
-  log(`Your kill sits at ${f(fnd.yourPct, 0)}%ile.` +
-      (fnd.nTop < 3 ? "  (only a few top parses available -- treat as indicative)" : ""));
+  log(`=== Chasing 99: you vs the top parses on ${fnd.boss} (your kill: ${f(fnd.yourPct, 0)}%ile) ===`);
   log("");
 
-  if (fnd.buffGaps.length) {
-    log("--- External buffs (usually the biggest lever) ---");
-    log(`  ${"buff".padEnd(28)} ${"top".padStart(5)}  ${"you".padStart(5)}`);
-    for (const g of fnd.buffGaps.slice(0, 6)) {
-      const flag = g.comp ? "  <-- COMP: a raid-comp/source gap, not execution" : "  <-- keep it up more";
-      log(`  ${g.name.slice(0, 28).padEnd(28)} ${(f(g.top, 0) + "%").padStart(5)}  ${(f(g.you, 0) + "%").padStart(5)}${flag}`);
+  log("--- Raid-comp damage amps (you can't press these -- it's who's in the raid) ---");
+  if (!fnd.bossReadable) log("  (couldn't read the boss's debuffs -- boss-side amps like Chaos Brand omitted)");
+  if (fnd.comp.missing.length) {
+    for (const e of fnd.comp.missing) {
+      log(`  MISSING  ${e.label.padEnd(34)} ${e.effect.padEnd(26)} bring ${e.who}`);
     }
   } else {
-    log("External buffs: you match the top parses.");
+    log("  You have every standard raid-damage amp we can see.");
   }
+  if (fnd.comp.present.length) log(`  Present: ${fnd.comp.present.map((e) => e.label).join(", ")}`);
   log("");
 
-  log("--- Damage routing ---");
-  log(`  top parses put ${f(fnd.routing.top, 0)}% of damage on non-boss targets; you ${f(fnd.routing.you, 0)}%.`);
-  if (fnd.routing.addNames.length) log(`  they cleave/funnel that you don't: ${fnd.routing.addNames.join(", ")}`);
-  log("");
-
-  log("--- Consumables timing ---");
-  log(`  potions/kill: top ${fnd.potions.top}, you ${fnd.potions.you}` +
-      (fnd.potions.top > fnd.potions.you ? "  <-- pre-pot + a second combat potion" : ""));
+  if (fnd.routing) {
+    log("--- Damage routing ---");
+    log(`  top parses put ${f(fnd.routing.top, 0)}% of damage on non-boss targets; you ${f(fnd.routing.you, 0)}%.`);
+    if (fnd.routing.addNames.length) log(`  they cleave/funnel that you don't: ${fnd.routing.addNames.join(", ")}`);
+    log("");
+    log("--- Consumables timing ---");
+    log(`  potions/kill: top ${fnd.potions.top}, you ${fnd.potions.you}` +
+        (fnd.potions.top > fnd.potions.you ? "  <-- pre-pot + a second combat potion" : ""));
+  }
 }

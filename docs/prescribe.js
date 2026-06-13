@@ -7,7 +7,7 @@ import { compareBoss } from "./diagnose.js";
 import { gearFindings, sourceText } from "./gear.js";
 import { wowheadItem, wowheadSpell } from "./links.js";
 import { rotationFindings } from "./rotation.js";
-import { topParseFindings, compImpactPct } from "./topparse.js";
+import { topParseFindings } from "./topparse.js";
 
 const SLOT_NAME = ENCHANTABLE_SLOTS;
 
@@ -300,32 +300,29 @@ export async function run(log, name, server, region, className = "Monk", specNam
     }
   } catch (e) { /* rotation data unavailable -- skip */ }
 
-  // Chasing 99: levers from the ACTUAL top parses (not the median field) --
-  // external buffs/comp, damage routing, and potions. These are usually the
-  // difference between a mid parse and a 95+, so they belong in the list.
+  // Chasing 99: levers beyond your own play -- the standard raid-comp damage
+  // amps your kill is missing, plus damage routing and potions from the actual
+  // top parses. These are usually the difference between a mid parse and a 95+.
   try {
     const tp = await topParseFindings(N, S, R, D, CL, SP);
     if (tp) {
-      // External buffs you simply don't get (comp/source gap, not execution).
-      // Estimated %, labelled "comp" so it reads as a raid ask, but sized so it
-      // sorts among the big levers it usually is. Gated on >=3 top parses so a
-      // single fluke log's incidental buffs don't become recommendations.
-      for (const g of (tp.nTop >= 3 ? tp.buffGaps.filter((x) => x.comp) : []).slice(0, 2)) {
-        const pct = compImpactPct(g.top);
-        rx.push([-pct, `~${pct}% comp`,
-          `BUFF (comp): top parses run ${wowheadSpell(g.guid, g.name)} (~${f(g.top, 0)}% uptime); you had ${f(g.you, 0)}%. ` +
-          `You can't apply it yourself -- secure its source (a raid-comp slot like an Augmentation Evoker, or whoever provides it). ` +
-          `Often the single biggest step up from a ~${f(tp.yourPct, 0)} parse.`]);
+      // Raid-comp amps missing from your kill (a buff on you, or a debuff on the
+      // boss). You can't press these -- it's who's in the raid -- so they're
+      // labelled "comp" and sized by the effect's rough value.
+      for (const e of (tp.comp ? tp.comp.missing : [])) {
+        rx.push([-e.est, `~${e.est}% comp`,
+          `COMP: your kill is missing ${e.label} (${e.effect}) -- bring ${e.who}. ` +
+          `A raid-comp gap, not execution; it lifts the whole raid's damage.`]);
       }
       // Damage routing: measured extra cleave/funnel the top parses get.
-      const route = tp.routing.top - tp.routing.you;
-      if (route >= 5 && tp.routing.addNames.length) {
+      const route = tp.routing ? tp.routing.top - tp.routing.you : 0;
+      if (tp.routing && route >= 5 && tp.routing.addNames.length) {
         rx.push([-route, `~${f(route, 0)}% DPS`,
           `ROUTING: top parses put ${f(tp.routing.top, 0)}% of damage on ${tp.routing.addNames.join(", ")} ` +
           `(you ${f(tp.routing.you, 0)}%). Cleave/funnel those instead of tunneling the boss.`]);
       }
       // Potions: pre-pot + a second combat potion.
-      if (tp.potions.top > tp.potions.you) {
+      if (tp.potions && tp.potions.top > tp.potions.you) {
         rx.push([-2.5, "~2% DPS",
           `POTIONS: top parses use ${tp.potions.top}/kill (pre-pot + a combat potion); you used ${tp.potions.you}. Add the missing one.`]);
       }
