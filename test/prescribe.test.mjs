@@ -15,6 +15,7 @@ test("dimensionOf groups each finding under the analysis it came from", () => {
   assert.equal(dimensionOf("FLASK: you ran none ..."), "Setup");
   assert.equal(dimensionOf("COMBAT POTION: you used none ..."), "Setup");
   assert.equal(dimensionOf("AUGMENT RUNE: you ran none ..."), "Setup");
+  assert.equal(dimensionOf("WEAPON OIL: you ran none ..."), "Setup");
   assert.equal(dimensionOf("ENCHANTS: you're missing enchants on Weapon ..."), "Setup");
   assert.equal(dimensionOf("BUFF (comp): top parses run ..."), "Comp");
   assert.equal(dimensionOf("ROUTING: top parses put ..."), "Comp");

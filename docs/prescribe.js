@@ -24,7 +24,7 @@ export function impactScore(label) {
 export function dimensionOf(text) {
   if (/^(PRESS FASTER|UPTIME)/.test(text)) return "Execution";
   if (/^(ROTATION|PROC)/.test(text)) return "Rotation";
-  if (/^(FLASK|FOOD|COMBAT POTION|POTIONS|AUGMENT RUNE|ENCHANTS)/.test(text)) return "Setup";
+  if (/^(FLASK|FOOD|COMBAT POTION|POTIONS|AUGMENT RUNE|WEAPON OIL|ENCHANTS)/.test(text)) return "Setup";
   if (/^(BUFF|ROUTING)/.test(text)) return "Comp";
   return "Gear";   // "<STAT> via ...", EMBELLISHMENTS, GEAR/STATS, re-stat
 }
@@ -78,7 +78,7 @@ async function bestIlvlKill(name, server, region, encounterId, difficulty) {
 
 async function fieldGearConsumables(encounterId, difficulty, className, specName, targetIlvl, priority = "crit", n = 10) {
   const enchBySlot = {};   // slot -> Map(name -> count)
-  const trinkets = new Map(), flasks = new Map(), foods = new Map(), potions = new Map(), augRunes = new Map();
+  const trinkets = new Map(), flasks = new Map(), foods = new Map(), potions = new Map(), augRunes = new Map(), oils = new Map();
   const guids = new Map(); // flask/food name -> spell guid (for Wowhead links)
   const statPcts = [];
   // Collect ilvl-matched candidates, then fetch each peer's gear/buffs/stats
@@ -112,6 +112,9 @@ async function fieldGearConsumables(encounterId, difficulty, className, specName
       if (b.pct > 0 && lc.includes("potion") && !lc.includes("healing")) { potions.set(nm, (potions.get(nm) || 0) + 1); guids.set(nm, b.guid); }
       // Augment rune: a persistent +primary-stat consumable (a free flat gain).
       if (b.pct > 50 && lc.includes("augment rune")) { augRunes.set(nm, (augRunes.get(nm) || 0) + 1); guids.set(nm, b.guid); }
+      // Weapon oil / sharpening stone: a TEMPORARY weapon buff you re-apply, like
+      // a flask -- NOT the permanent weapon enchant (that's the ENCHANTS check).
+      if (b.pct > 50 && /\boil\b|sharpening|whetstone|weightstone/.test(lc)) { oils.set(nm, (oils.get(nm) || 0) + 1); guids.set(nm, b.guid); }
     }
     if (s) {
       const sec = ["crit", "haste", "mastery", "vers"].reduce((acc, k) => acc + s[k], 0) || 1;
@@ -119,7 +122,7 @@ async function fieldGearConsumables(encounterId, difficulty, className, specName
     }
   }
   return {
-    ench_by_slot: enchBySlot, trinkets, flasks, foods, potions, augRunes, guids,
+    ench_by_slot: enchBySlot, trinkets, flasks, foods, potions, augRunes, oils, guids,
     stat_pct: statPcts.length ? median(statPcts) : null, n: peers.length,
     dps_med: peers.length ? median(peers.map((p) => p.m.dps)) : null, // measured field DPS
   };
@@ -134,6 +137,7 @@ async function mySetup(code, fight, sourceId, gear, priority = "crit") {
     return lc.includes("potion") && !lc.includes("healing") && b.pct > 0;
   });
   const augrune = Object.entries(bf).find(([n, b]) => n.toLowerCase().includes("augment rune") && b.pct > 50);
+  const oil = Object.entries(bf).find(([n, b]) => /\boil\b|sharpening|whetstone|weightstone/.test(n.toLowerCase()) && b.pct > 50);
   const stats = await secondaryStats(code, fight, sourceId);
   const statPct = stats
     ? 100 * stats[priority] / (["crit", "haste", "mastery", "vers"].reduce((a, k) => a + stats[k], 0) || 1)
@@ -145,6 +149,7 @@ async function mySetup(code, fight, sourceId, gear, priority = "crit") {
     food: food ? food[0] : null, foodGuid: food ? food[1].guid : null,
     potion: potion ? potion[0] : null, potionGuid: potion ? potion[1].guid : null,
     augrune: augrune ? augrune[0] : null, augruneGuid: augrune ? augrune[1].guid : null,
+    oil: oil ? oil[0] : null, oilGuid: oil ? oil[1].guid : null,
     statPct, trinkets, ench,
   };
 }
@@ -256,6 +261,15 @@ export async function run(log, name, server, region, className = "Monk", specNam
         `${wowheadSpell(field.guids.get(ta), ta)} (a flat primary-stat gain). Free parse.`]);
     } else if (my.augrune !== ta) {
       rx.push([-1.0, "~1% DPS", `AUGMENT RUNE: ${wowheadSpell(my.augruneGuid, my.augrune)} -> ${wowheadSpell(field.guids.get(ta), ta)}.`]);
+    }
+  }
+  if (field.oils.size) {
+    const to = topEntry(field.oils)[0];
+    if (!my.oil) {
+      rx.push([-1.5, "~1-2% DPS", `WEAPON OIL: you ran none -- ${field.oils.get(to)}/${field.n} peers apply ` +
+        `${wowheadSpell(field.guids.get(to), to)} (a temporary weapon buff, re-applied like a flask). Free parse.`]);
+    } else if (my.oil !== to) {
+      rx.push([-1.0, "~1% DPS", `WEAPON OIL: ${wowheadSpell(my.oilGuid, my.oil)} -> ${wowheadSpell(field.guids.get(to), to)}.`]);
     }
   }
   // Missing enchants (the modern "oil"): slots the field reliably enchants that
