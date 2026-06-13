@@ -6,6 +6,7 @@ import {
 import { PrivateReport } from "./wcl.js";
 import { compareBoss } from "./diagnose.js";
 import { gearFindings } from "./gear.js";
+import { rotationFindings } from "./rotation.js";
 
 const SLOT_NAME = ENCHANTABLE_SLOTS;
 const mostCommon = (counter) => {
@@ -186,6 +187,17 @@ export async function run(log, name, server, region, className = "Monk", specNam
   } else if (gf && !gf.swaps.length && !gf.restats.length && statGap < 4) {
     rx.push([0.0, "info", "GEAR/STATS: optimal for what you own -- no lever; gains are future drops + a sim (Droptimizer)."]);
   }
+
+  // Rotation: only a GENUINE proc you under-use is actionable. Crit-driven big
+  // hits are deliberately NOT recommended (a big hit is usually just a crit).
+  try {
+    const rot = await rotationFindings(N, S, R, CL, SP, D);
+    if (rot && rot.proc.isReal && rot.proc.fieldPerMin != null &&
+        rot.proc.youPerMin < rot.proc.fieldPerMin - 0.4) {
+      rx.push([-1.0, "~1-2% DPS", `PROC: you land ${f(rot.proc.youPerMin, 1)} ${rot.proc.name} ` +
+        `procs/min vs the field's ${f(rot.proc.fieldPerMin, 1)} -- generate/use it more.`]);
+    }
+  } catch (e) { /* rotation data unavailable -- skip */ }
 
   log("");
   log("DO THESE IN ORDER (biggest DPS first):");
