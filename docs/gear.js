@@ -2,8 +2,28 @@
 // Wowhead proxy) and compares slot-by-slot to the field. Ported from gear.py.
 import { itemTooltip } from "./wcl.js";
 import {
-  characterZone, characterEncounter, playerMetrics, topRankings, f,
+  characterZone, characterEncounter, playerMetrics, topRankings, f, mapLimit,
 } from "./core.js";
+
+// Collect up to n unique (by name+server) top-ranked candidates across the
+// given encounters, so the heavy per-peer fetches can run concurrently.
+async function fieldCandidates(className, specName, difficulty, encounters, n) {
+  const seen = new Set();
+  const cands = [];
+  for (const eid of encounters) {
+    if (cands.length >= n) break;
+    for (const page of [1, 2]) {
+      for (const r of await topRankings(eid, difficulty, className, specName, page)) {
+        const key = `${r.name}|${(r.server || {}).name}`;
+        if (seen.has(key)) continue;
+        seen.add(key); cands.push(r);
+        if (cands.length >= n) break;
+      }
+      if (cands.length >= n) break;
+    }
+  }
+  return cands;
+}
 
 const SLOT = {
   0: "Head", 1: "Neck", 2: "Shoulder", 4: "Chest", 5: "Belt", 6: "Legs",
@@ -55,37 +75,28 @@ export async function itemStats(itemId, bonusIds) {
 // Needs per-piece bonus IDs to detect embellishments, so it's a separate,
 // smaller sample than fieldConsensus to keep tooltip reads bounded.
 async function fieldEmbellishments(className, specName, difficulty, encounters, n = 18) {
-  const combos = new Map(); // JSON(sorted slot names) -> count
-  const items = new Map();  // item name -> count
-  const seen = new Set();
-  let got = 0;
-  for (const eid of encounters) {
-    if (got >= n) break;
-    for (const page of [1, 2]) {
-      for (const r of await topRankings(eid, difficulty, className, specName, page)) {
-        if (got >= n) break;
-        const key = `${r.name}|${(r.server || {}).name}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        let m;
-        try { m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className); }
-        catch (e) { continue; }
-        if (!m) continue;
-        const emb = [];
-        for (const g of m.gear) {
-          if (g.slot in SLOT) {
-            const s = await itemStats(g.id, g.bonusIDs);
-            if (s.embellished) emb.push([SLOT[g.slot], s.name]);
-          }
-        }
-        if (emb.length) {
-          got++;
-          const comboKey = JSON.stringify(emb.map(([sl]) => sl).sort());
-          combos.set(comboKey, (combos.get(comboKey) || 0) + 1);
-          for (const [, nm] of emb) items.set(nm, (items.get(nm) || 0) + 1);
-        }
+  const cands = await fieldCandidates(className, specName, difficulty, encounters, n);
+  const perPeer = await mapLimit(cands, 4, async (r) => {
+    const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
+    if (!m) return null;
+    const emb = [];
+    for (const g of m.gear) {
+      if (g.slot in SLOT) {
+        const s = await itemStats(g.id, g.bonusIDs);
+        if (s.embellished) emb.push([SLOT[g.slot], s.name]);
       }
     }
+    return emb;
+  });
+  const combos = new Map(); // JSON(sorted slot names) -> count
+  const items = new Map();  // item name -> count
+  let got = 0;
+  for (const emb of perPeer) {
+    if (!emb || !emb.length) continue;
+    got++;
+    const comboKey = JSON.stringify(emb.map(([sl]) => sl).sort());
+    combos.set(comboKey, (combos.get(comboKey) || 0) + 1);
+    for (const [, nm] of emb) items.set(nm, (items.get(nm) || 0) + 1);
   }
   return { combos, items, n: got };
 }
@@ -117,39 +128,25 @@ async function fieldConsensus(className, specName, difficulty, encounters, n = 4
   const variants = {};         // itemId -> Map(bonusKey -> count)
   const gems = new Map();      // gemId -> count
   const gemVariety = [];       // per player: distinct gem ids
-  const seen = new Set();
-  let got = 0;
-  for (const eid of encounters) {
-    if (got >= n) break;
-    for (const page of [1, 2]) {
-      for (const r of await topRankings(eid, difficulty, className, specName, page)) {
-        const key = `${r.name}|${(r.server || {}).name}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        let m;
-        try { m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className); }
-        catch (e) { continue; }
-        if (!m) continue;
-        got++;
-        const pgems = [];
-        for (const g of m.gear) {
-          if (g.slot in SLOT && g.name) {
-            (perSlot[g.slot] = perSlot[g.slot] || new Map()).set(g.id, (perSlot[g.slot].get(g.id) || 0) + 1);
-            if (!(g.id in bonusSample)) bonusSample[g.id] = g.bonusIDs;
-            const bk = JSON.stringify(g.bonusIDs || []);
-            (variants[g.id] = variants[g.id] || new Map()).set(bk, (variants[g.id].get(bk) || 0) + 1);
-          }
-          for (const gm of (g.gems || [])) {
-            if (gm.id) { gems.set(gm.id, (gems.get(gm.id) || 0) + 1); pgems.push(gm.id); }
-          }
-        }
-        if (pgems.length) gemVariety.push(new Set(pgems).size);
-        if (got >= n) break;
+  const cands = await fieldCandidates(className, specName, difficulty, encounters, n);
+  const metrics = (await mapLimit(cands, 5, (r) =>
+    playerMetrics(r.report.code, r.report.fightID, r.name, specName, className))).filter(Boolean);
+  for (const m of metrics) {
+    const pgems = [];
+    for (const g of m.gear) {
+      if (g.slot in SLOT && g.name) {
+        (perSlot[g.slot] = perSlot[g.slot] || new Map()).set(g.id, (perSlot[g.slot].get(g.id) || 0) + 1);
+        if (!(g.id in bonusSample)) bonusSample[g.id] = g.bonusIDs;
+        const bk = JSON.stringify(g.bonusIDs || []);
+        (variants[g.id] = variants[g.id] || new Map()).set(bk, (variants[g.id].get(bk) || 0) + 1);
       }
-      if (got >= n) break;
+      for (const gm of (g.gems || [])) {
+        if (gm.id) { gems.set(gm.id, (gems.get(gm.id) || 0) + 1); pgems.push(gm.id); }
+      }
     }
+    if (pgems.length) gemVariety.push(new Set(pgems).size);
   }
-  return { perSlot, bonusSample, variants, gems, gemVariety, n: got };
+  return { perSlot, bonusSample, variants, gems, gemVariety, n: metrics.length };
 }
 
 const topItem = (counter) => {

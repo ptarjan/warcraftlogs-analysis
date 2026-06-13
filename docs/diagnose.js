@@ -1,7 +1,7 @@
 // Comparative timeline root-cause diagnosis. Ported from diagnose.py.
 import { gql, PrivateReport } from "./wcl.js";
 import {
-  characterZone, characterEncounter, playerMetrics, topRankings, median, f,
+  characterZone, characterEncounter, playerMetrics, topRankings, median, f, mapLimit,
 } from "./core.js";
 
 
@@ -104,41 +104,33 @@ async function fightMetrics(code, fight, sourceId) {
 }
 
 async function peerMetricsFor(encounterId, difficulty, className, specName, targetIlvl, n = 6) {
-  const results = [];
-  for (let page = 1; page <= 7; page++) {
-    if (results.length >= n) break;
+  const cands = [];
+  for (let page = 1; page <= 7 && cands.length < n + 3; page++) {
     for (const r of await topRankings(encounterId, difficulty, className, specName, page)) {
-      if (results.length >= n) break;
       const il = r.bracketData;
-      if (!(il && Math.abs(il - targetIlvl) <= 3)) continue;
-      try {
-        const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
-        if (!m) continue;
-        const fm = await fightMetrics(r.report.code, r.report.fightID, m.sourceID);
-        if (fm) results.push(fm);
-      } catch (e) {
-        continue;
-      }
+      if (il && Math.abs(il - targetIlvl) <= 3) cands.push(r);
+      if (cands.length >= n + 3) break;
     }
   }
-  return results;
+  // fightMetrics paginates events (heavy), so a smaller concurrency cap.
+  const results = await mapLimit(cands, 4, async (r) => {
+    const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
+    return m ? fightMetrics(r.report.code, r.report.fightID, m.sourceID) : null;
+  });
+  return results.filter(Boolean).slice(0, n);
 }
 
 // Diagnose all your kills of a boss vs peer median on the SAME boss.
 export async function compareBoss(name, server, region, encounter, difficulty, className, specName) {
   const er = await characterEncounter(name, server, region, encounter.id, difficulty);
   if (!er || !er.ranks || !er.ranks.length) return null;
-  const yourFms = [];
-  const ilvls = [];
-  for (const rk of er.ranks) {
-    try {
-      const you = await playerMetrics(rk.report.code, rk.report.fightID, name, specName, className);
-      const fm = await fightMetrics(rk.report.code, rk.report.fightID, you.sourceID);
-      if (fm) { yourFms.push(fm); ilvls.push(rk.bracketData || 0); }
-    } catch (e) {
-      continue;
-    }
-  }
+  const perKill = await mapLimit(er.ranks, 4, async (rk) => {
+    const you = await playerMetrics(rk.report.code, rk.report.fightID, name, specName, className);
+    const fm = await fightMetrics(rk.report.code, rk.report.fightID, you.sourceID);
+    return fm ? { fm, ilvl: rk.bracketData || 0 } : null;
+  });
+  const yourFms = perKill.filter(Boolean).map((x) => x.fm);
+  const ilvls = perKill.filter(Boolean).map((x) => x.ilvl);
   if (!yourFms.length) return null;
   const peers = await peerMetricsFor(encounter.id, difficulty, className, specName,
     ilvls.length ? Math.max(...ilvls) : 0);

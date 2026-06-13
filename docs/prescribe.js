@@ -1,7 +1,7 @@
 // Generate a concrete, prioritized prescription. Ported from prescribe.py.
 import {
   ENCHANTABLE_SLOTS, characterZone, characterEncounter, playerMetrics,
-  topRankings, secondaryStats, buffUptimes, median, f, detectPriority,
+  topRankings, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit,
 } from "./core.js";
 import { PrivateReport } from "./wcl.js";
 import { compareBoss } from "./diagnose.js";
@@ -33,45 +33,47 @@ async function fieldGearConsumables(encounterId, difficulty, className, specName
   const enchBySlot = {};   // slot -> Map(name -> count)
   const trinkets = new Map(), flasks = new Map(), foods = new Map();
   const statPcts = [];
-  let got = 0;
-  for (let page = 1; page <= 7; page++) {
-    if (got >= n) break;
+  // Collect ilvl-matched candidates, then fetch each peer's gear/buffs/stats
+  // concurrently (bounded) instead of one slow peer at a time.
+  const cands = [];
+  for (let page = 1; page <= 7 && cands.length < n + 3; page++) {
     for (const r of await topRankings(encounterId, difficulty, className, specName, page)) {
-      if (got >= n) break;
       const il = r.bracketData;
-      if (!(il && Math.abs(il - targetIlvl) <= 2)) continue;
-      const code = r.report.code, fight = r.report.fightID;
-      try {
-        const m = await playerMetrics(code, fight, r.name, specName, className);
-        if (!m) continue;
-        for (const g of m.gear) {
-          const s = g.slot;
-          if (s in SLOT_NAME && g.permanentEnchantName) {
-            const slotName = SLOT_NAME[s];
-            (enchBySlot[slotName] = enchBySlot[slotName] || new Map())
-              .set(g.permanentEnchantName, (enchBySlot[slotName].get(g.permanentEnchantName) || 0) + 1);
-          }
-          if ((s === 12 || s === 13) && g.name) trinkets.set(g.name, (trinkets.get(g.name) || 0) + 1);
-        }
-        const bf = await buffUptimes(code, fight, m.sourceID);
-        for (const [nm, up] of Object.entries(bf)) {
-          if (up > 50 && nm.toLowerCase().includes("flask")) flasks.set(nm, (flasks.get(nm) || 0) + 1);
-          if (up > 50 && nm.toLowerCase().includes("well fed")) foods.set(nm, (foods.get(nm) || 0) + 1);
-        }
-        const s = await secondaryStats(code, fight, m.sourceID);
-        if (s) {
-          const sec = ["crit", "haste", "mastery", "vers"].reduce((acc, k) => acc + s[k], 0) || 1;
-          statPcts.push(100 * s[priority] / sec);
-        }
-        got++;
-      } catch (e) {
-        continue;
+      if (il && Math.abs(il - targetIlvl) <= 2) cands.push(r);
+      if (cands.length >= n + 3) break;
+    }
+  }
+  const peers = (await mapLimit(cands, 5, async (r) => {
+    const code = r.report.code, fight = r.report.fightID;
+    const m = await playerMetrics(code, fight, r.name, specName, className);
+    if (!m) return null;
+    const bf = await buffUptimes(code, fight, m.sourceID);
+    const s = await secondaryStats(code, fight, m.sourceID);
+    return { m, bf, s };
+  })).filter(Boolean).slice(0, n);
+
+  for (const { m, bf, s } of peers) {
+    for (const g of m.gear) {
+      const slot = g.slot;
+      if (slot in SLOT_NAME && g.permanentEnchantName) {
+        const slotName = SLOT_NAME[slot];
+        (enchBySlot[slotName] = enchBySlot[slotName] || new Map())
+          .set(g.permanentEnchantName, (enchBySlot[slotName].get(g.permanentEnchantName) || 0) + 1);
       }
+      if ((slot === 12 || slot === 13) && g.name) trinkets.set(g.name, (trinkets.get(g.name) || 0) + 1);
+    }
+    for (const [nm, up] of Object.entries(bf)) {
+      if (up > 50 && nm.toLowerCase().includes("flask")) flasks.set(nm, (flasks.get(nm) || 0) + 1);
+      if (up > 50 && nm.toLowerCase().includes("well fed")) foods.set(nm, (foods.get(nm) || 0) + 1);
+    }
+    if (s) {
+      const sec = ["crit", "haste", "mastery", "vers"].reduce((acc, k) => acc + s[k], 0) || 1;
+      statPcts.push(100 * s[priority] / sec);
     }
   }
   return {
     ench_by_slot: enchBySlot, trinkets, flasks, foods,
-    stat_pct: statPcts.length ? median(statPcts) : null, n: got,
+    stat_pct: statPcts.length ? median(statPcts) : null, n: peers.length,
   };
 }
 

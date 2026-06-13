@@ -1,7 +1,7 @@
 // Overview + item-level / duration-controlled comparison. Ported from analyze.py.
 import {
   DIFFICULTY, characterZone, characterEncounter, topRankings, playerMetrics,
-  secondaryStats, gearSummary, median, f, padL, padR,
+  secondaryStats, gearSummary, median, f, padL, padR, mapLimit,
 } from "./core.js";
 import { PrivateReport } from "./wcl.js";
 
@@ -24,26 +24,20 @@ export async function overview(log, name, server, region, difficulty) {
 // Peers within +/- ilvlWindow of targetIlvl, with full metrics.
 async function collectIlvlPeers(encounterId, difficulty, className, specName,
   targetIlvl, n = 12, ilvlWindow = 2, pages = 6) {
-  const peers = [];
-  for (let page = 1; page <= pages; page++) {
-    if (peers.length >= n) break;
+  const cands = [];
+  for (let page = 1; page <= pages && cands.length < n + 4; page++) {
     for (const r of await topRankings(encounterId, difficulty, className, specName, page)) {
-      if (peers.length >= n) break;
       const il = r.bracketData;
-      if (!(il && Math.abs(il - targetIlvl) <= ilvlWindow)) continue;
-      let m;
-      try {
-        m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
-      } catch (e) {
-        continue;
-      }
-      if (m) {
-        m.rank_dur = (r.duration || 0) / 1000;
-        peers.push(m);
-      }
+      if (il && Math.abs(il - targetIlvl) <= ilvlWindow) cands.push(r);
+      if (cands.length >= n + 4) break;
     }
   }
-  return peers;
+  const metrics = await mapLimit(cands, 5, async (r) => {
+    const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
+    if (m) m.rank_dur = (r.duration || 0) / 1000;
+    return m;
+  });
+  return metrics.filter(Boolean).slice(0, n);
 }
 
 // Full controlled comparison for one encounter (uses the best-ilvl kill).

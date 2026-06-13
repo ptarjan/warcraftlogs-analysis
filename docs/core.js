@@ -57,6 +57,23 @@ export async function topRankings(encounterId, difficulty, className, specName, 
   return cr && typeof cr === "object" ? (cr.rankings || []) : [];
 }
 
+// Bounded-concurrency map: run fn over items with at most `limit` in flight.
+// Faster than sequential awaits, but capped so we don't burst the shared WCL
+// rate limit. Results are returned in input order; fn errors become null.
+export async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      try { out[i] = await fn(items[i], i); }
+      catch (e) { out[i] = null; }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
 function entry(tableData, name, specName) {
   const entries = tableData.entries || [];
   let hit = entries.filter((e) => e.name === name);
@@ -64,13 +81,8 @@ function entry(tableData, name, specName) {
   return hit.length ? hit[0] : null;
 }
 
-// Damage + cast metrics for one player on one fight.
-export async function playerMetrics(code, fight, name, specName, className = "Monk") {
-  const q = `query { reportData { report(code:"${code}") {
-    dmg: table(fightIDs:${fight}, dataType:DamageDone, sourceClass:"${className}")
-    casts: table(fightIDs:${fight}, dataType:Casts, sourceClass:"${className}") } } }`;
-  const d = (await gql(q)).reportData.report;
-  const dmg = d.dmg.data, casts = d.casts.data;
+// Build a metrics object from already-fetched DamageDone + Casts table data.
+function metricsFromTables(dmg, casts, name, specName) {
   const dur = dmg.totalTime / 1000.0;
   const e = entry(dmg, name, specName);
   if (!e) return null;
@@ -89,6 +101,15 @@ export async function playerMetrics(code, fight, name, specName, className = "Mo
     casts_per_min: dur ? totalCasts / (dur / 60) : 0,
     sourceID: e.id, gear: e.gear || [],
   };
+}
+
+// Damage + cast metrics for one player on one fight.
+export async function playerMetrics(code, fight, name, specName, className = "Monk") {
+  const q = `query { reportData { report(code:"${code}") {
+    dmg: table(fightIDs:${fight}, dataType:DamageDone, sourceClass:"${className}")
+    casts: table(fightIDs:${fight}, dataType:Casts, sourceClass:"${className}") } } }`;
+  const d = (await gql(q)).reportData.report;
+  return metricsFromTables(d.dmg.data, d.casts.data, name, specName);
 }
 
 // Self-buff uptime % keyed by buff name (match by keyword to compare).
@@ -159,20 +180,23 @@ export async function detectContext(name, server, region) {
 
 // The gear stat to optimize toward = the one the top field stacks most.
 export async function detectPriority(className, specName, difficulty, encounterId, sample = 6) {
+  const cands = [];
+  for (let page = 1; page <= 4 && cands.length < sample + 3; page++) {
+    for (const r of await topRankings(encounterId, difficulty, className, specName, page)) {
+      cands.push(r);
+      if (cands.length >= sample + 3) break;
+    }
+  }
+  const stats = await mapLimit(cands, 5, async (r) => {
+    const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
+    return m ? secondaryStats(r.report.code, r.report.fightID, m.sourceID) : null;
+  });
   const sums = { crit: 0, haste: 0, mastery: 0, vers: 0 };
   let n = 0;
-  for (let page = 1; page <= 4 && n < sample; page++) {
-    for (const r of await topRankings(encounterId, difficulty, className, specName, page)) {
-      if (n >= sample) break;
-      try {
-        const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
-        if (!m) continue;
-        const s = await secondaryStats(r.report.code, r.report.fightID, m.sourceID);
-        if (!s) continue;
-        for (const k of ["crit", "haste", "mastery", "vers"]) sums[k] += s[k];
-        n++;
-      } catch (e) { continue; }
-    }
+  for (const s of stats) {
+    if (!s || n >= sample) continue;
+    for (const k of ["crit", "haste", "mastery", "vers"]) sums[k] += s[k];
+    n++;
   }
   const keys = ["crit", "haste", "mastery", "vers"];
   return n ? keys.reduce((a, b) => (sums[a] >= sums[b] ? a : b)) : "crit";
