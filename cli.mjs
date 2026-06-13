@@ -17,23 +17,36 @@
  *   node cli.mjs "Name" server EU --class Monk --spec Brewmaster --difficulty 4
  */
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 // Persist WCL GraphQL results to disk between runs (wcl.js, Node-only) so
 // iterating on one character doesn't re-spend points and trip WCL's per-IP 429
 // throttle. Must be set before importing anything that pulls in wcl.js.
 process.env.WCL_GQL_CACHE = "1";
 
-// --- file-backed localStorage shim (persists gear.js's item cache between runs)
-const dir = path.dirname(fileURLToPath(import.meta.url));
-const CACHE_FILE = path.join(dir, ".cli-cache.json");
+// --- file-backed localStorage shim (persists gear.js's item-stat/instance cache
+// between runs). Shared across git worktrees -- one cache in the home dir, like
+// the GraphQL cache -- so parallel worktrees reuse each other's Wowhead lookups.
+const CACHE_DIR = path.join(os.homedir(), ".cache", "warcraftlogs-analysis");
+const CACHE_FILE = path.join(CACHE_DIR, "item-cache.json");
+try { fs.mkdirSync(CACHE_DIR, { recursive: true }); } catch { /* ignore */ }
 let _store = {};
 try { _store = JSON.parse(fs.readFileSync(CACHE_FILE, "utf8")); } catch { /* none yet */ }
 let _saveTimer = null;
 const _save = () => {
   clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(() => { try { fs.writeFileSync(CACHE_FILE, JSON.stringify(_store)); } catch {} }, 200);
+  _saveTimer = setTimeout(() => {
+    // Merge with concurrent worktrees' writes, then atomic rename (temp+rename).
+    try {
+      let merged = _store;
+      try { merged = { ...JSON.parse(fs.readFileSync(CACHE_FILE, "utf8")), ..._store }; } catch { /* ours */ }
+      _store = merged;
+      const tmp = `${CACHE_FILE}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(merged));
+      fs.renameSync(tmp, CACHE_FILE);
+    } catch {}
+  }, 200);
 };
 globalThis.localStorage = {
   getItem: (k) => (k in _store ? _store[k] : null),

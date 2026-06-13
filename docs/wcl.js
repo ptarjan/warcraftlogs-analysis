@@ -206,10 +206,14 @@ async function initDisk() {
   _diskReady = (async () => {
     const fs = await import("node:fs");
     const path = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
+    const os = await import("node:os");
     _diskFs = fs;
+    // Shared across git worktrees (which split one WCL point budget): a single
+    // cache in the user's home dir, not one file per worktree root. Override with
+    // WCL_GQL_CACHE_FILE (the tests do).
     _diskFile = process.env.WCL_GQL_CACHE_FILE ||
-      path.join(path.dirname(fileURLToPath(import.meta.url)), "..", ".gql-cache.json");
+      path.join(os.homedir(), ".cache", "warcraftlogs-analysis", "gql-cache.json");
+    try { fs.mkdirSync(path.dirname(_diskFile), { recursive: true }); } catch { /* ignore */ }
     _diskStore = {};
     try {
       const raw = JSON.parse(fs.readFileSync(_diskFile, "utf8"));
@@ -234,7 +238,23 @@ function diskPut(query, data) {
 function _flushDisk() {
   clearTimeout(_diskTimer);
   if (!_diskStore || !_diskFs) return;
-  try { _diskFs.writeFileSync(_diskFile, JSON.stringify(_diskStore)); } catch {}
+  try {
+    // Re-read and MERGE before writing: other worktrees share this file, so we
+    // accumulate their entries instead of clobbering them (newest timestamp wins;
+    // stale entries pruned). Write to a temp file + rename so a concurrent reader
+    // never sees a half-written file.
+    const now = Date.now();
+    const merged = {};
+    try {
+      const onDisk = JSON.parse(_diskFs.readFileSync(_diskFile, "utf8"));
+      for (const [q, e] of Object.entries(onDisk)) if (e && now - e.t < DISK_TTL_MS) merged[q] = e;
+    } catch { /* no/invalid file -- just write ours */ }
+    for (const [q, e] of Object.entries(_diskStore)) if (!merged[q] || merged[q].t < e.t) merged[q] = e;
+    const tmp = `${_diskFile}.${process.pid}.tmp`;
+    _diskFs.writeFileSync(tmp, JSON.stringify(merged));
+    _diskFs.renameSync(tmp, _diskFile);
+    _diskStore = merged;
+  } catch {}
 }
 
 // Test-only hooks: flush the debounced write now, and forget all disk state so a
