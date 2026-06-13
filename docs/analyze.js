@@ -1,7 +1,7 @@
 // Overview + item-level / duration-controlled comparison. Ported from analyze.py.
 import {
   DIFFICULTY, characterZone, characterEncounter, topRankings, playerMetrics,
-  secondaryStats, gearSummary, median, f, padL, padR, mapLimit,
+  secondaryStats, gearSummary, median, f, padL, padR, mapLimit, bestRank,
 } from "./core.js";
 
 export async function overview(log, name, server, region, difficulty) {
@@ -43,7 +43,7 @@ async function collectIlvlPeers(encounterId, difficulty, className, specName,
 async function deepCompare(log, name, server, region, encounter, difficulty, className, specName) {
   const er = await characterEncounter(name, server, region, encounter.id, difficulty);
   if (!er || !er.ranks || !er.ranks.length) return;
-  const best = er.ranks.reduce((a, b) => ((a.bracketData || 0) >= (b.bracketData || 0) ? a : b));
+  const best = bestRank(er.ranks);
   const code = best.report.code, fight = best.report.fightID, ilvl = best.bracketData;
   const you = await playerMetrics(code, fight, name, specName, className);
   if (!you) return;

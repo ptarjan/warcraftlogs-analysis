@@ -1,7 +1,7 @@
 // Generate a concrete, prioritized prescription. Ported from prescribe.py.
 import {
   ENCHANTABLE_SLOTS, characterZone, characterEncounter, playerMetrics,
-  topRankings, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry,
+  topRankings, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry, bestRank,
 } from "./core.js";
 import { compareBoss } from "./diagnose.js";
 import { gearFindings, sourceText } from "./gear.js";
@@ -71,8 +71,8 @@ export function embellishmentRx(gf) {
 
 async function bestIlvlKill(name, server, region, encounterId, difficulty) {
   const er = await characterEncounter(name, server, region, encounterId, difficulty);
-  if (!er || !er.ranks || !er.ranks.length) return null;
-  const best = er.ranks.reduce((a, b) => ((a.bracketData || 0) >= (b.bracketData || 0) ? a : b));
+  const best = bestRank(er && er.ranks);
+  if (!best) return null;
   return [best.report.code, best.report.fightID, best.bracketData];
 }
 

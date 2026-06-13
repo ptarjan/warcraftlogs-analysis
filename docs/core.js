@@ -148,6 +148,37 @@ export async function secondaryStats(code, fight, sourceId) {
 }
 
 // --------------------------------------------------------------------- //
+// "Best kill" helpers (shared by every analysis)
+// --------------------------------------------------------------------- //
+// Ranked parses are logged at the item level AT THE TIME, so the highest-ilvl
+// rank is the closest thing to "current gear". bestRank picks it from one
+// encounter's ranks; bestKill finds the character's single highest-ilvl kill
+// across every boss they've killed (and returns the killed encounter ids).
+export const bestRank = (ranks) =>
+  (ranks && ranks.length)
+    ? ranks.reduce((a, b) => ((a.bracketData || 0) >= (b.bracketData || 0) ? a : b))
+    : null;
+
+export async function bestKill(name, server, region, difficulty) {
+  const c = await characterZone(name, server, region, difficulty);
+  const ranks = (c.zoneRankings.rankings || []).filter((r) => (r.totalKills || 0) > 0);
+  const ers = await mapLimit(ranks, 5, (r) =>
+    characterEncounter(name, server, region, r.encounter.id, difficulty));
+  let best = null;
+  ranks.forEach((r, i) => {
+    const bk = bestRank(ers[i] && ers[i].ranks);
+    if (!bk) return;
+    const il = bk.bracketData || 0;
+    if (!best || il > best.ilvl) {
+      best = { code: bk.report.code, fight: bk.report.fightID, ilvl: il,
+               encounter: r.encounter, rankPercent: bk.rankPercent };
+    }
+  });
+  if (best) best.killedIds = ranks.map((r) => r.encounter.id);
+  return best;
+}
+
+// --------------------------------------------------------------------- //
 // Auto-detection (so the UI only needs character / server / region)
 // --------------------------------------------------------------------- //
 const DIFF_ORDER = [5, 4, 3, 2]; // Mythic -> LFR; pick the highest with kills.
@@ -155,8 +186,8 @@ const DIFF_ORDER = [5, 4, 3, 2]; // Mythic -> LFR; pick the highest with kills.
 // Read class + spec from the character's best kill of an encounter.
 async function classSpecFromKill(name, server, region, encounterId, difficulty) {
   const er = await characterEncounter(name, server, region, encounterId, difficulty);
-  if (!er || !er.ranks || !er.ranks.length) return null;
-  const best = er.ranks.reduce((a, b) => ((a.bracketData || 0) >= (b.bracketData || 0) ? a : b));
+  const best = bestRank(er && er.ranks);
+  if (!best) return null;
   const q = `query { reportData { report(code:"${best.report.code}") {
     table(fightIDs:${best.report.fightID}, dataType:DamageDone) } } }`;
   let data;

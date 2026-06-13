@@ -2,7 +2,7 @@
 // Wowhead proxy) and compares slot-by-slot to the field. Ported from gear.py.
 import { itemTooltip, itemXml, zoneTooltip, npcTooltip } from "./wcl.js";
 import {
-  characterZone, characterEncounter, playerMetrics, topRankings, f, mapLimit, topEntry,
+  playerMetrics, topRankings, f, mapLimit, topEntry, bestKill,
 } from "./core.js";
 import { wowheadItem } from "./links.js";
 
@@ -164,20 +164,10 @@ async function fieldEmbellishments(className, specName, difficulty, encounters, 
 
 // Gear from your highest-ilvl kill (= current).
 async function yourGear(name, server, region, difficulty, className) {
-  const c = await characterZone(name, server, region, difficulty);
-  const ranks = (c.zoneRankings.rankings || []).filter((r) => (r.totalKills || 0) > 0);
-  let best = null;
-  for (const r of ranks) {
-    const er = await characterEncounter(name, server, region, r.encounter.id, difficulty);
-    if (er && er.ranks && er.ranks.length) {
-      const bk = er.ranks.reduce((a, b) => ((a.bracketData || 0) >= (b.bracketData || 0) ? a : b));
-      const il = bk.bracketData || 0;
-      if (!best || il > best[0]) best = [il, bk.report.code, bk.report.fightID];
-    }
-  }
+  const best = await bestKill(name, server, region, difficulty);
   if (!best) return null;
-  const m = await playerMetrics(best[1], best[2], name, null, className);
-  if (m) m.encIds = ranks.map((r) => r.encounter.id); // killed bosses, for field sampling
+  const m = await playerMetrics(best.code, best.fight, name, null, className);
+  if (m) m.encIds = best.killedIds; // killed bosses, for field sampling
   return m;
 }
 

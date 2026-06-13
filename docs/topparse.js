@@ -11,8 +11,7 @@
 // straight from the data (so it finds Ebon Might / PI / Lust without a list),
 // and the "boss vs adds" split uses the encounter name, not a per-tier table.
 import {
-  characterZone, characterEncounter, playerMetrics, topRankings,
-  buffUptimes, median, f, mapLimit,
+  playerMetrics, topRankings, buffUptimes, median, f, mapLimit, bestKill,
 } from "./core.js";
 
 const TOPN = 6; // how many top-ranked kills to learn the recipe from
@@ -78,31 +77,11 @@ export function compImpactPct(topUptime) {
 
 // --- data layer --------------------------------------------------------------
 
-// Your current-gear kill to benchmark: the highest-item-level kill across your
-// killed bosses (matches how the rest of the tool picks "current").
-async function yourBenchmarkKill(name, server, region, difficulty) {
-  const c = await characterZone(name, server, region, difficulty);
-  const ranks = (c.zoneRankings.rankings || [])
-    .filter((r) => (r.totalKills || 0) > 0 && r.rankPercent !== null && r.rankPercent !== undefined);
-  let best = null;
-  for (const r of ranks) {
-    const er = await characterEncounter(name, server, region, r.encounter.id, difficulty);
-    if (er && er.ranks && er.ranks.length) {
-      const bk = er.ranks.reduce((a, b) => ((a.bracketData || 0) >= (b.bracketData || 0) ? a : b));
-      const il = bk.bracketData || 0;
-      if (!best || il > best.ilvl) {
-        best = { encounter: r.encounter, code: bk.report.code, fight: bk.report.fightID,
-                 ilvl: il, rankPercent: bk.rankPercent };
-      }
-    }
-  }
-  return best;
-}
-
 // The full top-parse comparison for your benchmark boss. Returns null when there
-// isn't enough data (no kills, no top parses, private reports).
+// isn't enough data (no kills, no top parses, private reports). The benchmark
+// kill is your highest-ilvl kill (= current gear), via core.bestKill.
 export async function topParseFindings(name, server, region, difficulty, className, specName) {
-  const mine = await yourBenchmarkKill(name, server, region, difficulty);
+  const mine = await bestKill(name, server, region, difficulty);
   if (!mine) return null;
   const you = await playerMetrics(mine.code, mine.fight, name, specName, className);
   if (!you) return null;

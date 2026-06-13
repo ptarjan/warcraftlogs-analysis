@@ -13,7 +13,7 @@
 import { gql } from "./wcl.js";
 import { spellTooltip } from "./wcl.js";
 import {
-  characterZone, characterEncounter, playerMetrics, topRankings, mapLimit, f,
+  playerMetrics, topRankings, mapLimit, f, bestKill,
 } from "./core.js";
 
 // Your taken talent nodes on one fight: Map(nodeID -> {id, rank}).
@@ -52,21 +52,6 @@ export function talentDiff(youSet, fieldCount, fieldN, missThresh = 0.6, offThre
   return { missing, offMeta, metaTotal, matched };
 }
 
-// Highest-ilvl kill = current build. Returns {code, fight, sourceID, encounter}.
-async function yourBestKill(name, server, region, difficulty) {
-  const c = await characterZone(name, server, region, difficulty);
-  const ranks = (c.zoneRankings.rankings || []).filter((r) => (r.totalKills || 0) > 0);
-  let best = null;
-  for (const r of ranks) {
-    const er = await characterEncounter(name, server, region, r.encounter.id, difficulty);
-    if (er && er.ranks && er.ranks.length) {
-      const bk = er.ranks.reduce((a, b) => ((a.bracketData || 0) >= (b.bracketData || 0) ? a : b));
-      const il = bk.bracketData || 0;
-      if (!best || il > best.il) best = { il, code: bk.report.code, fight: bk.report.fightID, encounter: r.encounter };
-    }
-  }
-  return best;
-}
 
 async function fieldLoadouts(encounterId, difficulty, className, specName, n = 10) {
   const cands = [];
@@ -95,7 +80,7 @@ async function spellName(id) {
 const link = (id, name) => `[${name}](https://www.wowhead.com/spell=${id})`;
 
 export async function run(log, name, server, region, className = "Monk", specName = "Brewmaster", difficulty = 5) {
-  const best = await yourBestKill(name, server, region, difficulty);
+  const best = await bestKill(name, server, region, difficulty);
   if (!best) { log("(no kills found to read your talents from)"); return; }
   const you = await loadout(best.code, best.fight, (await playerMetrics(best.code, best.fight, name, specName, className) || {}).sourceID);
   if (!you) { log("(couldn't read your talent loadout)"); return; }
