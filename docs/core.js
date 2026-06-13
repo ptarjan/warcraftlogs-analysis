@@ -392,20 +392,32 @@ export async function raidTeammates(name, server, region, { maxReports = 4, top 
       }
     }
     if (!codes.length) return [];
-    // Read each report's player roster (one light masterData query per report).
+    // One light masterData query per report for its player roster. WCL renders a
+    // "server" as a {name,region} OBJECT in some types and a bare string in
+    // others, and we can't tell which ReportActor uses -- so try the scalar
+    // selection first and fall back to the object selection, using whichever the
+    // schema accepts (a wrong selection just errors, costing one cheap retry).
+    const fetchRoster = async (code) => {
+      for (const sel of ["server", "server { name region }"]) {
+        try {
+          const q = `query { reportData { report(code:"${code}") { masterData { actors { name ${sel} type } } } } }`;
+          return (await gql(q)).reportData.report.masterData.actors || [];
+        } catch { /* try the other server selection */ }
+      }
+      return [];
+    };
     const rosters = await mapLimit(codes, 4, async (code) => {
-      try {
-        const q = `query { reportData { report(code:"${code}") { masterData { actors { name server type } } } } }`;
-        const actors = (await gql(q)).reportData.report.masterData.actors || [];
-        const seen = new Set(), out = [];
-        for (const a of actors) {
-          if (a.type !== "Player" || !a.name || !a.server) continue;
-          const k = `${a.name}|${a.server}`.toLowerCase();
-          if (seen.has(k)) continue;
-          seen.add(k); out.push({ name: a.name, server: a.server });
-        }
-        return out;
-      } catch { return []; }
+      const seen = new Set(), out = [];
+      for (const a of await fetchRoster(code)) {
+        if (a.type !== "Player" || !a.name) continue;
+        const realm = typeof a.server === "string" ? a.server : (a.server && a.server.name);
+        if (!realm) continue;
+        const reg = (a.server && a.server.region) || region;
+        const k = `${a.name}|${realm}`.toLowerCase();
+        if (seen.has(k)) continue;
+        seen.add(k); out.push({ name: a.name, server: realm, region: reg });
+      }
+      return out;
     });
     // Tally appearances across reports, excluding yourself.
     const self = name.toLowerCase();
@@ -413,7 +425,7 @@ export async function raidTeammates(name, server, region, { maxReports = 4, top 
     for (const roster of rosters) for (const p of roster) {
       if (p.name.toLowerCase() === self) continue;
       const k = `${p.name}|${p.server}`.toLowerCase();
-      const e = tally.get(k) || { name: p.name, server: p.server, region, shared: 0 };
+      const e = tally.get(k) || { name: p.name, server: p.server, region: p.region, shared: 0 };
       e.shared++; tally.set(k, e);
     }
     return [...tally.values()].sort((a, b) => b.shared - a.shared).slice(0, top);
