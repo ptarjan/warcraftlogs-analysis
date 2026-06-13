@@ -242,6 +242,23 @@ function _flushDisk() {
 export function _flushGqlDisk() { _flushDisk(); }
 export function _resetGqlDisk() { clearTimeout(_diskTimer); _diskReady = _diskStore = _diskFile = _diskFs = null; }
 
+// Absolute time (ms) the WCL point budget resets, learned from a 429's
+// Retry-After or primed up front (so connected sessions, where Retry-After is
+// CORS-hidden on the direct WCL call, can still show a real ETA).
+let _resetAt = 0;
+
+// Connected sessions: read the reset clock once while we're still UNDER budget,
+// so a later 429 (with no readable Retry-After) can still say when to retry.
+// Best-effort and connected-only; anon sessions get Retry-After from the Worker.
+export async function primeRateReset() {
+  if (IS_NODE || !getAccessToken()) return;
+  try {
+    const d = await gql("query { rateLimitData { pointsResetIn } }");
+    const s = d && d.rateLimitData && d.rateLimitData.pointsResetIn;
+    if (s > 0) _resetAt = Math.max(_resetAt, Date.now() + s * 1000);
+  } catch (e) { /* best-effort */ }
+}
+
 export async function gql(query, retries = 6) {
   await initDisk();                 // seeds _gqlCache from disk on first call (Node)
   if (_gqlCache.has(query)) return _gqlCache.get(query);
@@ -288,11 +305,21 @@ async function _gqlRun(query, retries = 6) {
     // Signal the UI and back off briefly, then give up with a clear message
     // rather than hanging silently for minutes.
     if (status === 429 || (j.error && /too many requests/i.test(j.error))) {
-      const mins = retryAfter ? Math.max(1, Math.ceil(retryAfter / 60)) : null;
-      const when = mins ? `try again in ~${mins} min` : "try again in a few minutes";
-      last = new Error(`WCL rate limit reached — the app shares one hourly budget across everyone. ${when}. (Connect your Warcraft Logs account to use your own budget instead.)`);
-      if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("wcl-ratelimit", { detail: { retryAfter } }));
-      await sleep(retryAfter ? Math.min(20000, retryAfter * 1000) : Math.min(12000, 2000 * 2 ** attempt));
+      // Reset seconds: from the forwarded Retry-After (anon/Worker path) or, when
+      // that header is CORS-hidden (connected direct-to-WCL), from the reset clock
+      // primed by primeRateReset(). Whichever we learn, remember it.
+      if (retryAfter) _resetAt = Math.max(_resetAt, Date.now() + retryAfter * 1000);
+      const eff = retryAfter || (_resetAt > Date.now() ? Math.ceil((_resetAt - Date.now()) / 1000) : null);
+      const connected = !IS_NODE && !!getAccessToken();
+      const mins = eff ? Math.max(1, Math.ceil(eff / 60)) : null;
+      const when = mins ? `try again in ~${mins} min` : "try again shortly";
+      const whose = connected
+        ? "your WCL hourly point budget is used up"
+        : "the app's shared WCL hourly budget is used up";
+      const tip = connected ? "" : " (connect your Warcraft Logs account to use your own budget)";
+      last = new Error(`WCL rate limit reached — ${whose}. ${when}${tip}.`);
+      if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("wcl-ratelimit", { detail: { retryAfter: eff } }));
+      await sleep(eff ? Math.min(20000, eff * 1000) : Math.min(12000, 2000 * 2 ** attempt));
       continue;
     }
     if (j.error) throw new Error(j.error); // other non-GraphQL error

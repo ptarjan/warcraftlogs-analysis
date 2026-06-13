@@ -3,7 +3,7 @@
 // the supporting analyses as collapsible cards below.
 import { detectContext, detectPriority, DIFFICULTY } from "./core.js";
 import { isAuthed, beginLogin, handleRedirectCallback, logout } from "./auth.js";
-import { NeedsAuth, myCharacters } from "./wcl.js";
+import { NeedsAuth, myCharacters, primeRateReset } from "./wcl.js";
 import { paramsFromSearch, shareSearch } from "./share.js";
 import * as analyze from "./analyze.js";
 import * as diagnose from "./diagnose.js";
@@ -262,6 +262,7 @@ function setPills(hero, items) {
 async function runAnalysis({ name, server, region, serverLabel }) {
   // Keep the address bar in sync so the result is bookmarkable / shareable.
   try { history.replaceState(null, "", location.pathname + shareSearch({ name, region, server })); } catch (e) { /* ignore */ }
+  primeRateReset(); // connected: learn the reset clock now, while still under budget
   out.innerHTML = ""; cur = null;
   setRunning(true);
   const intro = document.getElementById("intro");
