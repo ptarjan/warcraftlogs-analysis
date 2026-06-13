@@ -120,8 +120,12 @@ async function aggregateExecution(name, server, region, difficulty, className, s
   }
   if (!perBoss.length) return null;
   const med = (key) => median(perBoss.map((c) => c.you[key] - c.peer[key]));
+  // Each boss's number is a median over your kills of it; with a single kill the
+  // "median" IS that one kill -- too noisy to name as a specific offender (the
+  // repo's don't-trust-one-kill rule). Require >=2 kills to call a boss out, and
+  // carry the count so the prescription can show how well-backed each callout is.
   const rangeBosses = perBoss
-    .map((c) => [c.you.rangeLostPerMin - c.peer.rangeLostPerMin, c.boss])
+    .map((c) => [c.you.rangeLostPerMin - c.peer.rangeLostPerMin, c.boss, c.yourKills])
     .sort((a, b) => b[0] - a[0]);
   return {
     nBosses: perBoss.length,
@@ -129,7 +133,9 @@ async function aggregateExecution(name, server, region, difficulty, className, s
     rangeExcess: med("rangeLostPerMin"),
     totalExcess: med("lostPerMin"),
     overshootExcess: med("overshootMs"),
-    worstRange: rangeBosses.filter(([d]) => d > 1.5).map(([, b]) => b),
+    worstRange: rangeBosses
+      .filter(([d, , kills]) => d > 1.5 && kills >= 2)
+      .map(([, b, kills]) => `${b} (${kills} kills)`),
   };
 }
 
