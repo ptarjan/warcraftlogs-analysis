@@ -2,7 +2,30 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 installLocalStorage();
-const { talentDiff, buildTalentIndex, talentLabel, looksLikeDpsTalent } = await import("../docs/talents.js");
+const { talentDiff, buildTalentIndex, talentLabel, looksLikeDpsTalent, heroSwitch } = await import("../docs/talents.js");
+
+test("buildTalentIndex pulls out the hero subtree (choice node + its nodes)", () => {
+  const spec = {
+    specNodes: [{ id: 10, name: "Rising Sun Kick", entries: [{ id: 100, name: "Rising Sun Kick", spellId: 1 }] }],
+    subTreeNodes: [{ id: 999, name: "Master of Harmony / Shado-Pan", entries: [
+      { id: 5001, type: "subtree", name: "Master of Harmony", nodes: [201, 202] },
+      { id: 5002, type: "subtree", name: "Shado-Pan", nodes: [301, 302] },
+    ] }],
+  };
+  const idx = buildTalentIndex(spec);
+  assert.equal(idx.heroChoice, 999);
+  assert.equal(idx.heroByEntry.get(5002), "Shado-Pan");
+  assert.deepEqual([...idx.heroNodes].sort(), [201, 202, 301, 302]); // both trees' nodes
+});
+
+test("heroSwitch only fires on an overwhelming field majority for the OTHER tree", () => {
+  const wobble = { yours: "Shado-Pan", field: [{ name: "Master of Harmony", pct: 70 }, { name: "Shado-Pan", pct: 30 }] };
+  assert.equal(heroSwitch(wobble), null);                 // 70% sample wobble -> no switch (the bug)
+  const clear = { yours: "Shado-Pan", field: [{ name: "Master of Harmony", pct: 90 }, { name: "Shado-Pan", pct: 10 }] };
+  assert.equal(heroSwitch(clear).name, "Master of Harmony");
+  const onMeta = { yours: "Shado-Pan", field: [{ name: "Shado-Pan", pct: 90 }] };
+  assert.equal(heroSwitch(onMeta), null);                 // you're already on the dominant tree
+});
 
 // Cases drawn from the real corpus (all 39 specs' tooltips), incl. the ones a
 // 2-spec heuristic got wrong.

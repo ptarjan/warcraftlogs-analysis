@@ -17,17 +17,28 @@ const TALENTS_URL = "https://www.raidbots.com/static/data/live/talents.json";
 // --- pure, unit-tested helpers ----------------------------------------------
 
 // Build name lookups for one spec from a Raidbots spec object: nodeID -> name,
-// and entryID -> {name, spellId}. Pure so it's testable without the network.
+// and entryID -> {name, spellId}. Also map the HERO SUBTREE: which choice node
+// picks the hero tree, each hero-entry id -> tree name, and the full set of nodes
+// that belong to either hero tree (so the diff can treat them as ONE either/or
+// choice, not N independent "missing" talents). Pure so it's testable.
 export function buildTalentIndex(spec) {
-  const byEntry = new Map(), byNode = new Map();
-  if (!spec) return { byEntry, byNode };
+  const byEntry = new Map(), byNode = new Map(), heroByEntry = new Map(), heroNodes = new Set();
+  let heroChoice = null;
+  if (!spec) return { byEntry, byNode, heroByEntry, heroNodes, heroChoice };
   const nodes = [...(spec.classNodes || []), ...(spec.specNodes || []),
                  ...(spec.heroNodes || []), ...(spec.subTreeNodes || [])];
   for (const n of nodes) {
     if (n.name) byNode.set(n.id, n.name);
-    for (const e of (n.entries || [])) if (e.id) byEntry.set(e.id, { name: e.name, spellId: e.spellId });
+    for (const e of (n.entries || [])) {
+      if (e.id) byEntry.set(e.id, { name: e.name, spellId: e.spellId });
+      if (e.type === "subtree" && Array.isArray(e.nodes)) { // a hero-tree choice
+        heroChoice = n.id;
+        heroByEntry.set(e.id, e.name);
+        for (const nid of e.nodes) heroNodes.add(nid);
+      }
+    }
   }
-  return { byEntry, byNode };
+  return { byEntry, byNode, heroByEntry, heroNodes, heroChoice };
 }
 
 // Name + spell link target for a taken node: prefer the node name (correct for
@@ -110,20 +121,27 @@ function rbTalents() {
   return _rbPromise;
 }
 
-const _indexCache = new Map(); // specID -> {byEntry, byNode}
+const _indexCache = new Map(); // specID -> {byEntry, byNode, heroByEntry, heroNodes, heroChoice}
 export async function talentIndex(specID) {
   if (_indexCache.has(specID)) return _indexCache.get(specID);
-  const ck = "talentidx:" + specID;
+  const ck = "talentidx2:" + specID; // "2" adds hero-subtree fields
   let idx = null;
   try {
     const c = localStorage.getItem(ck);
-    if (c) { const o = JSON.parse(c); idx = { byEntry: new Map(o.e), byNode: new Map(o.n) }; }
+    if (c) {
+      const o = JSON.parse(c);
+      idx = { byEntry: new Map(o.e), byNode: new Map(o.n),
+              heroByEntry: new Map(o.hb || []), heroNodes: new Set(o.hn || []), heroChoice: o.hc || null };
+    }
   } catch (e) { /* fall through to fetch */ }
   if (!idx) {
     const data = await rbTalents();
     const spec = Array.isArray(data) ? data.find((s) => s.specId === specID) : null;
     idx = buildTalentIndex(spec);
-    try { localStorage.setItem(ck, JSON.stringify({ e: [...idx.byEntry], n: [...idx.byNode] })); } catch (e) { /* ignore */ }
+    try {
+      localStorage.setItem(ck, JSON.stringify({ e: [...idx.byEntry], n: [...idx.byNode],
+        hb: [...idx.heroByEntry], hn: [...idx.heroNodes], hc: idx.heroChoice }));
+    } catch (e) { /* ignore */ }
   }
   _indexCache.set(specID, idx);
   return idx;
@@ -189,14 +207,31 @@ export async function talentFindings(name, server, region, className, specName, 
   if (!you) return null;
   const peers = await fieldLoadouts(best.encounter.id, difficulty, className, specName);
   if (!peers.length) return null;
+  const idx = await talentIndex(you.specID);
 
+  // Hero trees (e.g. Master of Harmony vs Shado-Pan) are ONE mutually-exclusive
+  // choice -- picking one means "missing" every node of the other. So pull hero
+  // nodes OUT of the per-talent diff and compare the hero CHOICE on its own.
+  const heroNodes = idx.heroNodes || new Set();
+  const heroName = (lo) => {
+    const pick = idx.heroChoice && lo.get(idx.heroChoice);
+    return pick ? idx.heroByEntry.get(pick.id) || null : null;
+  };
+  const heroCounts = new Map();
+  for (const lo of peers) { const h = heroName(lo); if (h) heroCounts.set(h, (heroCounts.get(h) || 0) + 1); }
+  const heroField = [...heroCounts.entries()].sort((a, b) => b[1] - a[1])
+    .map(([name, ct]) => ({ name, pct: 100 * ct / peers.length }));
+  const hero = heroField.length ? { yours: heroName(you.map), field: heroField } : null;
+
+  // Per-talent diff on the NON-hero nodes only.
   const fieldCount = new Map(); // nodeID -> {count, id}
   for (const lo of peers) for (const [node, info] of lo) {
+    if (heroNodes.has(node)) continue;
     const cur = fieldCount.get(node) || { count: 0, id: info.id };
     cur.count++; fieldCount.set(node, cur);
   }
-  const d = talentDiff(you.map, fieldCount, peers.length);
-  const idx = await talentIndex(you.specID);
+  const youReg = new Map([...you.map].filter(([node]) => !heroNodes.has(node)));
+  const d = talentDiff(youReg, fieldCount, peers.length);
   // Name each node, then tag whether it's a DPS talent (vs utility/defensive) so
   // the prescription only ever recommends throughput.
   const tag = async (t) => { const n = { ...t, ...talentLabel(idx, t.node, t.id) }; n.dps = await isDpsTalent(n.spellId); return n; };
@@ -204,22 +239,40 @@ export async function talentFindings(name, server, region, className, specName, 
   const offMeta = await mapLimit(d.offMeta, 5, tag);
   return {
     boss: best.encounter.name, nPeers: peers.length, matched: d.matched, metaTotal: d.metaTotal,
-    missing, offMeta,
+    hero, missing, offMeta,
   };
 }
 
-// Prescription lever: the meta talents most of the field takes on THIS boss that
-// you don't -- a "switch your build for this fight" item. Sized by how widely the
-// field adopts them (an estimate; talent DPS value needs a sim).
+// Should we suggest a HERO-TREE switch? A high bar (a strong majority, not a
+// 60/40 small-sample wobble) -- a hero tree is one big either/or choice, and a
+// 10-peer sample on one boss can easily skew the minority tree, so we only call
+// it when the field overwhelmingly runs the other one. Returns the field's
+// dominant tree, or null.
+export function heroSwitch(hero, { minPct = 80 } = {}) {
+  if (!hero || !hero.yours || !(hero.field && hero.field.length)) return null;
+  const top = hero.field[0];
+  return (top.name !== hero.yours && top.pct >= minPct) ? top : null;
+}
+
+// Prescription levers from the talent comparison: a hero-tree switch (only when
+// overwhelming) and the meta DAMAGE talents the field takes that you don't.
 export function talentLevers(tf) {
+  const out = [];
+  const sw = tf && heroSwitch(tf.hero);
+  if (sw) {
+    out.push(finding("Rotation", DPS(4),
+      `HERO TREE: ${f(sw.pct, 0)}% of the field runs ${sw.name} -- you run ${tf.hero.yours}. That's one big either/or build choice; confirm it's the meta for your spec (sim/guide) before switching.`));
+  }
   // DPS talents only -- never recommend respeccing for a dispel/knockback the
   // field happens to take unanimously.
   const top = tf ? tf.missing.filter((t) => t.dps && t.adopt >= 0.6).slice(0, 3) : [];
-  if (!top.length) return [];
-  const est = Math.min(2 + top.length, 6);
-  return [finding("Rotation", DPS(est),
-    `TALENTS: peers on ${tf.boss} take the damage talent${top.length > 1 ? "s" : ""} ${top.map((t) => `${wowheadSpell(t.spellId, t.name)} (${f(100 * t.adopt, 0)}%)`).join(", ")} ` +
-    `that you don't -- swap to the meta build for this content (confirm in a sim/guide).`)];
+  if (top.length) {
+    const est = Math.min(2 + top.length, 6);
+    out.push(finding("Rotation", DPS(est),
+      `TALENTS: peers on ${tf.boss} take the damage talent${top.length > 1 ? "s" : ""} ${top.map((t) => `${wowheadSpell(t.spellId, t.name)} (${f(100 * t.adopt, 0)}%)`).join(", ")} ` +
+      `that you don't -- swap to the meta build for this content (confirm in a sim/guide).`));
+  }
+  return out;
 }
 
 // --- card output -------------------------------------------------------------
@@ -235,6 +288,12 @@ export async function run(log, name, server, region, className = "Monk", specNam
 
   log(`=== Talents vs ${fnd.nPeers} top ${specName}s on ${fnd.boss} ===`);
   log(`Your build matches ${fnd.matched}/${fnd.metaTotal} of the talents your peers commonly take.`);
+  // Hero tree is one either/or choice -- show the field split, don't list its
+  // nodes as individual "missing" talents.
+  if (fnd.hero) {
+    const fld = fnd.hero.field.map((h) => `${h.name} ${f(h.pct, 0)}%`).join(" / ");
+    log(`Hero tree: you run ${fnd.hero.yours || "?"}; field (${fnd.nPeers} peers) ${fld}.`);
+  }
   if (dpsMiss.length) {
     log("");
     log("DAMAGE talents you're MISSING (peers take them here, you don't):");
