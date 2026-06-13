@@ -1,9 +1,9 @@
 // Automatic gear audit: reads each item's real secondary stats (via the Worker's
 // Wowhead proxy) and compares slot-by-slot to the field. Ported from gear.py.
-import { itemTooltip } from "./wcl.js";
+import { itemTooltip } from "./wcl.js?v=2";
 import {
   characterZone, characterEncounter, playerMetrics, topRankings, f,
-} from "./core.js";
+} from "./core.js?v=2";
 
 const SLOT = {
   0: "Head", 1: "Neck", 2: "Shoulder", 4: "Chest", 5: "Belt", 6: "Legs",

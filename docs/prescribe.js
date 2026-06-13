@@ -2,10 +2,10 @@
 import {
   ENCHANTABLE_SLOTS, characterZone, characterEncounter, playerMetrics,
   topRankings, secondaryStats, buffUptimes, median, f,
-} from "./core.js";
-import { PrivateReport } from "./wcl.js";
-import { compareBoss } from "./diagnose.js";
-import { gearFindings } from "./gear.js";
+} from "./core.js?v=2";
+import { PrivateReport } from "./wcl.js?v=2";
+import { compareBoss } from "./diagnose.js?v=2";
+import { gearFindings } from "./gear.js?v=2";
 
 const SLOT_NAME = ENCHANTABLE_SLOTS;
 const mostCommon = (counter) => {

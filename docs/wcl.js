@@ -2,7 +2,7 @@
 //   browser -> the Cloudflare Worker proxy (hides the secret, adds CORS)
 //   Node/CLI -> straight to WCL/Wowhead (the secret is safe locally and there's
 //               no CORS), so the CLI needs NO Worker -- just credentials.
-import { WORKER_URL, IS_NODE } from "./config.js";
+import { WORKER_URL, IS_NODE } from "./config.js?v=2";
 
 export class PrivateReport extends Error {}
 

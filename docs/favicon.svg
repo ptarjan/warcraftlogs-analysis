@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b212f"/>
+      <stop offset="1" stop-color="#0b0e15"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe08a"/>
+      <stop offset="1" stop-color="#e2a92e"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="url(#bg)" stroke="#2a3243" stroke-width="1"/>
+  <!-- blade -->
+  <path d="M16 4 L19 9 L18 21 L14 21 L13 9 Z" fill="url(#gold)"/>
+  <path d="M16 4 L16 21 L14 21 L13 9 Z" fill="#fff" opacity="0.18"/>
+  <!-- crossguard -->
+  <rect x="8.5" y="20.5" width="15" height="2.6" rx="1.3" fill="url(#gold)"/>
+  <!-- grip -->
+  <rect x="14.8" y="23" width="2.4" height="4.4" rx="1" fill="#c9952a"/>
+  <!-- pommel -->
+  <circle cx="16" cy="28" r="1.7" fill="url(#gold)"/>
+</svg>

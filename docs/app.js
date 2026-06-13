@@ -1,9 +1,9 @@
 // UI wiring: pick character/region/server, auto-detect the rest, stream live.
-import { detectContext, detectPriority, DIFFICULTY } from "./core.js";
-import * as analyze from "./analyze.js";
-import * as diagnose from "./diagnose.js";
-import * as gear from "./gear.js";
-import * as prescribe from "./prescribe.js";
+import { detectContext, detectPriority, DIFFICULTY } from "./core.js?v=2";
+import * as analyze from "./analyze.js?v=2";
+import * as diagnose from "./diagnose.js?v=2";
+import * as gear from "./gear.js?v=2";
+import * as prescribe from "./prescribe.js?v=2";
 
 const $ = (id) => document.getElementById(id);
 const out = $("out"), statusEl = $("status"), goBtn = $("go"), form = $("form");
