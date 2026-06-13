@@ -1,3 +1,4 @@
+// @ts-check
 // Rotation analysis -- CLASS-AGNOSTIC. Works for any spec because it hard-codes
 // no ability names or priorities (the bug before: assuming Tiger Palm was a
 // filler when an empowered Tiger Palm is actually the biggest hit). Everything

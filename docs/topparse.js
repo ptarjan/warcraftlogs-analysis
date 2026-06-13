@@ -1,3 +1,4 @@
+// @ts-check
 // "Chasing 99": the levers beyond your own play that separate a top parse from
 // yours -- benchmarked against the actual top-ranked kills, not the median.
 //   - RAID-COMP coverage: the standard class-provided damage amps your kill is

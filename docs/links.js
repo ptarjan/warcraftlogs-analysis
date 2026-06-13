@@ -1,3 +1,4 @@
+// @ts-check
 // Wowhead deep links as [label](url) markdown -- the renderer's linkify() turns
 // these into safe anchors. WoW item/spell ids from WCL are real Wowhead ids, so
 // these resolve correctly (and Wowhead's hover tooltip kicks in on the page).
