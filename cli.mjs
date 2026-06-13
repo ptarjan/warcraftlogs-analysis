@@ -119,6 +119,11 @@ const only = opt.only ? new Set(opt.only.split(",").map((s) => s.trim())) : null
 
 // --- run ---
 const { detectContext, detectPriority, DIFFICULTY } = await import("./docs/core.js");
+// Learn WCL's point-reset clock up front (one cheap query, while still under
+// budget) so if we exhaust the shared budget mid-run the error can say WHEN it
+// resets ("try again in ~N min") instead of a vague "try again shortly".
+const { primeRateReset } = await import("./docs/wcl.js");
+await primeRateReset();
 
 const log = (line = "") => console.log(line);
 

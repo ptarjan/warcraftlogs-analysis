@@ -79,7 +79,10 @@ async function nodeWcl(query) {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ query }),
   }));
-  return { status: r.status, j: await r.json().catch(() => ({})) };
+  // Read Retry-After like the browser path so the CLI's 429 message can say WHEN
+  // the budget resets (it talks direct to WCL, which sends the header) instead of
+  // the vague "try again shortly".
+  return { status: r.status, j: await r.json().catch(() => ({})), retryAfter: readRetryAfter(r) };
 }
 
 // Reset hint (seconds) WCL / the Worker may send on a 429, for the UI countdown.
@@ -268,11 +271,12 @@ export function _resetGqlDisk() { clearTimeout(_diskTimer); _diskReady = _diskSt
 // CORS-hidden on the direct WCL call, can still show a real ETA).
 let _resetAt = 0;
 
-// Connected sessions: read the reset clock once while we're still UNDER budget,
-// so a later 429 (with no readable Retry-After) can still say when to retry.
-// Best-effort and connected-only; anon sessions get Retry-After from the Worker.
+// Read the reset clock once while we're still UNDER budget, so a later 429 (with
+// no readable Retry-After) can still say when to retry. Runs for the Node CLI and
+// connected browser sessions (both query WCL directly); anon browser sessions
+// skip it -- they get Retry-After forwarded from the Worker instead.
 export async function primeRateReset() {
-  if (IS_NODE || !getAccessToken()) return;
+  if (!IS_NODE && !getAccessToken()) return;
   try {
     const d = await gql("query { rateLimitData { pointsResetIn } }");
     const s = d && d.rateLimitData && d.rateLimitData.pointsResetIn;

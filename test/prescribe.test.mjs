@@ -8,8 +8,61 @@ import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
 const { DPS, COMP, INFO } = await import("../docs/core.js");          // shared Finding currency
-const { rxHeadline } = await import("../docs/prescribe.js");
-const { embellishmentRx } = await import("../docs/gear.js");          // gear-domain lever
+const { rxHeadline, executionLevers, latencyLever } = await import("../docs/prescribe.js");
+const { embellishmentRx, gemLever } = await import("../docs/gear.js");          // gear-domain lever
+
+test("executionLevers: press-faster doesn't pipe the raw cast gap into DPS%", () => {
+  // 44% fewer casts must NOT become a ~44% DPS lever -- it's damped (~half) and
+  // capped at the headroom (60% gap -> 0.6x = 36) and a hard 12% ceiling.
+  const execd = { pressExcess: 2.0, rangeExcess: 0, worstRange: [], overshootExcess: 0 };
+  const rot = { castGap: { you: 16, field: 28, pct: 44 } };
+  const [press] = executionLevers(execd, rot, 60);
+  assert.equal(press.impact, 12);                       // capped, not 44
+  assert.match(press.text, /44% fewer/);                // the measured fact is still cited
+  assert.match(press.text, /not latency/);              // overshoot low -> "not latency"
+});
+
+test("executionLevers: small gap scales down via the headroom cap", () => {
+  const execd = { pressExcess: 1.2, rangeExcess: 0, worstRange: [], overshootExcess: 0 };
+  const rot = { castGap: { you: 26, field: 28, pct: 8 } };
+  const [press] = executionLevers(execd, rot, 8);       // 8% behind -> cap 0.6*8=5; castEst 4
+  assert.ok(press.impact <= 5 && press.impact >= 1);
+});
+
+test("executionLevers: high overshoot flips press-faster off the 'not latency' claim", () => {
+  const execd = { pressExcess: 2.0, rangeExcess: 0, worstRange: [], overshootExcess: 40 };
+  const rot = { castGap: { you: 16, field: 28, pct: 44 } };
+  const out = executionLevers(execd, rot, 60);
+  assert.match(out[0].text, /input latency/i);          // press-faster now points at latency
+  assert.ok(out.some((r) => /INPUT LATENCY/.test(r.text))); // and the latency lever fires
+});
+
+test("latencyLever: fires only above the threshold, never below", () => {
+  assert.equal(latencyLever({ overshootExcess: 40 }).length, 1);
+  assert.match(latencyLever({ overshootExcess: 40 })[0].text, /SpellQueueWindow/);
+  assert.equal(latencyLever({ overshootExcess: 20 }).length, 0);
+  assert.equal(latencyLever(null).length, 0);
+});
+
+test("gemLever: actionable when your primary gem differs from the field's", () => {
+  const gf = { gems: { yourGems: new Map([[111, 3]]), yourVariety: 1, fieldTop: [[999, 40]], fieldVarietyMed: 1 } };
+  const [g] = gemLever(gf);
+  assert.match(g.text, /^GEMS:/);
+  assert.match(g.text, /item=999/);                     // links the field's gem
+});
+
+test("gemLever: flags over-variety even when your top gem matches", () => {
+  const gf = { gems: { yourGems: new Map([[999, 2], [111, 1], [222, 1]]), yourVariety: 3, fieldTop: [[999, 40]], fieldVarietyMed: 1 } };
+  const [g] = gemLever(gf);
+  assert.match(g.text, /splitting stats/);
+});
+
+test("gemLever: silent when your gems already match the field", () => {
+  const gf = { gems: { yourGems: new Map([[999, 3]]), yourVariety: 1, fieldTop: [[999, 40]], fieldVarietyMed: 1 } };
+  assert.equal(gemLever(gf).length, 0);
+  assert.equal(gemLever(null).length, 0);
+  assert.equal(gemLever({ gems: null }).length, 0);
+});
 
 test("DPS/COMP/INFO build impact and label together (no drift)", () => {
   assert.deepEqual(DPS(3), { impact: 3, label: "~3% DPS" });

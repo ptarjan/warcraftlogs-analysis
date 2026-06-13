@@ -164,22 +164,55 @@ const CONSUMABLES = [
 // prescribe gathers: cross-boss execution, field consumables/enchants, stat gap.)
 // Each returns Finding[].
 
-function executionLevers(execd, rot) {
+// GCD overshoot (ms past the global) this much above peers reads as input latency
+// rather than noise -- below it, it's not worth a callout.
+const LATENCY_MS = 30;
+
+// Input/queue latency: a high GCD overshoot vs peers means a delay after EVERY
+// global before your next cast fires -- world latency, no spell-queue window, or
+// reaction time. Tiny per-GCD but it's every GCD, so it compounds over a fight.
+// Distinct from press-faster (idle gaps): this is the cast firing late, not not
+// pressing. For a clean player (e.g. a caster who never moves) it's often the
+// single biggest thing they actually control.
+export function latencyLever(execd) {
+  if (!execd || !(execd.overshootExcess >= LATENCY_MS)) return [];
+  return [finding("Execution", DPS(1, 3),
+    `INPUT LATENCY: your cast fires ~${f(execd.overshootExcess, 0)}ms later than peers after every GCD -- a small delay on each global that adds up over a fight. ` +
+    `Raise your spell-queue window (Options > Combat, or /console SpellQueueWindow 300-400), cut world latency, and pre-press your next ability so it queues.`)];
+}
+
+export function executionLevers(execd, rot, peerGapPct = null) {
   if (!execd) return [];
   const out = [];
   // Size press-faster from the MEASURED cast deficit (you cast N fewer damaging
   // abilities/min than the field) when that's bigger than the idle-time proxy --
   // the idle-seconds estimate under-counts (it misses slow-but-not-idle play).
+  // BUT a cast deficit does NOT convert 1:1 to DPS: the missing GCDs trend toward
+  // lower-value fillers, some are non-damage presses, and part of the deficit IS
+  // the rotation lever (a skipped core button lowers your cast count too). So damp
+  // it (~half), cap at the actual headroom (the measured DPS gap to the field),
+  // and hold a hard ceiling -- one execution lever must never claim the whole gap
+  // (the old code piped the raw 44% cast gap straight in and dominated the list).
   const cg = rot && rot.castGap;
   const idlePct = Math.round(execd.pressExcess / 60 * 100);
+  // Is the press gap latency-driven? High GCD overshoot vs peers means the gaps
+  // are a delay after each global (covered by latencyLever), not pure idling --
+  // so don't tell them "it's not latency" when it actually is.
+  const latencyHigh = execd.overshootExcess >= LATENCY_MS;
   if (execd.pressExcess >= 1.0 || (cg && cg.pct >= 3)) {
-    const pct = Math.max(idlePct, (cg && cg.pct > 0) ? cg.pct : 0) || 1;
+    const castEst = (cg && cg.pct > 0) ? Math.round(cg.pct / 2) : 0;
+    const headroomCap = (peerGapPct && peerGapPct > 0) ? Math.max(1, Math.ceil(peerGapPct * 0.6)) : Infinity;
+    const pct = Math.min(Math.max(idlePct, castEst) || 1, headroomCap, 12);
     const cite = (cg && cg.pct > 0)
-      ? ` You cast ${f(cg.you, 0)} damaging abilities/min vs the field's ${f(cg.field, 0)} (${cg.pct}% fewer) -- that's the measured gap.`
+      ? ` You cast ${f(cg.you, 0)} damaging abilities/min vs the field's ${f(cg.field, 0)} (${cg.pct}% fewer) -- that's the measured gap; the % here is an estimate of the DPS it's worth.`
       : "";
+    const cause = latencyHigh
+      ? "gaps between GCDs (partly input latency -- see the INPUT LATENCY item)."
+      : "not latency (yours matches theirs), just gaps between GCDs.";
     out.push(finding("Execution", DPS(pct),
-      `PRESS FASTER (every boss): you idle ~${f(execd.pressExcess, 1)}s/min MORE than peers while IN melee range -- not latency (yours matches theirs), just gaps between GCDs.${cite} Always queue your next ability so a GCD never sits empty.`));
+      `PRESS FASTER (every boss): you idle ~${f(execd.pressExcess, 1)}s/min MORE than peers while IN melee range -- ${cause}${cite} Always queue your next ability so a GCD never sits empty.`));
   }
+  out.push(...latencyLever(execd));
   if (execd.rangeExcess >= 1.0 || execd.worstRange.length) {
     const where = execd.worstRange.length ? " Worst on: " + execd.worstRange.join(", ") + "." : "";
     out.push(finding("Execution", DPS(Math.round(Math.max(execd.rangeExcess, 0.1) / 60 * 100)),
@@ -226,7 +259,7 @@ function enchantLevers(field, my) {
 // (those ARE the actionable version of this gap).
 function statGapLever(gf, my, field, priority) {
   const PRI = priority.toUpperCase();
-  const statGap = (my.statPct !== null && field.statPct) ? field.statPct - my.statPct : 0;
+  const statGap = (my.statPct !== null && field && field.statPct) ? field.statPct - my.statPct : 0;
   const hasGearLever = gf && (gf.swaps.length || gf.restats.length);
   if (statGap >= 4 && !hasGearLever) {
     return [finding("Gear", INFO, `${PRI}: yours (${f(my.statPct, 0)}%) is below your peers (${f(field.statPct, 0)}%), but NOT actionable now -- every item you own is already ${priority}-maxed and no ${priority}-itemized upgrade exists to swap to. It only rises when ${priority}-itemized drops come.`)];
@@ -246,7 +279,7 @@ function renderPrescription(log, d) {
   const isComp = (r) => r.dim === "Comp";                  // raid-dependent, not yours to press
   const yours = rx.filter((r) => r.impact > 0 && !isComp(r));
   const k = (n) => `${f((n || 0) / 1000, 1)}k`;
-  const peerGap = (you.dps && field.dpsMed) ? Math.round(((field.dpsMed - you.dps) / you.dps) * 100) : null;
+  const peerGap = (you && you.dps && field && field.dpsMed) ? Math.round(((field.dpsMed - you.dps) / you.dps) * 100) : null;
   const topGap = (tp && tp.dpsGapPct) ? Math.round(tp.dpsGapPct) : null;
 
   log("");
@@ -254,6 +287,9 @@ function renderPrescription(log, d) {
   log(`HOW TO PARSE BETTER -- ${d.name}-${d.server} (${d.specName} ${d.className}), ilvl ~${d.curIlvl}`);
   log("=".repeat(66));
   if (d.medP != null) log(`You parse ${d.medP}th percentile overall (median of ${d.nBosses} bosses; best ${d.bestP}th on ${d.topParse.encounter.name}).`);
+  if (d.skipped && d.skipped.length) {
+    log(`NOTE: partial list -- couldn't load ${d.skipped.join(", ")} (likely the WCL rate limit). This isn't the full picture; re-run when the budget resets for the rest.`);
+  }
   if (peerGap != null) {
     const vsField = peerGap > 0 ? `${peerGap}% behind` : `${Math.abs(peerGap)}% ahead of`;
     log(`Measured on ${d.gearBoss.encounter.name}: you do ${k(you.dps)} DPS -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
@@ -332,33 +368,49 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // caller (app/CLI) already detected it; reuse it instead of re-sampling the
   // field's secondary stats (a whole peer fetch) again.
   const priority = knownPriority || await detectPriority(className, specName, difficulty, gearBoss.encounter.id);
-  const you = await playerMetrics(code, fight, name, specName, className);
-  const my = await mySetup(code, fight, you.sourceID, you.gear, priority, className);
+  // The PRESCRIPTION is the payoff -- it must survive a mid-run rate limit, not be
+  // the section that gets cut. So EVERY data input is fail-soft: a throttled (or
+  // private-log) fetch drops just its own levers, and we render the rest from what
+  // we did get (often already cached by the earlier cards). Better a partial list
+  // than nothing. The reason is logged so a thin list isn't mistaken for "clean".
+  const skipped = [];
+  const soft = async (what, p) => { try { return await p; } catch (e) { skipped.push(what); return null; } };
+  let you = null, my = null;
+  try {
+    you = await playerMetrics(code, fight, name, specName, className);
+    if (you) my = await mySetup(code, fight, you.sourceID, you.gear, priority, className);
+  } catch (e) { skipped.push("your gear/consumables"); }
 
-  const field = await fieldGearConsumables(gearBoss.encounter.id, difficulty, className, specName, curIlvl, priority);
-  const execd = await aggregateExecution(name, server, region, difficulty, className, specName, ranks);
-  const gf = await gearFindings(name, server, region, difficulty, className, specName, priority);
+  const field = await soft("the peer field (consumables/enchants/stat gap)",
+    fieldGearConsumables(gearBoss.encounter.id, difficulty, className, specName, curIlvl, priority));
+  const execd = await soft("execution timeline",
+    aggregateExecution(name, server, region, difficulty, className, specName, ranks));
+  const gf = await soft("gear audit",
+    gearFindings(name, server, region, difficulty, className, specName, priority));
   // rot/tp are hoisted so the synthesis below can quote their MEASURED numbers.
   // Each may be unavailable (private logs, no peers) -- treat that as no findings.
   let rot = null, tp = null, tal = null;
   try { rot = await rotationFindings(name, server, region, className, specName, difficulty); }
-  catch (e) { /* rotation data unavailable -- skip */ }
+  catch (e) { skipped.push("rotation"); }
   try { tp = await topParseFindings(name, server, region, difficulty, className, specName); }
-  catch (e) { /* top-parse data unavailable -- skip */ }
+  catch (e) { skipped.push("top-parse comparison"); }
   try { tal = await talentFindings(name, server, region, className, specName, difficulty); }
-  catch (e) { /* talent data unavailable -- skip */ }
+  catch (e) { skipped.push("talents"); }
 
   // Fold every domain's levers into ONE list of findings, then sort biggest-DPS
   // first. impact is a real number, so the order can't disagree with the shown
   // labels (the old bug was sorting by a separate, stale key). Each domain owns
   // its own lever-building; prescribe just concatenates.
+  // Measured DPS gap to the field -- the true headroom that caps the press-faster
+  // estimate so no single execution lever can claim more than the whole gap.
+  const peerGapPct = (you && you.dps && field && field.dpsMed) ? Math.round(((field.dpsMed - you.dps) / you.dps) * 100) : null;
   /** @type {Finding[]} */
   const rx = [
-    ...executionLevers(execd, rot),
-    ...consumableLevers(field, my),
-    ...enchantLevers(field, my),
+    ...executionLevers(execd, rot, peerGapPct),
+    ...(field && my ? consumableLevers(field, my) : []),
+    ...(field && my ? enchantLevers(field, my) : []),
     ...gearLevers(gf, priority),
-    ...statGapLever(gf, my, field, priority),
+    ...(my ? statGapLever(gf, my, field, priority) : []),
     ...rotationLevers(rot),
     ...talentLevers(tal),
     ...topParseLevers(tp),
@@ -368,6 +420,6 @@ export async function run(log, name, server, region, className = "Monk", specNam
   renderPrescription(log, {
     name, server, className, specName, curIlvl, gearBoss,
     medP, bestP, topParse, nBosses: ranks.length,
-    you, field, execd, rot, tp, gf, priority, rx,
+    you, field, execd, rot, tp, gf, priority, rx, skipped,
   });
 }

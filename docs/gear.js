@@ -393,6 +393,29 @@ export function embellishmentRx(gf) {
   return finding("Gear", DPS(2, 4), msg);
 }
 
+// Gems are the cheapest stat lever there is, but the audit only ever PRINTED them
+// as info. Make it actionable: the field converges on a primary gem; if you don't
+// run it, or you split across more colors than peers (not stacking your best
+// stat), say so and link the field's gem. Pure -- unit-tested. Returns [] when
+// your gems already line up (or there's no field data to compare against).
+export function gemLever(gf) {
+  if (!gf || !gf.gems) return [];
+  const gi = gf.gems;
+  const fieldTopId = gi.fieldTop && gi.fieldTop[0] && gi.fieldTop[0][0];
+  if (!fieldTopId || !gi.yourGems.size) return [];
+  const yourTop = [...gi.yourGems.entries()].sort((a, b) => b[1] - a[1])[0];
+  const yourTopId = yourTop && yourTop[0];
+  const overVariety = gi.fieldVarietyMed != null && gi.yourVariety > gi.fieldVarietyMed;
+  const wrongPrimary = yourTopId !== fieldTopId;
+  if (!overVariety && !wrongPrimary) return [];           // your gems already match
+  const link = wowheadItem(fieldTopId, "the field's primary gem");
+  const variety = gi.fieldVarietyMed != null
+    ? ` You run ${gi.yourVariety} gem color(s) vs the field's ${gi.fieldVarietyMed}${overVariety ? " -- you're splitting stats instead of stacking" : ""}.`
+    : "";
+  return [finding("Gear", DPS(1, 2),
+    `GEMS: re-socket toward ${link} (what most of the field runs).${variety} Gems are the cheapest stat change there is.`)];
+}
+
 // All gear levers as findings: priority-stat drop swaps, re-stats, embellishment.
 export function gearLevers(gf, priority) {
   if (!gf) return [];
@@ -407,5 +430,6 @@ export function gearLevers(gf, priority) {
   }
   const embRx = embellishmentRx(gf);
   if (embRx) out.push(embRx);
+  out.push(...gemLever(gf));
   return out;
 }
