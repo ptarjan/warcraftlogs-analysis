@@ -11,23 +11,16 @@ import { topParseFindings } from "./topparse.js";
 
 const SLOT_NAME = ENCHANTABLE_SLOTS;
 
-// Numeric DPS impact parsed from an item's impact label ("~3% DPS", "~1-3% DPS",
-// "info"). Midpoint of any range; "info" -> 0. Used to order the change-list so
-// it actually matches the displayed "% DPS" -- "biggest DPS first".
-export function impactScore(label) {
-  const nums = (String(label).match(/\d+(\.\d+)?/g) || []).map(Number);
-  return nums.length ? (Math.min(...nums) + Math.max(...nums)) / 2 : 0;
-}
-
-// Which analysis a finding came from -- groups the levers by area for the
-// synthesis "where your DPS leaks" line. Keyed off the finding's leading label.
-export function dimensionOf(text) {
-  if (/^(PRESS FASTER|UPTIME)/.test(text)) return "Execution";
-  if (/^(ROTATION|PROC|TALENTS|BUILD)/.test(text)) return "Rotation";
-  if (/^(FLASK|FOOD|COMBAT POTION|POTIONS|AUGMENT RUNE|WEAPON OIL|ENCHANTS)/.test(text)) return "Setup";
-  if (/^(BUFF|ROUTING|COMP)/.test(text)) return "Comp";
-  return "Gear";   // "<STAT> via ...", EMBELLISHMENTS, GEAR/STATS, re-stat
-}
+// A finding is { dim, impact, label, text }:
+//   dim    -- which analysis it came from (set explicitly at creation, never
+//             re-parsed out of the text), used to split "yours" from "comp".
+//   impact -- numeric DPS %, the ONLY thing the list sorts by (biggest first).
+//   label  -- the matching display string ("~3% DPS", "~1-3% DPS", "info").
+// DPS()/COMP()/INFO build impact and label together so they can never disagree
+// (the old bug: a separate sort key that drifted from the shown %).
+export const DPS = (lo, hi = lo) => ({ impact: (lo + hi) / 2, label: hi > lo ? `~${lo}-${hi}% DPS` : `~${lo}% DPS` });
+export const COMP = (pct) => ({ impact: pct, label: `~${pct}% comp` });
+export const INFO = { impact: 0, label: "info" };
 
 // A short headline for a finding (its keyword + first action clause), for naming
 // the #1 lever in the synthesis without dumping the whole sentence.
@@ -38,9 +31,9 @@ export function rxHeadline(text) {
 
 // ONE embellishment finding (not two): name the specific items to craft, in the
 // slots of the field's #1 combo -- "craft X on Back", not "fill a slot" + "pick
-// a combo" as separate lines. You get 2 embellished slots total. Returns an
-// [impact, label, msg] row, or null when your embellishments already match a top
-// combo. Pure (takes gearFindings output) so it's unit-testable.
+// a combo" as separate lines. You get 2 embellished slots total. Returns a
+// { dim, impact, label, text } finding, or null when your embellishments already
+// match a top combo. Pure (takes gearFindings output) so it's unit-testable.
 export function embellishmentRx(gf) {
   if (!gf) return null;
   const emb = gf.embellishedSlots || [];
@@ -66,7 +59,7 @@ export function embellishmentRx(gf) {
       ? `EMBELLISHMENTS: you run ${emb.length}/2 -- fill the free slot${pop}. Throughput drops can't give.`
       : `EMBELLISHMENTS: yours (${ec.your_combo.join("+") || "none"}) isn't one top performers run${top ? `; the #1 combo is ${top[0].join("+")} (${top[1]}/${ec.field_n})` : ""}. Match it.`;
   }
-  return [-2.5, "~2-4% DPS", msg];
+  return { dim: "Gear", ...DPS(2, 4), text: msg };
 }
 
 async function bestIlvlKill(name, server, region, encounterId, difficulty) {
@@ -122,9 +115,9 @@ async function fieldGearConsumables(encounterId, difficulty, className, specName
     }
   }
   return {
-    ench_by_slot: enchBySlot, trinkets, flasks, foods, potions, augRunes, oils, guids,
-    stat_pct: statPcts.length ? median(statPcts) : null, n: peers.length,
-    dps_med: peers.length ? median(peers.map((p) => p.m.dps)) : null, // measured field DPS
+    enchBySlot, trinkets, flasks, foods, potions, augRunes, oils, guids,
+    statPct: statPcts.length ? median(statPcts) : null, n: peers.length,
+    dpsMed: peers.length ? median(peers.map((p) => p.m.dps)) : null, // measured field DPS
   };
 }
 
@@ -168,19 +161,37 @@ async function aggregateExecution(name, server, region, difficulty, className, s
     .map((c) => [c.you.range_lost_per_min - c.peer.range_lost_per_min, c.boss])
     .sort((a, b) => b[0] - a[0]);
   return {
-    n_bosses: perBoss.length,
-    press_excess: med("press_lost_per_min"),
-    range_excess: med("range_lost_per_min"),
-    total_excess: med("lost_per_min"),
-    overshoot_excess: med("overshoot_ms"),
-    worst_range: rangeBosses.filter(([d]) => d > 1.5).map(([, b]) => b),
+    nBosses: perBoss.length,
+    pressExcess: med("press_lost_per_min"),
+    rangeExcess: med("range_lost_per_min"),
+    totalExcess: med("lost_per_min"),
+    overshootExcess: med("overshoot_ms"),
+    worstRange: rangeBosses.filter(([d]) => d > 1.5).map(([, b]) => b),
   };
 }
 
+// Consumables you apply yourself -- one row per consumable, same logic for all:
+// you ran none -> recommend the field's most common; you ran a different one ->
+// swap to it. (Replaces five near-identical hand-written blocks.)
+const CONSUMABLES = [
+  { field: "flasks", mine: "flask", label: "FLASK", peerVerb: "run", note: "",
+    none: DPS(2), missText: "you ran none", tail: "Free parse with equal gear.", swap: DPS(2) },
+  { field: "foods", mine: "food", label: "FOOD", peerVerb: "run", note: "",
+    none: DPS(1, 2), missText: "you ate none", tail: "Free parse.", swap: DPS(1) },
+  { field: "potions", mine: "potion", label: "COMBAT POTION", peerVerb: "pop",
+    note: " (pre-pull + again on cooldown/burst = 2 per fight)",
+    none: DPS(1, 3), missText: "you used none", tail: "Free parse with equal gear.", swap: DPS(1) },
+  { field: "augRunes", mine: "augrune", label: "AUGMENT RUNE", peerVerb: "use",
+    note: " (a flat primary-stat gain)",
+    none: DPS(1, 2), missText: "you ran none", tail: "Free parse.", swap: DPS(1) },
+  { field: "oils", mine: "oil", label: "WEAPON OIL", peerVerb: "apply",
+    note: " (a temporary weapon buff, re-applied like a flask)",
+    none: DPS(1, 2), missText: "you ran none", tail: "Free parse.", swap: DPS(1) },
+];
+
 export async function run(log, name, server, region, className = "Monk", specName = "Brewmaster",
   difficulty = 5, knownPriority = null) {
-  const N = name, S = server, R = region, CL = className, SP = specName, D = difficulty;
-  const c = await characterZone(N, S, R, D);
+  const c = await characterZone(name, server, region, difficulty);
   const ranks = (c.zoneRankings.rankings || []).filter(
     (r) => (r.totalKills || 0) > 0 && r.rankPercent !== null && r.rankPercent !== undefined);
   if (!ranks.length) throw new Error("No kills found.");
@@ -188,95 +199,60 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // Where you parse NOW -- the ground truth the player is trying to raise.
   const parses = ranks.map((r) => r.rankPercent).filter((x) => x != null);
   const medP = parses.length ? Math.round(median(parses)) : null;
-  const bestRank = ranks.reduce((a, b) => ((a.rankPercent || 0) >= (b.rankPercent || 0) ? a : b));
-  const bestP = Math.round(bestRank.rankPercent || 0);
+  const topParse = ranks.reduce((a, b) => ((a.rankPercent || 0) >= (b.rankPercent || 0) ? a : b));
+  const bestP = Math.round(topParse.rankPercent || 0);
 
   // Highest-ilvl kill = current gear.
-  const encBest = [];
+  const kills = [];
   for (const r of ranks) {
-    const bk = await bestIlvlKill(N, S, R, r.encounter.id, D);
-    if (bk) encBest.push([bk[2] || 0, r, bk]);
+    const bk = await bestIlvlKill(name, server, region, r.encounter.id, difficulty);
+    if (bk) kills.push({ ilvl: bk[2] || 0, boss: r, code: bk[0], fight: bk[1] });
   }
-  encBest.sort((a, b) => b[0] - a[0]);
-  const [curIlvl, gearBoss, [code, fight]] = encBest[0];
+  kills.sort((a, b) => b.ilvl - a.ilvl);
+  const { ilvl: curIlvl, boss: gearBoss, code, fight } = kills[0];
   // Stat priority derived from what the field stacks -- never hard-coded. The
   // caller (app/CLI) already detected it; reuse it instead of re-sampling the
   // field's secondary stats (a whole peer fetch) again.
-  const priority = knownPriority || await detectPriority(CL, SP, D, gearBoss.encounter.id);
+  const priority = knownPriority || await detectPriority(className, specName, difficulty, gearBoss.encounter.id);
   const PRI = priority.toUpperCase();
-  const you = await playerMetrics(code, fight, N, SP, CL);
-  const my = await mySetup(code, fight, you.sourceID, you.gear, priority, CL);
+  const you = await playerMetrics(code, fight, name, specName, className);
+  const my = await mySetup(code, fight, you.sourceID, you.gear, priority, className);
 
-  const field = await fieldGearConsumables(gearBoss.encounter.id, D, CL, SP, curIlvl, priority);
-  const execd = await aggregateExecution(N, S, R, D, CL, SP, ranks);
+  const field = await fieldGearConsumables(gearBoss.encounter.id, difficulty, className, specName, curIlvl, priority);
+  const execd = await aggregateExecution(name, server, region, difficulty, className, specName, ranks);
 
-  const rx = []; // [sortKey, impact, text]
+  const rx = []; // findings: { dim, impact, label, text }
+  const add = (dim, score, text) => rx.push({ dim, ...score, text });
 
   if (execd) {
-    if (execd.press_excess >= 1.0) {
-      const pct = execd.press_excess / 60 * 100;
-      rx.push([-execd.press_excess, `~${f(pct, 0)}% DPS`,
-        `PRESS FASTER (every boss): you idle ~${f(execd.press_excess, 1)}s/min MORE than peers while IN melee range -- not latency (yours matches theirs), just gaps between GCDs. Always queue your next ability so a GCD never sits empty.`]);
+    if (execd.pressExcess >= 1.0) {
+      add("Execution", DPS(Math.round(execd.pressExcess / 60 * 100)),
+        `PRESS FASTER (every boss): you idle ~${f(execd.pressExcess, 1)}s/min MORE than peers while IN melee range -- not latency (yours matches theirs), just gaps between GCDs. Always queue your next ability so a GCD never sits empty.`);
     }
-    if (execd.range_excess >= 1.0 || execd.worst_range.length) {
-      const where = execd.worst_range.length ? " Worst on: " + execd.worst_range.join(", ") + "." : "";
-      const pct = Math.max(execd.range_excess, 0.1) / 60 * 100;
-      rx.push([-execd.range_excess, `~${f(pct, 0)}% DPS`,
-        `UPTIME on specific fights: you're out of melee ~${f(execd.range_excess, 1)}s/min more than peers (intermissions excluded).${where} Pre-position and use your mobility / gap-closers to stay on target through mechanics.`]);
+    if (execd.rangeExcess >= 1.0 || execd.worstRange.length) {
+      const where = execd.worstRange.length ? " Worst on: " + execd.worstRange.join(", ") + "." : "";
+      add("Execution", DPS(Math.round(Math.max(execd.rangeExcess, 0.1) / 60 * 100)),
+        `UPTIME on specific fights: you're out of melee ~${f(execd.rangeExcess, 1)}s/min more than peers (intermissions excluded).${where} Pre-position and use your mobility / gap-closers to stay on target through mechanics.`);
     }
   }
 
-  if (field.flasks.size) {
-    const tf = topEntry(field.flasks)[0];
-    if (!my.flask) {
-      rx.push([-2.5, "~2% DPS", `FLASK: you ran none -- ${field.flasks.get(tf)}/${field.n} peers run ` +
-        `${wowheadSpell(field.guids.get(tf), tf)}. Free parse with equal gear.`]);
-    } else if (my.flask !== tf) {
-      rx.push([-2.5, "~2% DPS", `FLASK: ${wowheadSpell(my.flaskGuid, my.flask)} -> ` +
-        `${wowheadSpell(field.guids.get(tf), tf)}.`]);
-    }
-  }
-  if (field.foods.size) {
-    const tfo = topEntry(field.foods)[0];
-    if (!my.food) {
-      rx.push([-1.5, "~1-2% DPS", `FOOD: you ate none -- ${field.foods.get(tfo)}/${field.n} peers run ` +
-        `${wowheadSpell(field.guids.get(tfo), tfo)}. Free parse.`]);
-    } else if (my.food !== tfo) {
-      rx.push([-1.0, "~1% DPS", `FOOD: ${wowheadSpell(my.foodGuid, my.food)} -> ${wowheadSpell(field.guids.get(tfo), tfo)}.`]);
-    }
-  }
-  if (field.potions.size) {
-    const tp = topEntry(field.potions)[0];
-    if (!my.potion) {
-      rx.push([-3.0, "~1-3% DPS", `COMBAT POTION: you used none -- ${field.potions.get(tp)}/${field.n} peers pop ` +
-        `${wowheadSpell(field.guids.get(tp), tp)} (pre-pull + again on cooldown/burst = 2 per fight). Free parse with equal gear.`]);
-    } else if (my.potion !== tp) {
-      rx.push([-1.0, "~1% DPS", `COMBAT POTION: ${wowheadSpell(my.potionGuid, my.potion)} -> ${wowheadSpell(field.guids.get(tp), tp)}.`]);
-    }
-  }
-  if (field.augRunes.size) {
-    const ta = topEntry(field.augRunes)[0];
-    if (!my.augrune) {
-      rx.push([-2.0, "~1-2% DPS", `AUGMENT RUNE: you ran none -- ${field.augRunes.get(ta)}/${field.n} peers use ` +
-        `${wowheadSpell(field.guids.get(ta), ta)} (a flat primary-stat gain). Free parse.`]);
-    } else if (my.augrune !== ta) {
-      rx.push([-1.0, "~1% DPS", `AUGMENT RUNE: ${wowheadSpell(my.augruneGuid, my.augrune)} -> ${wowheadSpell(field.guids.get(ta), ta)}.`]);
-    }
-  }
-  if (field.oils.size) {
-    const to = topEntry(field.oils)[0];
-    if (!my.oil) {
-      rx.push([-1.5, "~1-2% DPS", `WEAPON OIL: you ran none -- ${field.oils.get(to)}/${field.n} peers apply ` +
-        `${wowheadSpell(field.guids.get(to), to)} (a temporary weapon buff, re-applied like a flask). Free parse.`]);
-    } else if (my.oil !== to) {
-      rx.push([-1.0, "~1% DPS", `WEAPON OIL: ${wowheadSpell(my.oilGuid, my.oil)} -> ${wowheadSpell(field.guids.get(to), to)}.`]);
+  for (const cn of CONSUMABLES) {
+    const counter = field[cn.field];
+    if (!counter.size) continue;
+    const top = topEntry(counter)[0];                        // field's most common, by count
+    const mineName = my[cn.mine], mineGuid = my[cn.mine + "Guid"];
+    if (!mineName) {
+      add("Setup", cn.none, `${cn.label}: ${cn.missText} -- ${counter.get(top)}/${field.n} peers ` +
+        `${cn.peerVerb} ${wowheadSpell(field.guids.get(top), top)}${cn.note}. ${cn.tail}`);
+    } else if (mineName !== top) {
+      add("Setup", cn.swap, `${cn.label}: ${wowheadSpell(mineGuid, mineName)} -> ${wowheadSpell(field.guids.get(top), top)}.`);
     }
   }
   // Missing enchants (the modern "oil"): slots the field reliably enchants that
-  // you left bare -- a free parse, same as a flask. ench_by_slot already holds
-  // the field's most-common enchant per slot; flag the ones you're missing.
+  // you left bare -- a free parse, same as a flask. enchBySlot already holds the
+  // field's most-common enchant per slot; flag the ones you're missing.
   const missingEnch = [];
-  for (const [slotName, counter] of Object.entries(field.ench_by_slot)) {
+  for (const [slotName, counter] of Object.entries(field.enchBySlot)) {
     if (my.ench.has(slotName)) continue;                 // you already enchant this slot
     const top = topEntry(counter);
     if (top && top[1] >= field.n / 2) missingEnch.push([slotName, top[0]]);  // field reliably enchants it
@@ -284,30 +260,29 @@ export async function run(log, name, server, region, className = "Monk", specNam
   if (missingEnch.length) {
     const est = Math.min(missingEnch.length, 5);
     const list = missingEnch.map(([s, e]) => `${s} (${e})`).join(", ");
-    rx.push([-est, `~${est}% DPS`,
-      `ENCHANTS: you're missing enchants on ${list}. The field runs them -- a free parse with equal gear.`]);
+    add("Setup", DPS(est), `ENCHANTS: you're missing enchants on ${list}. The field runs them -- a free parse with equal gear.`);
   }
 
-  const gf = await gearFindings(N, S, R, D, CL, SP, priority);
-  const statGap = (my.statPct !== null && field.stat_pct) ? field.stat_pct - my.statPct : 0;
+  const gf = await gearFindings(name, server, region, difficulty, className, specName, priority);
+  const statGap = (my.statPct !== null && field.statPct) ? field.statPct - my.statPct : 0;
   let howToStat = false;
   if (gf) {
-    for (const [slot, mine, theirs, amt, cnt, tot, src, chance, instance, theirsId, mineId] of gf.swaps) {
+    for (const sw of gf.swaps) {
       howToStat = true;
-      const from = sourceText(src, instance, chance);
-      rx.push([-2.0, "~1-3% DPS", `${PRI} via ${slot}: replace ${wowheadItem(mineId, mine)} with ${wowheadItem(theirsId, theirs)} (+${amt} ${priority}${from} -- sim to confirm).`]);
+      const from = sourceText(sw.source, sw.instance, sw.dropChance);
+      add("Gear", DPS(1, 3), `${PRI} via ${sw.slot}: replace ${wowheadItem(sw.fromId, sw.fromName)} with ${wowheadItem(sw.toId, sw.toName)} (+${sw.gain} ${priority}${from} -- sim to confirm).`);
     }
-    for (const [slot, name2, mine, best, itemId] of gf.restats) {
+    for (const rs of gf.restats) {
       howToStat = true;
-      rx.push([-1.5, "~1-2% DPS", `${PRI} via ${slot}: ${wowheadItem(itemId, name2)} is selectable -- recraft to ${best} ${priority} (you have ${mine}).`]);
+      add("Gear", DPS(1, 2), `${PRI} via ${rs.slot}: ${wowheadItem(rs.itemId, rs.itemName)} is selectable -- recraft to ${rs.achievable} ${priority} (you have ${rs.current}).`);
     }
     const embRx = embellishmentRx(gf);
     if (embRx) rx.push(embRx);
   }
   if (statGap >= 4 && !howToStat) {
-    rx.push([0.0, "info", `${PRI}: yours (${f(my.statPct, 0)}%) is below your peers (${f(field.stat_pct, 0)}%), but NOT actionable now -- every item you own is already ${priority}-maxed and no ${priority}-itemized upgrade exists to swap to. It only rises when ${priority}-itemized drops come.`]);
+    add("Gear", INFO, `${PRI}: yours (${f(my.statPct, 0)}%) is below your peers (${f(field.statPct, 0)}%), but NOT actionable now -- every item you own is already ${priority}-maxed and no ${priority}-itemized upgrade exists to swap to. It only rises when ${priority}-itemized drops come.`);
   } else if (gf && !gf.swaps.length && !gf.restats.length && statGap < 4) {
-    rx.push([0.0, "info", "GEAR/STATS: optimal for what you own -- no lever; gains are future drops + a sim (Droptimizer)."]);
+    add("Gear", INFO, "GEAR/STATS: optimal for what you own -- no lever; gains are future drops + a sim (Droptimizer).");
   }
 
   // Rotation: only a GENUINE proc you under-use is actionable. Crit-driven big
@@ -315,7 +290,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // `rot`/`tp` are hoisted so the synthesis can quote their MEASURED numbers.
   let rot = null, tp = null;
   try {
-    rot = await rotationFindings(N, S, R, CL, SP, D);
+    rot = await rotationFindings(name, server, region, className, specName, difficulty);
     // Biggest rotation lever: where your ability USAGE diverges from the field.
     // Pressing the wrong button (over-use one ability, never press the one the
     // field uses) or skipping a damage cooldown is usually the largest gap for an
@@ -333,26 +308,26 @@ export async function run(log, name, server, region, className = "Monk", specNam
       // ability tells you which build to copy.)
       const neverPress = top.you < 0.2 && top.field >= 1.5;
       if (neverPress) {
-        rx.push([-8, "~5-10% DPS",
+        add("Rotation", DPS(5, 10),
           `TALENTS/BUILD: you never press ${top.name}, but the field casts it ${f(top.field, 1)}/min -- ` +
           `you're almost certainly missing the talent that grants it. Respec to the field's build ` +
           `(the one with ${top.name}); your rotation can't include it until you do.` +
-          (overTop ? ` Right now you spend those globals on ${overTop.name}.` : "")]);
+          (overTop ? ` Right now you spend those globals on ${overTop.name}.` : ""));
       } else {
         const under = u.under.slice(0, 2).map((a) => `${a.name} (peers ${f(a.field, 1)}/min vs your ${f(a.you, 1)})`);
         const wrongButton = u.over.length > 0;
         const over = wrongButton
           ? `; you over-press ${u.over.slice(0, 1).map((a) => `${a.name} (your ${f(a.you, 1)}/min vs peers ${f(a.field, 1)})`).join("")}`
           : "";
-        rx.push([wrongButton ? -7.5 : -4.5, wrongButton ? "~5-10% DPS" : "~3-6% DPS",
+        add("Rotation", wrongButton ? DPS(5, 10) : DPS(3, 6),
           `ROTATION: press ${under.join(" and ")} more${over} -- match your peers' ability priority ` +
-          `(likely your biggest lever; verify in a log/sim).`]);
+          `(likely your biggest lever; verify in a log/sim).`);
       }
     }
     if (rot && rot.proc.isReal && rot.proc.fieldPerMin != null &&
         rot.proc.youPerMin < rot.proc.fieldPerMin - 0.4) {
-      rx.push([-1.0, "~1-2% DPS", `PROC: you land ${f(rot.proc.youPerMin, 1)} ${rot.proc.name} ` +
-        `procs/min vs your peers' ${f(rot.proc.fieldPerMin, 1)} -- generate/use it more.`]);
+      add("Rotation", DPS(1, 2), `PROC: you land ${f(rot.proc.youPerMin, 1)} ${rot.proc.name} ` +
+        `procs/min vs your peers' ${f(rot.proc.fieldPerMin, 1)} -- generate/use it more.`);
     }
   } catch (e) { /* rotation data unavailable -- skip */ }
 
@@ -360,60 +335,59 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // amps your kill is missing, plus damage routing and potions from the actual
   // top parses. These are usually the difference between a mid parse and a 95+.
   try {
-    tp = await topParseFindings(N, S, R, D, CL, SP);
+    tp = await topParseFindings(name, server, region, difficulty, className, specName);
     if (tp) {
       // Raid-comp amps missing from your kill (a buff on you, or a debuff on the
       // boss). You can't press these -- it's who's in the raid -- so they're
       // labelled "comp" and sized by the effect's rough value.
       for (const e of (tp.comp ? tp.comp.missing : [])) {
-        rx.push([-e.est, `~${e.est}% comp`,
+        add("Comp", COMP(e.est),
           `COMP: your kill is missing ${e.label} (${e.effect}) -- bring ${e.who}. ` +
-          `A raid-comp gap, not execution; it lifts the whole raid's damage.`]);
+          `A raid-comp gap, not execution; it lifts the whole raid's damage.`);
       }
       // Damage routing: measured extra cleave/funnel the top parses get.
       const route = tp.routing ? tp.routing.top - tp.routing.you : 0;
       if (tp.routing && route >= 5 && tp.routing.addNames.length) {
-        rx.push([-route, `~${f(route, 0)}% DPS`,
+        add("Comp", DPS(Math.round(route)),
           `ROUTING: top parses put ${f(tp.routing.top, 0)}% of damage on ${tp.routing.addNames.join(", ")} ` +
-          `(you ${f(tp.routing.you, 0)}%). Cleave/funnel those instead of tunneling the boss.`]);
+          `(you ${f(tp.routing.you, 0)}%). Cleave/funnel those instead of tunneling the boss.`);
       }
-      // Potions: pre-pot + a second combat potion.
+      // Potions: pre-pot + a second combat potion (a setup fix you apply yourself).
       if (tp.potions && tp.potions.top > tp.potions.you) {
-        rx.push([-2.5, "~2% DPS",
-          `POTIONS: top parses use ${tp.potions.top}/kill (pre-pot + a combat potion); you used ${tp.potions.you}. Add the missing one.`]);
+        add("Setup", DPS(2),
+          `POTIONS: top parses use ${tp.potions.top}/kill (pre-pot + a combat potion); you used ${tp.potions.you}. Add the missing one.`);
       }
     }
   } catch (e) { /* top-parse data unavailable -- skip */ }
 
-  // Sort by the actual displayed DPS impact, biggest first -- the order MUST
-  // match the "% DPS" the user sees (the bug was an unrelated sort key).
-  rx.sort((a, b) => impactScore(b[1]) - impactScore(a[1]));
+  // Biggest DPS first -- impact is a real number now, so the order can't disagree
+  // with the displayed labels (the old bug was sorting by a separate, stale key).
+  rx.sort((a, b) => b.impact - a.impact);
 
   // THE SYNTHESIS: pull every analysis into one answer, anchored on the MEASURED
   // DPS gap (your kill vs the ilvl-matched field vs the top parses -- real numbers,
   // not a sum of per-lever guesses), then break that gap into measured facts. The
   // only place we estimate is gear (a stat -> DPS needs a sim), and we say so.
-  const act = rx.filter((r) => impactScore(r[1]) > 0);
-  const isComp = (r) => dimensionOf(r[2]) === "Comp";       // raid-dependent, not yours to press
-  const yours = act.filter((r) => !isComp(r));
+  const isComp = (r) => r.dim === "Comp";                  // raid-dependent, not yours to press
+  const yours = rx.filter((r) => r.impact > 0 && !isComp(r));
   const k = (n) => `${f((n || 0) / 1000, 1)}k`;
-  const peerGap = (you.dps && field.dps_med) ? Math.round(((field.dps_med - you.dps) / you.dps) * 100) : null;
+  const peerGap = (you.dps && field.dpsMed) ? Math.round(((field.dpsMed - you.dps) / you.dps) * 100) : null;
   const topGap = (tp && tp.dpsGapPct) ? Math.round(tp.dpsGapPct) : null;
 
   log("");
   log("=".repeat(66));
-  log(`HOW TO PARSE BETTER -- ${N}-${S} (${SP} ${CL}), ilvl ~${curIlvl}`);
+  log(`HOW TO PARSE BETTER -- ${name}-${server} (${specName} ${className}), ilvl ~${curIlvl}`);
   log("=".repeat(66));
-  if (medP != null) log(`You parse ${medP}th percentile overall (median of ${ranks.length} bosses; best ${bestP}th on ${bestRank.encounter.name}).`);
+  if (medP != null) log(`You parse ${medP}th percentile overall (median of ${ranks.length} bosses; best ${bestP}th on ${topParse.encounter.name}).`);
   if (peerGap != null) {
     const vsField = peerGap > 0 ? `${peerGap}% behind` : `${Math.abs(peerGap)}% ahead of`;
-    log(`Measured on ${gearBoss.encounter.name}: you do ${k(you.dps)} DPS -- ${vsField} the ilvl-matched field (${k(field.dps_med)})` +
+    log(`Measured on ${gearBoss.encounter.name}: you do ${k(you.dps)} DPS -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
         (topGap != null ? `, ${topGap}% behind the top parses` : "") + `. That gap is your headroom.`);
   }
-  if (yours.length) log(`Biggest fix YOU control: ${rxHeadline(yours[0][2])} -- start here.`);
+  if (yours.length) log(`Biggest fix YOU control: ${rxHeadline(yours[0].text)} -- start here.`);
   // What the gap is made of -- MEASURED quantities (no per-lever DPS guess).
   const facts = [];
-  if (execd && execd.total_excess >= 1) facts.push(`Execution -- you lose ${f(execd.total_excess, 1)}s/min of GCD uptime vs peers`);
+  if (execd && execd.totalExcess >= 1) facts.push(`Execution -- you lose ${f(execd.totalExcess, 1)}s/min of GCD uptime vs peers`);
   if (rot && rot.usage && rot.usage.under.length) { const a = rot.usage.under[0]; facts.push(`Rotation -- you press ${a.name} ${f(a.you, 1)}/min vs the field's ${f(a.field, 1)}`); }
   if (tp && tp.routing && (tp.routing.top - tp.routing.you) >= 5) facts.push(`Routing -- ${f(tp.routing.you, 0)}% of your damage hits adds vs the top parses' ${f(tp.routing.top, 0)}%`);
   if (tp && tp.buffGaps) { const g = tp.buffGaps.find((x) => x.comp); if (g) facts.push(`Comp -- you're missing ${g.name} (${f(g.you, 0)}% vs ${f(g.top, 0)}% uptime; raid-dependent)`); }
@@ -428,7 +402,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // stays sorted biggest-DPS-first.
   const compList = rx.filter((r) => isComp(r));
   const youList = rx.filter((r) => !isComp(r));
-  const line = (r, i) => log(`  ${i + 1}. [${String(r[1]).padStart(9)}]  ${r[2]}`);
+  const line = (r, i) => log(`  ${i + 1}. [${r.label.padStart(9)}]  ${r.text}`);
 
   log("");
   log("DO THESE TO YOUR CHARACTER NOW (biggest first; gear/rotation % are sim estimates, the rest measured):");

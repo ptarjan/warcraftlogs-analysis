@@ -215,7 +215,9 @@ export async function gearFindings(name, server, region, difficulty, className, 
       const v = (await itemStats(g.id, JSON.parse(bk)))[priority] || 0;
       if (v > best) best = v;
     }
-    if (best > (ist[priority] || 0) + 15) restats.push([SLOT[s], ist.name, ist[priority] || 0, best, g.id]);
+    if (best > (ist[priority] || 0) + 15) {
+      restats.push({ slot: SLOT[s], itemName: ist.name, itemId: g.id, current: ist[priority] || 0, achievable: best });
+    }
 
     // Drop swap: scan EVERY item the field runs in this slot for one with
     // meaningfully more of the priority stat. ONLY where a swap costs nothing
@@ -233,14 +235,20 @@ export async function gearFindings(name, server, region, difficulty, className, 
         if (cst.unique && myItemIds.has(candId)) continue;
         // require real adoption (>=3 of the field) to skip off-meta noise
         if ((cst[priority] || 0) - yoursPri >= 30 && cnt >= 3) {
-          if (!bestAlt || cst[priority] > bestAlt[1]) bestAlt = [cst.name, cst[priority], cnt, cst.source, cst.dropChance, candId];
+          if (!bestAlt || cst[priority] > bestAlt.gain) {
+            bestAlt = { name: cst.name, gain: cst[priority], count: cnt, source: cst.source, dropChance: cst.dropChance, id: candId };
+          }
         }
       }
     }
     if (bestAlt) {
-      const instance = await itemInstance(bestAlt[5], bestAlt[3]); // resolve dungeon/raid name
-      // tuple: ...src, chance, instance, then theirsId/mineId for Wowhead links.
-      swaps.push([SLOT[s], ist.name, bestAlt[0], bestAlt[1], bestAlt[2], slotTotal, bestAlt[3], bestAlt[4], instance, bestAlt[5], g.id]);
+      const instance = await itemInstance(bestAlt.id, bestAlt.source); // resolve dungeon/raid name
+      swaps.push({
+        slot: SLOT[s], fromName: ist.name, fromId: g.id,         // your current item
+        toName: bestAlt.name, toId: bestAlt.id,                  // the field's item to swap to
+        gain: bestAlt.gain, count: bestAlt.count, total: slotTotal,
+        source: bestAlt.source, dropChance: bestAlt.dropChance, instance,
+      });
     }
   }
 
@@ -274,7 +282,7 @@ export async function gearFindings(name, server, region, difficulty, className, 
   // embellishment -- not also a "swap to a drop here" line for the same slot.
   // (A crafted embellished piece is itemized to your stat anyway.)
   const embPlanSlots = new Set([...yourCombo, ...recommended.map((r) => r[0])]);
-  const reconciledSwaps = swaps.filter((sw) => !embPlanSlots.has(sw[0]));
+  const reconciledSwaps = swaps.filter((sw) => !embPlanSlots.has(sw.slot));
 
   const myGems = you.gear.flatMap((g) => (g.gems || []).map((gm) => gm.id)).filter(Boolean);
   const gemCount = new Map();
@@ -329,8 +337,8 @@ export async function run(log, name, server, region, difficulty, className, spec
   if (ff.swaps.length) {
     log("");
     log(`${priority[0].toUpperCase() + priority.slice(1)} drop CANDIDATES (a crit-itemized item peers run in a non-tier/non-embellished slot of yours -- sim to confirm net gain):`);
-    for (const [slot, mine, theirs, amt, cnt, tot, src, chance, instance, theirsId, mineId] of ff.swaps) {
-      log(`  ${slot}: ${wowheadItem(mineId, mine)} -> ${wowheadItem(theirsId, theirs)} (+${amt} ${priority}; ${cnt}/${tot} of peers)${sourceText(src, instance, chance)}`);
+    for (const sw of ff.swaps) {
+      log(`  ${sw.slot}: ${wowheadItem(sw.fromId, sw.fromName)} -> ${wowheadItem(sw.toId, sw.toName)} (+${sw.gain} ${priority}; ${sw.count}/${sw.total} of peers)${sourceText(sw.source, sw.instance, sw.dropChance)}`);
     }
   } else {
     log("");
@@ -339,7 +347,7 @@ export async function run(log, name, server, region, difficulty, className, spec
   if (ff.restats.length) {
     log("");
     log(`Re-stat opportunities (others run MORE ${priority} on your SAME item, so the stats are selectable):`);
-    for (const [slot, name2, mine, best, itemId] of ff.restats) log(`  ${slot} ${wowheadItem(itemId, name2)}: you ${mine} ${priority} -> achievable ${best}`);
+    for (const rs of ff.restats) log(`  ${rs.slot} ${wowheadItem(rs.itemId, rs.itemName)}: you ${rs.current} ${priority} -> achievable ${rs.achievable}`);
   } else {
     log("");
     log(`No re-stat gains: on every item you own, no peer runs more ${priority} than you -- your stats are maxed/fixed for the gear you have.`);
