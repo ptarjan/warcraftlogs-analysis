@@ -22,6 +22,39 @@ const mostCommon = (counter) => {
   return [...counter.entries()].sort((a, b) => b[1] - a[1])[0];
 };
 
+// ONE embellishment finding (not two): name the specific items to craft, in the
+// slots of the field's #1 combo -- "craft X on Back", not "fill a slot" + "pick
+// a combo" as separate lines. You get 2 embellished slots total. Returns an
+// [impact, label, msg] row, or null when your embellishments already match a top
+// combo. Pure (takes gearFindings output) so it's unit-testable.
+export function embellishmentRx(gf) {
+  if (!gf) return null;
+  const emb = gf.embellishedSlots || [];
+  const ec = gf.emb_compare;
+  const matchesTop = ec && ec.your_rank;            // you already run a top combo
+  if (!(emb.length < 2 || (ec && !matchesTop && ec.top_combos && ec.top_combos.length))) return null;
+  const top = ec && ec.top_combos && ec.top_combos[0];
+  const pop = top ? ` (#1 field combo, ${top[1]}/${ec.field_n})` : "";
+  const yourSlots = new Set(emb);
+  // Short a slot -> name only the slot(s) you're missing; full-but-suboptimal
+  // pair -> name the whole target combo to switch to.
+  const target = (ec && ec.recommended) ? ec.recommended : [];
+  const toCraft = emb.length < 2 ? target.filter(([sl]) => !yourSlots.has(sl)) : target;
+  const recText = toCraft.map(([sl, item]) => `${item} (${sl})`).join(" + ");
+  let msg;
+  if (recText) {
+    const lead = emb.length < 2
+      ? `you run ${emb.length}/2 -- craft ${recText}`
+      : `yours (${ec.your_combo.join("+") || "none"}) isn't one top performers run -- switch to ${recText}`;
+    msg = `EMBELLISHMENTS: ${lead}${pop}. Throughput drops can't give.`;
+  } else {
+    msg = emb.length < 2
+      ? `EMBELLISHMENTS: you run ${emb.length}/2 -- fill the free slot${pop}. Throughput drops can't give.`
+      : `EMBELLISHMENTS: yours (${ec.your_combo.join("+") || "none"}) isn't one top performers run${top ? `; the #1 combo is ${top[0].join("+")} (${top[1]}/${ec.field_n})` : ""}. Match it.`;
+  }
+  return [-2.5, "~2-4% DPS", msg];
+}
+
 async function bestIlvlKill(name, server, region, encounterId, difficulty) {
   const er = await characterEncounter(name, server, region, encounterId, difficulty);
   if (!er || !er.ranks || !er.ranks.length) return null;
@@ -182,15 +215,8 @@ export async function run(log, name, server, region, className = "Monk", specNam
       howToStat = true;
       rx.push([-1.5, "~1-2% DPS", `${PRI} via ${slot}: '${name2}' is selectable -- recraft to ${best} ${priority} (you have ${mine}).`]);
     }
-    const emb = gf.embellishedSlots;
-    if (emb.length < 2) {
-      rx.push([-2.5, "~2-4% DPS", `EMBELLISHMENTS: you run ${emb.length}/2 -- fill the free slot (throughput you can't get from drops).`]);
-    }
-    const ec = gf.emb_compare;
-    if (ec && !ec.your_rank && ec.top_combos.length) {
-      const top = ec.top_combos[0];
-      rx.push([-2.0, "~2-4% DPS", `EMBELLISHMENT COMBO: yours (${ec.your_combo.join("+") || "none"}) isn't one top performers run; the #1 combo is ${top[0].join("+")} (${top[1]}/${ec.field_n}). Match it.`]);
-    }
+    const embRx = embellishmentRx(gf);
+    if (embRx) rx.push(embRx);
   }
   if (statGap >= 4 && !howToStat) {
     rx.push([0.0, "info", `${PRI}: yours (${f(my.statPct, 0)}%) is below the field (${f(field.stat_pct, 0)}%), but NOT actionable now -- every item you own is already ${priority}-maxed and no ${priority}-itemized upgrade exists to swap to. It only rises when ${priority}-itemized drops come.`]);

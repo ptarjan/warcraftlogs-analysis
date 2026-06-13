@@ -88,17 +88,23 @@ async function fieldEmbellishments(className, specName, difficulty, encounters, 
     }
     return emb;
   });
-  const combos = new Map(); // JSON(sorted slot names) -> count
-  const items = new Map();  // item name -> count
+  const combos = new Map();      // JSON(sorted slot names) -> count
+  const items = new Map();       // item name -> count
+  const perSlotItems = new Map();// slot name -> Map(item name -> count)
   let got = 0;
   for (const emb of perPeer) {
     if (!emb || !emb.length) continue;
     got++;
     const comboKey = JSON.stringify(emb.map(([sl]) => sl).sort());
     combos.set(comboKey, (combos.get(comboKey) || 0) + 1);
-    for (const [, nm] of emb) items.set(nm, (items.get(nm) || 0) + 1);
+    for (const [sl, nm] of emb) {
+      items.set(nm, (items.get(nm) || 0) + 1);
+      const byItem = perSlotItems.get(sl) || new Map();
+      byItem.set(nm, (byItem.get(nm) || 0) + 1);
+      perSlotItems.set(sl, byItem);
+    }
   }
-  return { combos, items, n: got };
+  return { combos, items, perSlotItems, n: got };
 }
 
 // Gear from your highest-ilvl kill (= current).
@@ -219,9 +225,20 @@ export async function gearFindings(name, server, region, difficulty, className, 
   }
   const yourItemsPop = yourEmbItems.map((nm) => [nm, fe.items.get(nm) || 0]);
   const topItems = [...fe.items.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+  // The concrete recommendation: for the #1 slot-combo the field runs, name the
+  // single most popular embellishment ITEM in each of those slots -- so the
+  // advice is "craft <item> on your <slot>", not just "pick some combo".
+  const topItemInSlot = (sl) => {
+    const m = fe.perSlotItems.get(sl);
+    if (!m || !m.size) return null;
+    return [...m.entries()].sort((a, b) => b[1] - a[1])[0]; // [name, count]
+  };
+  const recommended = (comboList[0] ? comboList[0][0] : [])
+    .map((sl) => { const it = topItemInSlot(sl); return it ? [sl, it[0], it[1]] : null; })
+    .filter(Boolean); // [[slot, itemName, count], ...]
   const embCompare = {
     your_combo: yourCombo, your_rank: yourRank, top_combos: comboList.slice(0, 4),
-    field_n: fe.n, your_items_pop: yourItemsPop, top_items: topItems,
+    field_n: fe.n, your_items_pop: yourItemsPop, top_items: topItems, recommended,
   };
 
   const myGems = you.gear.flatMap((g) => (g.gems || []).map((gm) => gm.id)).filter(Boolean);
@@ -262,7 +279,9 @@ export async function audit(log, name, server, region, difficulty, className, sp
     log(`Embellishment combo vs field: yours = ${ec.your_combo.join(" + ") || "none"} -> ${rank}.`);
     log(`  top field combos: ${ec.top_combos.map(([c, n]) => `${c.join("+")} (${n})`).join(", ")}`);
     log(`  your embellishment items' field popularity: ${ec.your_items_pop.map(([nm, pop]) => `${nm} (${pop})`).join(", ")}`);
-    if (!ec.your_rank) log("  -> Consider matching a top combo above (yours isn't one top performers run).");
+    if (ec.recommended && ec.recommended.length)
+      log(`  -> craft the #1 combo's items: ${ec.recommended.map(([sl, nm, cnt]) => `${nm} on ${sl} (${cnt}/${ec.field_n})`).join(", ")}`);
+    else if (!ec.your_rank) log("  -> Consider matching a top combo above (yours isn't one top performers run).");
   }
 
   const gi = ff.gems;

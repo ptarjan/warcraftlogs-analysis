@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { impactScore } = await import("../docs/prescribe.js");
+const { impactScore, embellishmentRx } = await import("../docs/prescribe.js");
 
 test("impactScore reads the displayed % (midpoint of ranges)", () => {
   assert.equal(impactScore("~3% DPS"), 3);
@@ -28,4 +28,46 @@ test("sorting by impactScore is biggest-DPS-first and matches the labels", () =>
   // labels are non-increasing
   const scores = rx.map((r) => impactScore(r[1]));
   for (let i = 1; i < scores.length; i++) assert.ok(scores[i] <= scores[i - 1]);
+});
+
+// The embellishment advice is ONE finding that names the specific items to craft
+// -- not a "fill a slot" line plus a separate "match a combo" line.
+const EC = (over = {}) => ({
+  your_combo: [], your_rank: null, field_n: 18,
+  top_combos: [[["Back", "Wrist"], 6]],
+  recommended: [["Back", "Writhing Armor Banding", 6], ["Wrist", "Elemental Lariat", 5]],
+  ...over,
+});
+
+test("embellishments: 0/2 -> one finding naming both items to craft", () => {
+  const r = embellishmentRx({ embellishedSlots: [], emb_compare: EC() });
+  assert.ok(r, "should produce a finding");
+  assert.equal(r[1], "~2-4% DPS");
+  assert.match(r[2], /Writhing Armor Banding \(Back\) \+ Elemental Lariat \(Wrist\)/);
+  assert.match(r[2], /#1 field combo, 6\/18/);
+});
+
+test("embellishments: 1/2 -> only names the slot you're missing", () => {
+  const r = embellishmentRx({ embellishedSlots: ["Back"], emb_compare: EC() });
+  assert.ok(r);
+  assert.match(r[2], /Elemental Lariat \(Wrist\)/);
+  assert.doesNotMatch(r[2], /Back\)/, "shouldn't tell you to re-craft the slot you already have");
+});
+
+test("embellishments: full but suboptimal combo -> switch to the top items", () => {
+  const r = embellishmentRx({
+    embellishedSlots: ["Belt", "Feet"],
+    emb_compare: EC({ your_combo: ["Belt", "Feet"] }),
+  });
+  assert.ok(r);
+  assert.match(r[2], /switch to/);
+  assert.match(r[2], /Writhing Armor Banding \(Back\) \+ Elemental Lariat \(Wrist\)/);
+});
+
+test("embellishments: already running a top combo -> no finding", () => {
+  const r = embellishmentRx({
+    embellishedSlots: ["Back", "Wrist"],
+    emb_compare: EC({ your_combo: ["Back", "Wrist"], your_rank: [1, 6] }),
+  });
+  assert.equal(r, null);
 });
