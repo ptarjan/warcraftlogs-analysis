@@ -365,18 +365,26 @@ export async function zoneTooltip(id) {
 
 // The connected user's own characters that have parses on the CURRENT content,
 // most parses first. "Parses" = ranked kills in the current zone (zoneRankings
-// defaults to the current zone), summed across Mythic + Heroic. Connected-only
-// and best-effort with a two-tier fallback: if the ranking shape isn't available
-// we return the bare list (unsorted) so the picker still works; on any miss, [].
+// defaults to the current zone), summed across ALL raid difficulties
+// (Mythic/Heroic/Normal/LFR) so every character raided this tier shows -- not
+// just the Mythic/Heroic mains. Connected-only and best-effort with a two-tier
+// fallback: if the ranking shape isn't available we return the bare list
+// (unsorted) so the picker still works; on any miss, [].
 export async function myCharacters() {
   if (IS_NODE || !getAccessToken()) return [];
   const loc = "name server { slug region { slug } }";
   // zoneRankings is a JSON scalar: { rankings: [{ totalKills, rankPercent, ... }] }.
+  // Count ranked kills (rankPercent != null) -- matches what detectContext treats
+  // as analyzable, so everything shown can actually be analyzed.
   const parsesIn = (zr) => ((zr && zr.rankings) || [])
     .reduce((n, r) => n + (r && r.rankPercent != null ? (r.totalKills || 0) : 0), 0);
+  const sumParses = (c) => parsesIn(c.m) + parsesIn(c.h) + parsesIn(c.n) + parsesIn(c.lfr);
+  // Current-zone rankings at every difficulty: Mythic 5, Heroic 4, Normal 3, LFR 1.
+  const RANK = "m: zoneRankings(difficulty: 5) h: zoneRankings(difficulty: 4) " +
+    "n: zoneRankings(difficulty: 3) lfr: zoneRankings(difficulty: 1)";
 
   for (const [sel, ranked] of [
-    [`${loc} m: zoneRankings(difficulty: 5) h: zoneRankings(difficulty: 4)`, true],
+    [`${loc} ${RANK}`, true],
     [loc, false], // fallback: bare list (no counts) if zoneRankings isn't usable
   ]) {
     let raw;
@@ -389,7 +397,7 @@ export async function myCharacters() {
         name: c.name,
         server: c.server && c.server.slug,
         region: ((c.server && c.server.region && c.server.region.slug) || "").toUpperCase(),
-        parses: ranked ? parsesIn(c.m) + parsesIn(c.h) : 0,
+        parses: ranked ? sumParses(c) : 0,
       }))
       .filter((c) => c.name && c.server && c.region);
     // Keep only characters with current-content parses, most first. Guard: if the
