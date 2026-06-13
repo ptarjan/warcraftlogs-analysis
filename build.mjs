@@ -27,7 +27,7 @@ const result = await build({
   metafile: true,
   // The Node/CLI path in wcl.js dynamically imports these; never run in the
   // browser (guarded by IS_NODE), so just leave them unresolved.
-  external: ["node:fs", "node:path", "node:url"],
+  external: ["node:fs", "node:path", "node:url", "node:os"],
 });
 
 const jsPath = Object.keys(result.metafile.outputs)
