@@ -1,0 +1,13 @@
+name = "wcl-proxy"
+main = "src/index.js"
+compatibility_date = "2024-09-01"
+
+# Lock this to your GitHub Pages origin so randoms can't burn your WCL rate
+# limit through the proxy, e.g. "https://ptarjan.github.io". "*" allows any.
+[vars]
+ALLOWED_ORIGIN = "*"
+
+# Secrets are NOT stored here. Set them once with:
+#   cd worker
+#   npx wrangler secret put WCL_CLIENT_ID
+#   npx wrangler secret put WCL_CLIENT_SECRET

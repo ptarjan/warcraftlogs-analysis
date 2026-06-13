@@ -1,6 +1,12 @@
 # Secrets — never commit
 .env
 .wcl_token.json
+worker/.dev.vars
+
+# Node / Cloudflare Worker
+node_modules/
+worker/.wrangler/
+.wrangler/
 
 # Local caches
 .item_cache.json

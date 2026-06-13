@@ -1,0 +1,292 @@
+// Automatic gear audit: reads each item's real secondary stats (via the Worker's
+// Wowhead proxy) and compares slot-by-slot to the field. Ported from gear.py.
+import { itemTooltip } from "./wcl.js";
+import {
+  characterZone, characterEncounter, playerMetrics, topRankings, f,
+} from "./core.js";
+
+const SLOT = {
+  0: "Head", 1: "Neck", 2: "Shoulder", 4: "Chest", 5: "Belt", 6: "Legs",
+  7: "Feet", 8: "Wrist", 9: "Hands", 10: "Ring1", 11: "Ring2",
+  12: "Trinket1", 13: "Trinket2", 14: "Back", 15: "Weapon",
+};
+// Tier-set token slots: you only need 4 of these 5 for the 4pc, so one is a
+// "flex" slot. Swapping a tier-eligible slot interacts with the set bonus.
+const TIER_SLOTS = new Set([0, 2, 4, 6, 9]); // Head, Shoulder, Chest, Legs, Hands
+export const SHORT = {
+  "Critical Strike": "crit", "Haste": "haste", "Mastery": "mastery", "Versatility": "vers",
+};
+export const PRIORITIES = ["crit", "haste", "mastery", "vers"];
+
+// localStorage-backed cache of parsed item stats, keyed by id[:bonus:ids].
+function cacheGet(key) {
+  try { const v = localStorage.getItem("item:" + key); return v ? JSON.parse(v) : null; }
+  catch (e) { return null; }
+}
+function cacheSet(key, val) {
+  try { localStorage.setItem("item:" + key, JSON.stringify(val)); } catch (e) {}
+}
+
+export async function itemStats(itemId, bonusIds) {
+  const bonus = (bonusIds || []).map(String);
+  const key = String(itemId) + (bonus.length ? ":" + bonus.join(":") : "");
+  const cached = cacheGet(key);
+  if (cached) return cached;
+  let out;
+  try {
+    const d = await itemTooltip(itemId, bonus);
+    const html = d.tooltip || "";
+    out = { name: d.name || String(itemId), crit: 0, haste: 0, mastery: 0, vers: 0 };
+    const m = html.match(/<!--ilvl-->(\d+)/);
+    out.ilvl = m ? parseInt(m[1], 10) : null;
+    const re = /(\d+)\s+(Critical Strike|Haste|Mastery|Versatility)/g;
+    let mm;
+    while ((mm = re.exec(html))) out[SHORT[mm[2]]] += parseInt(mm[1], 10);
+    out.embellished = html.includes("Embellished");
+    out.unique = html.includes("Unique-Equipped");
+  } catch (e) {
+    out = { name: String(itemId), crit: 0, haste: 0, mastery: 0, vers: 0, ilvl: null, embellished: false, unique: false };
+  }
+  cacheSet(key, out);
+  return out;
+}
+
+// What embellishment SLOT-combos and ITEMS top performers run (empirical).
+// Needs per-piece bonus IDs to detect embellishments, so it's a separate,
+// smaller sample than fieldConsensus to keep tooltip reads bounded.
+async function fieldEmbellishments(className, specName, difficulty, encounters, n = 18) {
+  const combos = new Map(); // JSON(sorted slot names) -> count
+  const items = new Map();  // item name -> count
+  const seen = new Set();
+  let got = 0;
+  for (const eid of encounters) {
+    if (got >= n) break;
+    for (const page of [1, 2]) {
+      for (const r of await topRankings(eid, difficulty, className, specName, page)) {
+        if (got >= n) break;
+        const key = `${r.name}|${(r.server || {}).name}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        let m;
+        try { m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className); }
+        catch (e) { continue; }
+        if (!m) continue;
+        const emb = [];
+        for (const g of m.gear) {
+          if (g.slot in SLOT) {
+            const s = await itemStats(g.id, g.bonusIDs);
+            if (s.embellished) emb.push([SLOT[g.slot], s.name]);
+          }
+        }
+        if (emb.length) {
+          got++;
+          const comboKey = JSON.stringify(emb.map(([sl]) => sl).sort());
+          combos.set(comboKey, (combos.get(comboKey) || 0) + 1);
+          for (const [, nm] of emb) items.set(nm, (items.get(nm) || 0) + 1);
+        }
+      }
+    }
+  }
+  return { combos, items, n: got };
+}
+
+// Gear from your highest-ilvl kill (= current).
+async function yourGear(name, server, region, difficulty) {
+  const c = await characterZone(name, server, region, difficulty);
+  const ranks = (c.zoneRankings.rankings || []).filter((r) => (r.totalKills || 0) > 0);
+  let best = null;
+  for (const r of ranks) {
+    const er = await characterEncounter(name, server, region, r.encounter.id, difficulty);
+    if (er && er.ranks && er.ranks.length) {
+      const bk = er.ranks.reduce((a, b) => ((a.bracketData || 0) >= (b.bracketData || 0) ? a : b));
+      const il = bk.bracketData || 0;
+      if (!best || il > best[0]) best = [il, bk.report.code, bk.report.fightID];
+    }
+  }
+  if (!best) return null;
+  return playerMetrics(best[1], best[2], name, null, "Monk");
+}
+
+// What top-DPS players wear: per-slot item counts, representative bonus IDs,
+// all stat variants seen, gem usage, and each player's gem-color variety.
+async function fieldConsensus(className, specName, difficulty, encounters, n = 40) {
+  const perSlot = {};          // slot -> Map(itemId -> count)
+  const bonusSample = {};      // itemId -> bonusIDs (first seen)
+  const variants = {};         // itemId -> Map(bonusKey -> count)
+  const gems = new Map();      // gemId -> count
+  const gemVariety = [];       // per player: distinct gem ids
+  const seen = new Set();
+  let got = 0;
+  for (const eid of encounters) {
+    if (got >= n) break;
+    for (const page of [1, 2]) {
+      for (const r of await topRankings(eid, difficulty, className, specName, page)) {
+        const key = `${r.name}|${(r.server || {}).name}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        let m;
+        try { m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className); }
+        catch (e) { continue; }
+        if (!m) continue;
+        got++;
+        const pgems = [];
+        for (const g of m.gear) {
+          if (g.slot in SLOT && g.name) {
+            (perSlot[g.slot] = perSlot[g.slot] || new Map()).set(g.id, (perSlot[g.slot].get(g.id) || 0) + 1);
+            if (!(g.id in bonusSample)) bonusSample[g.id] = g.bonusIDs;
+            const bk = JSON.stringify(g.bonusIDs || []);
+            (variants[g.id] = variants[g.id] || new Map()).set(bk, (variants[g.id].get(bk) || 0) + 1);
+          }
+          for (const gm of (g.gems || [])) {
+            if (gm.id) { gems.set(gm.id, (gems.get(gm.id) || 0) + 1); pgems.push(gm.id); }
+          }
+        }
+        if (pgems.length) gemVariety.push(new Set(pgems).size);
+        if (got >= n) break;
+      }
+      if (got >= n) break;
+    }
+  }
+  return { perSlot, bonusSample, variants, gems, gemVariety, n: got };
+}
+
+const topItem = (counter) => {
+  if (!counter || !counter.size) return null;
+  return [...counter.entries()].sort((a, b) => b[1] - a[1])[0][0];
+};
+
+export async function gearFindings(name, server, region, difficulty, className, specName, priority) {
+  const you = await yourGear(name, server, region, difficulty);
+  if (!you) return null;
+  const ymap = {};
+  for (const g of you.gear) ymap[g.slot] = g;
+  const enc = [3176, 3177, 3179, 3181, 3306];
+  const fc = await fieldConsensus(className, specName, difficulty, enc);
+  const { perSlot, bonusSample, variants } = fc;
+  const myItemIds = new Set(you.gear.map((g) => g.id));
+  const rows = [], swaps = [], embellishedSlots = [], restats = [], yourEmbItems = [];
+  for (const s of Object.keys(SLOT).map(Number).sort((a, b) => a - b)) {
+    if (!(s in ymap)) continue;
+    const g = ymap[s];
+    const ist = await itemStats(g.id, g.bonusIDs);
+    const topId = topItem(perSlot[s]);
+    let match;
+    if (topId === g.id) match = "== field";
+    else if (topId) match = `field: ${(await itemStats(topId, bonusSample[topId])).name.slice(0, 22)}`;
+    else match = "?";
+    rows.push([SLOT[s], ist, match, ist.embellished]);
+    if (ist.embellished) { embellishedSlots.push(SLOT[s]); yourEmbItems.push(ist.name); }
+
+    let best = ist[priority] || 0;
+    for (const bk of (variants[g.id] || new Map()).keys()) {
+      const v = (await itemStats(g.id, JSON.parse(bk)))[priority] || 0;
+      if (v > best) best = v;
+    }
+    if (best > (ist[priority] || 0) + 15) restats.push([SLOT[s], ist.name, ist[priority] || 0, best]);
+
+    // Drop swap: scan EVERY item the field runs in this slot for one with
+    // meaningfully more of the priority stat. ONLY where a swap costs nothing
+    // structural: not a trinket (effect-based), not one of YOUR embellished
+    // slots, and not a tier-eligible slot (set-bonus interaction).
+    const structural = (s === 12 || s === 13) || ist.embellished || TIER_SLOTS.has(s);
+    const yoursPri = ist[priority] || 0;
+    const slotCounter = perSlot[s] || new Map();
+    const slotTotal = [...slotCounter.values()].reduce((a, b) => a + b, 0) || 1;
+    let bestAlt = null;
+    if (!structural) {
+      for (const [candId, cnt] of slotCounter) {
+        if (candId === g.id) continue;
+        const cst = await itemStats(candId, bonusSample[candId]);
+        if (cst.unique && myItemIds.has(candId)) continue;
+        // require real adoption (>=3 of the field) to skip off-meta noise
+        if ((cst[priority] || 0) - yoursPri >= 30 && cnt >= 3) {
+          if (!bestAlt || cst[priority] > bestAlt[1]) bestAlt = [cst.name, cst[priority], cnt];
+        }
+      }
+    }
+    if (bestAlt) swaps.push([SLOT[s], ist.name, bestAlt[0], bestAlt[1], bestAlt[2], slotTotal]);
+  }
+
+  // Embellishment combo vs the field -- empirical: how does YOUR pair of
+  // embellishments rank among what top performers actually run?
+  const fe = await fieldEmbellishments(className, specName, difficulty, enc);
+  const yourCombo = embellishedSlots.slice().sort();
+  const comboList = [...fe.combos.entries()].sort((a, b) => b[1] - a[1])
+    .map(([k, cnt]) => [JSON.parse(k), cnt]);
+  const yourComboKey = JSON.stringify(yourCombo);
+  let yourRank = null;
+  for (let i = 0; i < comboList.length; i++) {
+    if (JSON.stringify(comboList[i][0]) === yourComboKey) { yourRank = [i + 1, comboList[i][1]]; break; }
+  }
+  const yourItemsPop = yourEmbItems.map((nm) => [nm, fe.items.get(nm) || 0]);
+  const topItems = [...fe.items.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const embCompare = {
+    your_combo: yourCombo, your_rank: yourRank, top_combos: comboList.slice(0, 4),
+    field_n: fe.n, your_items_pop: yourItemsPop, top_items: topItems,
+  };
+
+  const myGems = you.gear.flatMap((g) => (g.gems || []).map((gm) => gm.id)).filter(Boolean);
+  const gemCount = new Map();
+  for (const id of myGems) gemCount.set(id, (gemCount.get(id) || 0) + 1);
+  const fieldTop = [...fc.gems.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const variety = fc.gemVariety.slice().sort((a, b) => a - b);
+  const gemInfo = {
+    your_gems: gemCount, your_variety: new Set(myGems).size,
+    field_top: fieldTop,
+    field_variety_med: variety.length ? variety[Math.floor(variety.length / 2)] : null,
+  };
+  return { rows, swaps, embellishedSlots, restats, emb_compare: embCompare, n: fc.n, priority, gems: gemInfo };
+}
+
+export async function audit(log, name, server, region, difficulty, className, specName, priority) {
+  const ff = await gearFindings(name, server, region, difficulty, className, specName, priority);
+  if (!ff) throw new Error("No gear found.");
+  log("");
+  log(`=== Gear audit for ${name} (priority: ${priority}) | vs ${ff.n} top-DPS ${specName}s ===`);
+  log(`${"SLOT".padEnd(9)} ${"YOUR ITEM".padEnd(30)} ${"crit/hst/mas/ver".padEnd(17)} matches field?`);
+  for (const [slot, ist, match, embellished] of ff.rows) {
+    const secs = `${String(ist.crit).padStart(3)}/${String(ist.haste).padStart(3)}/${String(ist.mastery).padStart(3)}/${String(ist.vers).padStart(3)}`;
+    log(`${slot.padEnd(9)} ${ist.name.slice(0, 30).padEnd(30)} ${secs.padEnd(17)} ${match}${embellished ? " [EMBELLISHED]" : ""}`);
+  }
+  log("");
+  log(`Legend: crit/haste/mastery/vers. [EMBELLISHED] = crafted slot carrying an embellishment (you can re-stat it to ${priority}).`);
+
+  const emb = ff.embellishedSlots;
+  log("");
+  log(`Embellishments: ${emb.length ? emb.join(", ") : "none detected"} (${emb.length}/2 used).`);
+  if (emb.length < 2) log("  -> You have a free embellishment slot -- a big throughput gain you're not using.");
+
+  const ec = ff.emb_compare;
+  if (ec) {
+    const rank = ec.your_rank ? `#${ec.your_rank[0]} most common (${ec.your_rank[1]}/${ec.field_n})` : "NOT seen in the field";
+    log("");
+    log(`Embellishment combo vs field: yours = ${ec.your_combo.join(" + ") || "none"} -> ${rank}.`);
+    log(`  top field combos: ${ec.top_combos.map(([c, n]) => `${c.join("+")} (${n})`).join(", ")}`);
+    log(`  your embellishment items' field popularity: ${ec.your_items_pop.map(([nm, pop]) => `${nm} (${pop})`).join(", ")}`);
+    if (!ec.your_rank) log("  -> Consider matching a top combo above (yours isn't one top performers run).");
+  }
+
+  const gi = ff.gems;
+  const totalGems = [...gi.your_gems.values()].reduce((s, v) => s + v, 0);
+  log("");
+  log(`Gems: you run ${totalGems} gem(s), ${gi.your_variety} distinct color(s); field median ${gi.field_variety_med} distinct.`);
+  log(`  field's most-used gems (id x count): ${JSON.stringify(gi.field_top)}`);
+  log(`  your gems (id x count): ${JSON.stringify(Object.fromEntries(gi.your_gems))}`);
+
+  if (ff.swaps.length) {
+    log("");
+    log(`${priority[0].toUpperCase() + priority.slice(1)} drop CANDIDATES (a crit-itemized item the field runs in a non-tier/non-embellished slot of yours -- sim to confirm net gain):`);
+    for (const [slot, mine, theirs, amt, cnt, tot] of ff.swaps) log(`  ${slot}: '${mine}' -> '${theirs}' (+${amt} ${priority}; ${cnt}/${tot} of field)`);
+  } else {
+    log("");
+    log(`No ${priority} drop-swap available -- no field item in any slot beats your ${priority} by enough to matter.`);
+  }
+  if (ff.restats.length) {
+    log("");
+    log(`Re-stat opportunities (others run MORE ${priority} on your SAME item, so the stats are selectable):`);
+    for (const [slot, name2, mine, best] of ff.restats) log(`  ${slot} '${name2}': you ${mine} ${priority} -> achievable ${best}`);
+  } else {
+    log("");
+    log(`No re-stat gains: on every item you own, nobody in the field runs more ${priority} than you -- your stats are maxed/fixed for the gear you have.`);
+  }
+}

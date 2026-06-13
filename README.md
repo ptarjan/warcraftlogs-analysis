@@ -1,149 +1,117 @@
 # warcraftlogs-analysis
 
-Tooling to analyze a Warcraft Logs character's DPS against the field — with the
-statistical controls that make the conclusions actually hold up. Built for
-Brewmaster Monk but parameterized for any class/spec, and it auto-detects the
-current raid tier so it keeps working next season.
+A browser app that analyzes a Warcraft Logs character's DPS against the field —
+with the statistical controls that make the conclusions actually hold up — then
+hands back a prioritized to-do list. Built for Brewmaster Monk but parameterized
+for any class/spec, and it auto-detects the current raid tier each season.
 
-## Setup
+It runs as a **static front-end on GitHub Pages** plus a tiny **Cloudflare
+Worker** that holds your WCL API secret and proxies WCL / Wowhead (the browser
+can't do either: the secret would be public, and neither API sends CORS
+headers). All four analyses run client-side, streaming results live as they
+compute.
 
-```bash
-cp .env.example .env      # then paste your WCL client id + secret
-python3 wcl.py            # smoke test: should print "OK - token acquired"
 ```
-
-Create an API client at <https://www.warcraftlogs.com/api/clients/>. The
-`.env` and the cached token are gitignored, so no secret ever lands in git.
-The CLI uses the standard library only; the optional web app adds Flask.
-
-## Web app
-
-A browser front-end that runs all four analyses and **streams the report live**
-as it computes (each printed line arrives over Server-Sent Events, so you watch
-it build instead of waiting on a spinner).
-
-```bash
-pip install -r requirements.txt
-python webapp.py            # http://localhost:5000
-```
-
-Fill in character / server / region (class, spec, difficulty, and gear-priority
-stat default to Brewmaster Monk / Mythic / crit), tick which analyses to run, and
-hit **Analyze**.
-
-### Deploy free
-
-The app needs a *persistent* host that can hold a 30s–2 min streaming response —
-so **not** GitHub Pages or serverless (Vercel/Netlify), whose function timeouts
-cut the stream off. Free options that work: **Render**, **Fly.io**,
-**Hugging Face Spaces**.
-
-`render.yaml` is a one-click Render Blueprint: push to GitHub → Render → New →
-Blueprint → pick the repo → set `WCL_CLIENT_ID` / `WCL_CLIENT_SECRET` in the
-dashboard. (Free web services sleep when idle — expect a ~30–60s cold start.)
-For any host, the start command is in the `Procfile`:
-
-```bash
-gunicorn -k gthread -w 1 --threads 8 --timeout 0 webapp:app
-```
-
-Credentials are read from env vars exactly like the CLI and never reach the
-browser; the WCL/Wowhead calls all happen server-side.
-
-## Usage
-
-```bash
-# Full Mythic analysis (overview + per-boss ilvl-controlled comparison)
-python3 analyze.py "Hadryan" proudmoore US --class Monk --spec Brewmaster
-
-# Heroic instead of Mythic
-python3 analyze.py "Hadryan" proudmoore US --difficulty 4
-
-# Add the difficulty-inflation check (Heroic vs Mythic percentiles)
-python3 analyze.py "Hadryan" proudmoore US --inflation
+GitHub Pages (docs/)              Cloudflare Worker (worker/)
+┌────────────────────┐   fetch   ┌──────────────────────────────┐
+│ analysis runs in    │ ────────► │ holds WCL_CLIENT_ID/SECRET    │
+│ your browser, JS     │ ◄──────── │  POST /wcl  -> GraphQL + token │
+│ (live output)        │   CORS    │  GET  /item -> Wowhead tooltip │
+└────────────────────┘    ok     └──────────────────────────────┘
 ```
 
 ## What it checks (and why)
 
-This grew out of a long investigation into "why am I not 99th percentile?"
-Most obvious answers turned out to be wrong; these are the comparisons that
-survived:
+This grew out of a long investigation into "why am I not 99th percentile?" Most
+obvious answers turned out to be wrong; these are the comparisons that survived:
 
 - **Overview** — per-boss kill percentiles for a difficulty. Remember:
   **percentiles are kills-only** and population-relative.
 - **Item-level-matched comparison** — DPS, casts/min, active time, and targets
   vs peers at *your* item level, so gear level isn't a confound.
-- **Duration control** — compares your DPS only to peers who killed in a
-  similar time, so a long progression kill isn't mistaken for low output.
+- **Duration control** — compares your DPS only to peers who killed in a similar
+  time, so a long progression kill isn't mistaken for low output.
 - **Secondary-stat allocation** — crit/haste/mastery/vers split (from
-  `CombatantInfo` events) vs the field. A defensive lean (low crit, high vers)
-  shows up here.
-- **Gear** — enchant coverage and trinkets, read from your **highest-item-level
-  kill** (≈ current gear), compared to what peers run.
-- **Difficulty inflation** — samples players and compares their own Heroic vs
-  Mythic percentile, quantifying how much an easier tier inflates the number.
+  `CombatantInfo` events) vs the field.
+- **Timeline diagnosis** — for every GCD gap, cross-references auto-attack
+  swings: autos kept swinging → **in range, not pressing** (hesitation/latency);
+  autos stopped too → **out of range / moving**. Normalized vs peers on the SAME
+  fight, so intermissions cancel out.
+- **Gear audit** — reads every item's REAL secondary stats (Wowhead tooltip API)
+  and compares slot-by-slot to the top-DPS field; detects embellishments and
+  re-stattable crafted gear via bonus IDs.
+- **Prescription** — aggregates all of the above into one ordered to-do list,
+  each item with a rough DPS-impact estimate. This is the one to read.
 
+## Deploy (free, ~10 minutes)
 
-## Diagnose & prescribe
+You need a [Cloudflare](https://dash.cloudflare.com/sign-up) account (free
+Workers, no credit card) and a [WCL API client](https://www.warcraftlogs.com/api/clients/).
+
+### 1. Deploy the Worker
 
 ```bash
-# Comparative timeline diagnosis (why uptime/APM is low), aggregated across all
-# your kills and normalized vs peers on the same fights (intermissions cancel):
-python3 diagnose.py "Hadryan" proudmoore US
-
-# A prioritized prescription: stat/flask/gear/execution fixes, each with a
-# rough DPS-impact estimate (this is the one to run):
-python3 prescribe.py "Hadryan" proudmoore US
-
-# Automatic gear audit: reads every item's REAL secondary stats (Wowhead
-# tooltip API, cached) and compares slot-by-slot to what the top-DPS field wears:
-python3 gear.py "Hadryan" proudmoore US --priority crit
+cd worker
+npm install
+npx wrangler login                       # opens browser
+npx wrangler secret put WCL_CLIENT_ID    # paste your client id
+npx wrangler secret put WCL_CLIENT_SECRET # paste your secret
+npx wrangler deploy                      # prints https://wcl-proxy.<you>.workers.dev
 ```
 
-`diagnose.py` reads cast + auto-attack event timelines. The key trick: during a
-GCD gap, if auto-attacks kept swinging you were **in range but not pressing**
-(hesitation/latency); if they stopped too, you were **out of range / moving**.
-Everything is compared to ilvl-matched peers on the SAME boss, so an
-intermission where everyone is off the boss doesn't read as a mistake.
+Optionally lock the proxy to your Pages origin: set `ALLOWED_ORIGIN` in
+`worker/wrangler.toml` to e.g. `https://<you>.github.io` and redeploy.
 
-`prescribe.py` aggregates gear/consumable/stat gaps (vs the field) and the
-peer-normalized execution excess into one ordered to-do list.
+### 2. Publish the front-end on GitHub Pages
+
+Set the Worker URL in `docs/config.js` (the `FALLBACK` constant), commit, then in
+the repo: **Settings → Pages → Build from a branch → `master` / `/docs`**. Your
+app appears at `https://<you>.github.io/warcraftlogs-analysis/`.
+
+(You can also point an already-published page at a different proxy without
+editing the file, via `?worker=https://...` or the **Settings** panel on the
+page — handy for testing.)
+
+## Run locally
+
+```bash
+# Terminal 1 — the Worker (reads worker/.dev.vars for secrets)
+cd worker
+cp ../.env.example .dev.vars   # then fill in your WCL id/secret
+npx wrangler dev               # http://localhost:8787
+
+# Terminal 2 — serve the static front-end
+cd docs && python3 -m http.server 8000
+# open http://localhost:8000/?worker=http://localhost:8787
+```
 
 ## Lessons baked in (don't relearn these)
 
 - Buff/consumable names vary by rank/tier (`"Hearty Well Fed"` vs `"Well Fed"`).
-  **Match buffs by keyword, never exact string** — an exact-match diff once
-  reported a 100%-uptime food as "0%".
+  **Match buffs by keyword, never exact string.**
 - A character's ranked parses are logged at the **item level at the time** —
   usually mid-progression. Use the highest-ilvl / most recent kill for current
   gear, or you'll critique stale equipment.
-- Heroic vs Mythic percentiles are **not** comparable; the pools differ. Run the
-  inflation check before drawing conclusions across difficulties.
-- The default ranking `metric: dps` is raw DPS; comp/buff differences (e.g. an
-  Augmentation Evoker) still inflate top parses and aren't visible per-player.
+- Heroic vs Mythic percentiles are **not** comparable; the pools differ.
 - `playerDetails.combatantInfo` is often empty — secondary stats come from
   `events(dataType: CombatantInfo)`, keyed by `sourceID`.
 - "What the highest-CRIT players wear in a slot" is NOT the crit item for that
-  slot -- they may get crit elsewhere (this heuristic once suggested swapping a
-  crit cloak for a versatility one). Read ACTUAL item stats; compare item
-  *choices* against top-DPS players, not stat-sorted ones.
+  slot. Read ACTUAL item stats; compare item *choices* against top-DPS players.
 - WoW only exposes item IDs in logs; real per-item stats come from Wowhead's
-  tooltip API (`nether.wowhead.com/tooltip/item/<id>`), cached locally.
-- Uptime/range stats MUST be compared to peers on the same fight --
-  intermissions and forced-downtime phases otherwise look like your mistakes.
-- Verify "enchantable" slots each season — some (wrist, back) were enchanted by
-  ~0% of the field in a given tier.
+  tooltip API, and **crafted gear shows 0/0/0/0 without its bonus IDs** (which
+  also reveal the Embellishment).
+- Uptime/range stats MUST be compared to peers on the same fight —
+  intermissions otherwise look like your mistakes.
+- Your WCL API key has an hourly request limit; a full analysis makes many
+  calls, so back-to-back runs can hit a 429 (raise it via the WCL Patreon).
 
 ## Files
 
-- `wcl.py` — OAuth + GraphQL client (token caching, retry, private-report skip).
-- `analyze.py` — overview + ilvl/duration-controlled comparison.
-- `diagnose.py` — comparative timeline root-cause diagnosis.
-- `gear.py` — automatic gear audit (reads real item stats vs the field).
-- `prescribe.py` — the prioritized, actionable prescription.
-- `webapp.py` — Flask front-end; streams any analysis live over SSE.
-- `templates/index.html` — the single-page UI.
-- `render.yaml` / `Procfile` / `requirements.txt` — free-tier deploy config.
-
-Each analysis module exposes a `run(name, server, region, ...)` function shared
-by both the CLI and the web app, so there's one code path and no duplicated logic.
+- `worker/src/index.js` — the Cloudflare Worker (secret-holding WCL/Wowhead proxy).
+- `docs/wcl.js` — browser client for the Worker (GraphQL + tooltips).
+- `docs/core.js` — shared constants, formatting, and low-level fetchers.
+- `docs/analyze.js` — overview + ilvl/duration-controlled comparison.
+- `docs/diagnose.js` — comparative timeline root-cause diagnosis.
+- `docs/gear.js` — automatic gear audit (real item stats vs the field).
+- `docs/prescribe.js` — the prioritized, actionable prescription.
+- `docs/app.js` / `docs/index.html` — the UI.
