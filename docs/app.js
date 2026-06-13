@@ -5,7 +5,7 @@
 import { detectContext, detectPriority, DIFFICULTY, raidTeammates, slug } from "./core.js";
 import { isAuthed, beginLogin, handleRedirectCallback, logout } from "./auth.js";
 import { NeedsAuth, myCharacters, primeRateReset } from "./wcl.js";
-import { paramsFromSearch, shareSearch } from "./share.js";
+import { paramsFromSearch, shareSearch, encodeSnapshot, decodeSnapshot, snapshotFromHash } from "./share.js";
 import * as overview from "./overview.js";
 import * as timeline from "./timeline.js";
 import * as rotation from "./rotation.js";
@@ -222,6 +222,9 @@ function runResume(c) {
   try { cb = await handleRedirectCallback(); }
   catch (e) { showAuthErr(e); }
   renderAuth();
+  // A #share= link is a read-only snapshot -- render it without needing an
+  // account, and skip the connect/analyze flow entirely.
+  if (await maybeRenderShared()) return;
   // Just connected via a shared/deep link? The character was stashed as
   // returnState (the OAuth redirect drops the ?char= query), so resume it.
   const resume = cb && cb.returnState;
@@ -360,6 +363,9 @@ function logTo(h, line) {
 
 // A logger bound to one card -- this is what each section streams into.
 const makeLog = (h) => (line) => logTo(h, line);
+// Like makeLog, but also RECORDS each line into `lines` so the finished report
+// can be re-rendered from a share link (no re-run).
+const recLog = (h, lines) => (line) => { lines.push(line); logTo(h, line); };
 
 // Globals for the non-section paths (auth/validation errors, the placeholder
 // line): they target the current fallback card `cur`.
@@ -424,10 +430,15 @@ function setPills(hero, items) {
   }
 }
 
+// The finished report, captured for sharing (set when a run completes; null while
+// running or on a fresh page). Encoded into the link on demand.
+let lastSnapshot = null;
+
 // A back link at the top of the report returns to the search form + your-
 // characters picker (whatever renderMode() shows when connected).
 function addBackBar() {
   const bar = document.createElement("div");
+  bar.id = "backbar";
   bar.className = "backbar";
   const b = document.createElement("button");
   b.type = "button";
@@ -436,6 +447,66 @@ function addBackBar() {
   b.onclick = goBack;
   bar.appendChild(b);
   out.appendChild(bar); // first child of the freshly-cleared #out -> sits on top
+}
+
+// Add a "Copy share link" button to the back bar once a report finishes. The
+// link carries the rendered result in the URL fragment, so a friend opens it
+// with no login and no Warcraft Logs calls.
+function addShareButton() {
+  const bar = document.getElementById("backbar");
+  if (!bar || !lastSnapshot || bar.querySelector(".share")) return;
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "linkbtn share";
+  b.textContent = "🔗 Copy share link";
+  b.onclick = async () => {
+    try {
+      const enc = await encodeSnapshot(lastSnapshot);
+      const url = location.origin + location.pathname + "#share=" + enc;
+      try { await navigator.clipboard.writeText(url); b.textContent = "✓ Link copied"; }
+      catch (e) { history.replaceState(null, "", url); b.textContent = "✓ Link in address bar"; }
+      setTimeout(() => { b.textContent = "🔗 Copy share link"; }, 2500);
+    } catch (e) { b.textContent = "Couldn't build link"; }
+  };
+  bar.appendChild(b);
+}
+
+// Render a shared report (decoded from #share=) statically -- no auth, no WCL.
+// This is what a friend who isn't logged in sees.
+function renderSnapshot(snap) {
+  const introEl = document.getElementById("intro");
+  if (introEl) introEl.style.display = "none";
+  form.style.display = "none";
+  const picker = $("picker"); if (picker) picker.style.display = "none";
+  out.innerHTML = ""; cur = null;
+  // Back/own-analysis bar.
+  const bar = document.createElement("div"); bar.className = "backbar"; out.appendChild(bar);
+  const note0 = document.createElement("span"); note0.className = "shared-note";
+  note0.textContent = "Shared analysis (read-only)";
+  bar.appendChild(note0);
+  const mine = document.createElement("button");
+  mine.type = "button"; mine.className = "linkbtn back";
+  mine.textContent = "Analyze your own →";
+  mine.onclick = () => { try { history.replaceState(null, "", location.pathname); } catch (e) {} location.reload(); };
+  bar.appendChild(mine);
+  // Hero + pills, then every section replayed from its captured lines.
+  const hero = buildHero(snap.name, snap.serverLabel || snap.region, snap.region);
+  setPills(hero, snap.pills || []);
+  for (const s of (snap.sections || [])) {
+    const card = makeCard(s.title, { primary: !!s.primary, collapsed: !s.primary });
+    for (const line of (s.lines || [])) logTo(card, line);
+  }
+  window.scrollTo(0, 0);
+}
+
+// If the URL carries a #share= snapshot, render it and return true (skip the
+// normal connect/analyze flow -- a shared link must work without an account).
+async function maybeRenderShared() {
+  const raw = snapshotFromHash(location.hash);
+  if (!raw) return false;
+  const snap = await decodeSnapshot(raw);
+  if (!snap || !snap.sections) return false;
+  renderSnapshot(snap);
+  return true;
 }
 function goBack() {
   setRunning(false);
@@ -469,23 +540,28 @@ async function runAnalysis({ name, server, region, serverLabel }) {
   // Build the whole report up front so every card appears at once, each already
   // showing a thinking spinner. The primary list sits on top (filled last, off
   // the warm cache); the supporting analyses are created right after it.
+  // Record every streamed line so the finished report can be shared (see
+  // buildSnapshot / addShareButton) -- a friend opens the link with no login.
+  const snap = { v: 1, name, serverLabel: serverLabel || server, region, pills: [], sections: [] };
   const rxCard = makeCard("What to change", { primary: true });
   setCardState(rxCard, "busy");
   cur = rxCard; note("Crunching your kills and your peers…", "muted");
-  const supCards = SUPPORTING.map(([title]) => {
+  const rxLines = [];
+  const supRecs = SUPPORTING.map(([title]) => {
     const card = makeCard(title, { collapsed: true });
     setCardState(card, "busy");
-    return card;
+    return { card, title, lines: [] };
   });
 
   try {
     const ctx = await detectContext(name, server, region);
     const priority = await detectPriority(ctx.className, ctx.specName, ctx.difficulty, ctx.killed[0].encounter.id);
-    setPills(hero, [
+    snap.pills = [
       [`${ctx.specName} ${ctx.className}`, false],
       [DIFFICULTY[ctx.difficulty], true],
       [`${priority.charAt(0).toUpperCase() + priority.slice(1)} priority`, true],
-    ]);
+    ];
+    setPills(hero, snap.pills);
     const p = { name, server, region, cls: ctx.className, spec: ctx.specName, difficulty: ctx.difficulty, priority };
 
     // The supporting analyses all start at the SAME time, each streaming into
@@ -493,8 +569,8 @@ async function runAnalysis({ name, server, region, serverLabel }) {
     // coalesces/caches identical queries, so concurrent sections share
     // overlapping requests rather than multiplying the API load.)
     const settled = await Promise.allSettled(SUPPORTING.map(([, runFn], i) => {
-      const card = supCards[i];
-      return Promise.resolve(runFn(p, makeLog(card))).then(
+      const { card, lines } = supRecs[i];
+      return Promise.resolve(runFn(p, recLog(card, lines))).then(
         () => setCardState(card, "done"),
         (err) => {
           setCardState(card, "error");
@@ -512,7 +588,7 @@ async function runAnalysis({ name, server, region, serverLabel }) {
     // fills last -- the payoff once the supporting flows complete.
     rxCard.body.innerHTML = ""; cur = rxCard; // clear placeholder, fill the list
     try {
-      await prescribe.run(makeLog(rxCard), p.name, p.server, p.region, p.cls, p.spec, p.difficulty, p.priority);
+      await prescribe.run(recLog(rxCard, rxLines), p.name, p.server, p.region, p.cls, p.spec, p.difficulty, p.priority);
       setCardState(rxCard, "done");
     } catch (err) {
       setCardState(rxCard, "error");
@@ -520,12 +596,17 @@ async function runAnalysis({ name, server, region, serverLabel }) {
       note(`${err.message || err}`, "err");
     }
 
+    // Report is complete -- assemble the shareable snapshot and offer the link.
+    snap.sections = [{ title: "What to change", primary: true, lines: rxLines },
+      ...supRecs.map((r) => ({ title: r.title, lines: r.lines }))];
+    lastSnapshot = snap;
+    addShareButton();
     statusEl.textContent = "Done.";
 
   } catch (err) {
     // Sections that never got to run (e.g. detection failed) shouldn't keep
     // spinning -- remove the ones still pending.
-    supCards.forEach((c) => { if (c.state === "busy") c.el.remove(); });
+    supRecs.forEach((r) => { if (r.card.state === "busy") r.card.el.remove(); });
     setCardState(rxCard, "error");
     rxCard.body.innerHTML = ""; cur = rxCard;
     if (err instanceof NeedsAuth) {

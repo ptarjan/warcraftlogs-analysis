@@ -53,9 +53,12 @@
     box-shadow: 0 4px 14px rgba(245,196,81,.22); }
   .linkbtn.accent:hover { filter: brightness(1.07); color: #20180a; }
   /* back-to-list link at the top of a report */
-  .backbar { margin-bottom: -4px; }
+  .backbar { margin-bottom: -4px; display: flex; align-items: center; gap: 16px; }
   .linkbtn.back { font-size: 13px; font-weight: 600; text-decoration: none; }
   .linkbtn.back:hover { text-decoration: underline; }
+  .linkbtn.share { font-size: 13px; font-weight: 600; text-decoration: none; margin-left: auto; }
+  .linkbtn.share:hover { text-decoration: underline; }
+  .shared-note { font-size: 12.5px; color: var(--muted); font-weight: 600; }
 
   main { max-width: 980px; margin: 0 auto; padding: 22px 20px 40px; }
 
