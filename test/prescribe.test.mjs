@@ -13,13 +13,26 @@ const { embellishmentRx, gemLever } = await import("../docs/gear.js");          
 
 test("executionLevers: press-faster doesn't pipe the raw cast gap into DPS%", () => {
   // 44% fewer casts must NOT become a ~44% DPS lever -- it's damped (~half) and
-  // capped at the headroom (60% gap -> 0.6x = 36) and a hard 12% ceiling.
+  // capped at the headroom (60% gap -> 0.6x = 36) and a hard 12% ceiling. No
+  // rotation under-use here, so the whole deficit is genuine speed.
   const execd = { pressExcess: 2.0, rangeExcess: 0, worstRange: [], overshootExcess: 0 };
   const rot = { castGap: { you: 16, field: 28, pct: 44 } };
   const [press] = executionLevers(execd, rot, 60);
   assert.equal(press.impact, 12);                       // capped, not 44
-  assert.match(press.text, /44% fewer/);                // the measured fact is still cited
+  assert.match(press.text, /raw speed/);                // the measured cast counts are still cited
   assert.match(press.text, /not latency/);              // overshoot low -> "not latency"
+});
+
+test("executionLevers: a never-pressed core ability isn't double-counted as press-faster", () => {
+  // The whole cast deficit (16 vs 28) is explained by a missing Shield of the
+  // Righteous (20/min the field presses, you don't). That belongs to the ROTATION
+  // lever, so press-faster falls back to the idle-time proxy (~3%), not ~12%.
+  const execd = { pressExcess: 2.0, rangeExcess: 0, worstRange: [], overshootExcess: 0 };
+  const rot = { castGap: { you: 16, field: 28, pct: 44 },
+    usage: { under: [{ name: "Shield of the Righteous", you: 0, field: 20, gap: 20 }], over: [] } };
+  const [press] = executionLevers(execd, rot, 60);
+  assert.equal(press.impact, 3);                        // idle proxy, not the cast gap
+  assert.match(press.text, /mostly the rotation fix/);
 });
 
 test("executionLevers: small gap scales down via the headroom cap", () => {

@@ -259,7 +259,7 @@ export async function run(log, name, server, region, className = "Monk",
       log(`  UNDER-USE  ${a.name.padEnd(20)} you ${a.you.toFixed(1)}/min  peers ${a.field.toFixed(1)}/min  <-- press it more`);
     for (const a of u.over.slice(0, 4))
       log(`  OVER-USE   ${a.name.padEnd(20)} you ${a.you.toFixed(1)}/min  peers ${a.field.toFixed(1)}/min  <-- peers barely press this`);
-    if (u.under.length) log("  -> Shift presses toward what peers actually cast (likely your biggest lever).");
+    if (u.under.length) log("  -> Shift presses toward what peers actually cast.");
   }
 }
 
@@ -303,7 +303,7 @@ export function rotationLevers(rot) {
         : "";
       out.push(finding("Rotation", wrongButton ? DPS(5, 10) : DPS(3, 6),
         `ROTATION: press ${under.join(" and ")} more${over} -- match your peers' ability priority ` +
-        `(likely your biggest lever; verify in a log/sim).`));
+        `(verify in a log/sim).`));
     }
   }
   if (rot && rot.proc.isReal && rot.proc.fieldPerMin != null &&

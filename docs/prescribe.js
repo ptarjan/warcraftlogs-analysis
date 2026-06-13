@@ -195,16 +195,27 @@ export function executionLevers(execd, rot, peerGapPct = null) {
   // (the old code piped the raw 44% cast gap straight in and dominated the list).
   const cg = rot && rot.castGap;
   const idlePct = Math.round(execd.pressExcess / 60 * 100);
+  // The RESIDUAL cast deficit, after subtracting the abilities you're outright
+  // MISSING (rot.usage.under -- the field presses them, you don't), is the part
+  // that's genuinely "press faster" vs "press the right buttons". Counting the
+  // whole deficit double-booked it with the rotation lever (Woeforged: a 12% press
+  // lever AND a "press Shield of the Righteous" lever for the same missed casts).
+  const under = (rot && rot.usage && rot.usage.under) || [];
+  const underGap = under.reduce((s, a) => s + (a.gap || 0), 0);
+  const speedPct = (cg && cg.field > 0)
+    ? Math.round(100 * Math.max(0, (cg.field - cg.you) - underGap) / cg.field) : 0;
   // Is the press gap latency-driven? High GCD overshoot vs peers means the gaps
   // are a delay after each global (covered by latencyLever), not pure idling --
   // so don't tell them "it's not latency" when it actually is.
   const latencyHigh = execd.overshootExcess >= LATENCY_MS;
-  if (execd.pressExcess >= 1.0 || (cg && cg.pct >= 3)) {
-    const castEst = (cg && cg.pct > 0) ? Math.round(cg.pct / 2) : 0;
+  if (execd.pressExcess >= 1.0 || speedPct >= 3) {
+    const castEst = Math.round(speedPct / 2);
     const headroomCap = (peerGapPct && peerGapPct > 0) ? Math.max(1, Math.ceil(peerGapPct * 0.6)) : Infinity;
     const pct = Math.min(Math.max(idlePct, castEst) || 1, headroomCap, 12);
-    const cite = (cg && cg.pct > 0)
-      ? ` You cast ${f(cg.you, 0)} damaging abilities/min vs the field's ${f(cg.field, 0)} (${cg.pct}% fewer) -- that's the measured gap; the % here is an estimate of the DPS it's worth.`
+    const cite = (cg && cg.field > 0)
+      ? (speedPct >= 3
+          ? ` You cast ${f(cg.you, 0)} damaging abilities/min vs the field's ${f(cg.field, 0)} -- ~${speedPct}% of that is raw speed (the rest is the rotation fix); the % here estimates the DPS it's worth.`
+          : ` (Your lower cast rate -- ${f(cg.you, 0)} vs ${f(cg.field, 0)}/min -- is mostly the rotation fix above, not raw speed.)`)
       : "";
     const cause = latencyHigh
       ? "gaps between GCDs (partly input latency -- see the INPUT LATENCY item)."
