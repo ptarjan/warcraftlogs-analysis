@@ -25,7 +25,7 @@ export function dimensionOf(text) {
   if (/^(PRESS FASTER|UPTIME)/.test(text)) return "Execution";
   if (/^(ROTATION|PROC)/.test(text)) return "Rotation";
   if (/^(FLASK|FOOD|COMBAT POTION|POTIONS|AUGMENT RUNE|WEAPON OIL|ENCHANTS)/.test(text)) return "Setup";
-  if (/^(BUFF|ROUTING)/.test(text)) return "Comp";
+  if (/^(BUFF|ROUTING|COMP)/.test(text)) return "Comp";
   return "Gear";   // "<STAT> via ...", EMBELLISHMENTS, GEAR/STATS, re-stat
 }
 
@@ -404,11 +404,26 @@ export async function run(log, name, server, region, className = "Monk", specNam
   if (facts.length) { log("What the gap is made of (measured):"); for (const ff of facts) log(`  ${ff}`); }
   log(`(Field = top-ranked players at your item level; top parses = the rank-1 kills.)`);
 
+  // Split the list by what's YOURS to do vs raid comp. The whole point is "what
+  // do I do to my character right now" -- a roster gap (bring an Aug Evoker) is
+  // real but isn't a change you make to your character, so it never competes for
+  // the top of the to-do list; it's a clearly-labelled footnote. Each section
+  // stays sorted biggest-DPS-first.
+  const compList = rx.filter((r) => isComp(r));
+  const youList = rx.filter((r) => !isComp(r));
+  const line = (r, i) => log(`  ${i + 1}. [${String(r[1]).padStart(9)}]  ${r[2]}`);
+
   log("");
-  log("DO THESE IN ORDER (biggest first; execution/routing/comp are measured, gear/rotation % are sim estimates):");
-  if (!rx.length) {
-    log("  You match your peers on gear, consumables, stats, and execution. Remaining gains are farm kills + raid comp.");
+  log("DO THESE TO YOUR CHARACTER NOW (biggest first; gear/rotation % are sim estimates, the rest measured):");
+  if (!youList.length) {
+    log("  You match your peers on gear, enchants, consumables, stats, and execution. The rest is comp + farm kills.");
   }
-  rx.forEach(([, impact, text], i) => log(`  ${i + 1}. [${String(impact).padStart(9)}]  ${text}`));
+  youList.forEach(line);
+
+  if (compList.length) {
+    log("");
+    log("RAID COMP (real DPS, but a roster/buff gap -- NOT something you change on your character):");
+    compList.forEach(line);
+  }
   log("");
 }
