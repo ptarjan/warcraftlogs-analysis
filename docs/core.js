@@ -118,6 +118,66 @@ export async function secondaryStats(code, fight, sourceId) {
   return null;
 }
 
+// --------------------------------------------------------------------- //
+// Auto-detection (so the UI only needs character / server / region)
+// --------------------------------------------------------------------- //
+const DIFF_ORDER = [5, 4, 3, 2]; // Mythic -> LFR; pick the highest with kills.
+
+// Read class + spec from the character's best kill of an encounter.
+async function classSpecFromKill(name, server, region, encounterId, difficulty) {
+  const er = await characterEncounter(name, server, region, encounterId, difficulty);
+  if (!er || !er.ranks || !er.ranks.length) return null;
+  const best = er.ranks.reduce((a, b) => ((a.bracketData || 0) >= (b.bracketData || 0) ? a : b));
+  const q = `query { reportData { report(code:"${best.report.code}") {
+    table(fightIDs:${best.report.fightID}, dataType:DamageDone) } } }`;
+  let data;
+  try { data = (await gql(q)).reportData.report.table.data; } catch (e) { return null; }
+  const e = (data.entries || []).find((x) => x.name === name);
+  if (!e) return null;
+  const icon = String(e.icon || ""); // e.g. "Monk-Brewmaster"
+  return { className: e.type, specName: icon.includes("-") ? icon.split("-")[1] : null };
+}
+
+// Highest difficulty the character has kills in, plus their class/spec.
+export async function detectContext(name, server, region) {
+  let found = null;
+  for (const d of DIFF_ORDER) {
+    const c = await characterZone(name, server, region, d); // throws if not found
+    const killed = (c.zoneRankings.rankings || []).filter(
+      (r) => (r.totalKills || 0) > 0 && r.rankPercent !== null && r.rankPercent !== undefined);
+    if (killed.length) { found = { difficulty: d, zr: c.zoneRankings, killed }; break; }
+  }
+  if (!found) throw new Error(`No ranked kills found for ${name}-${server} (${region}).`);
+  let cs = null;
+  for (const r of found.killed) {
+    cs = await classSpecFromKill(name, server, region, r.encounter.id, found.difficulty);
+    if (cs && cs.specName) break;
+  }
+  if (!cs || !cs.specName) throw new Error("Couldn't determine class/spec from your kills.");
+  return { ...found, className: cs.className, specName: cs.specName };
+}
+
+// The gear stat to optimize toward = the one the top field stacks most.
+export async function detectPriority(className, specName, difficulty, encounterId, sample = 6) {
+  const sums = { crit: 0, haste: 0, mastery: 0, vers: 0 };
+  let n = 0;
+  for (let page = 1; page <= 4 && n < sample; page++) {
+    for (const r of await topRankings(encounterId, difficulty, className, specName, page)) {
+      if (n >= sample) break;
+      try {
+        const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
+        if (!m) continue;
+        const s = await secondaryStats(r.report.code, r.report.fightID, m.sourceID);
+        if (!s) continue;
+        for (const k of ["crit", "haste", "mastery", "vers"]) sums[k] += s[k];
+        n++;
+      } catch (e) { continue; }
+    }
+  }
+  const keys = ["crit", "haste", "mastery", "vers"];
+  return n ? keys.reduce((a, b) => (sums[a] >= sums[b] ? a : b)) : "crit";
+}
+
 export function gearSummary(gear, tierSetId = null) {
   const enchanted = new Set();
   for (const g of gear) {

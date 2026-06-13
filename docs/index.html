@@ -74,42 +74,19 @@
 <header>
   <h1>⚔ Warcraft Logs Analysis</h1>
   <div class="sub">Compare a character's DPS against the ilvl-matched field, then get a
-    prioritized to-do list. Runs entirely in your browser (30s–2&nbsp;min).</div>
+    prioritized to-do list. Class, spec, difficulty, and stat priority are detected
+    automatically. Runs entirely in your browser (30s–2&nbsp;min).</div>
 </header>
 <main>
   <form id="form">
     <div><label for="name">Character</label>
       <input id="name" placeholder="Hadryan" required autofocus></div>
-    <div><label for="server">Server</label>
-      <input id="server" placeholder="proudmoore" required></div>
     <div><label for="region">Region</label>
       <select id="region">
         <option>US</option><option>EU</option><option>KR</option><option>TW</option><option>CN</option>
       </select></div>
-    <div><label for="class_name">Class</label>
-      <input id="class_name" value="Monk"></div>
-    <div><label for="spec">Spec</label>
-      <input id="spec" value="Brewmaster"></div>
-    <div><label for="difficulty">Difficulty</label>
-      <select id="difficulty">
-        <option value="5">Mythic</option><option value="4">Heroic</option>
-        <option value="3">Normal</option><option value="2">LFR</option>
-      </select></div>
-    <div><label for="priority">Gear priority stat</label>
-      <select id="priority">
-        <option>crit</option><option>haste</option><option>mastery</option><option>vers</option>
-      </select></div>
-    <div class="checks">
-      <label><input type="checkbox" value="overview" checked> Overview &amp; ilvl-matched comparison</label>
-      <label><input type="checkbox" value="diagnose" checked> Timeline diagnosis</label>
-      <label><input type="checkbox" value="gear" checked> Gear audit</label>
-      <label><input type="checkbox" value="prescribe" checked> Prescription</label>
-    </div>
-    <details>
-      <summary>Settings</summary>
-      <label for="worker">Cloudflare Worker URL</label>
-      <input id="worker" placeholder="https://wcl-proxy.you.workers.dev">
-    </details>
+    <div><label for="server">Server</label>
+      <select id="server"></select></div>
     <div class="actions">
       <button id="go" type="submit">Analyze</button>
       <span class="status" id="status"></span>
