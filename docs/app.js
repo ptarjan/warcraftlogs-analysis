@@ -147,7 +147,7 @@ function makeCard(title, { primary = false, collapsed = false } = {}) {
   body.className = "body";
   el.appendChild(body);
   out.appendChild(el);
-  return { el, head, body, status: null, mono: null };
+  return { el, head, body, status: null, readout: null };
 }
 
 // Per-card processing indicator. Each section shows its own state so that when
@@ -166,27 +166,27 @@ function setCardState(h, state) {
   else h.status.innerHTML = '<span class="spin"></span>';  // running: a thinking spinner
 }
 
-// Rendering primitives are parameterized by the card handle `h`, so sections
-// running concurrently never write into one another's card.
-function appendTo(h, el) { h.body.appendChild(el); h.mono = null; scroll(); }
-function appendMonoTo(h, line) {
-  if (!h.mono) { h.mono = document.createElement("pre"); h.mono.className = "mono"; h.body.appendChild(h.mono); }
-  const span = document.createElement("span");
-  if (/<-- WORSE/.test(line)) span.className = "worse";
-  span.textContent = line + "\n";
-  h.mono.appendChild(span);
-  scroll();
+// Rendering primitives, parameterized by the card handle `h` so sections running
+// concurrently never write into one another's card.
+function appendBlock(h, el) { h.body.appendChild(el); h.readout = null; scroll(); }
+// The card's single monospace readout (created lazily). Nulled whenever a block
+// element (rx item / error) is appended, so the next data line starts a fresh
+// readout AFTER it -- preserving stream order.
+function readoutOf(h) {
+  if (!h.readout) { h.readout = document.createElement("div"); h.readout.className = "readout"; h.body.appendChild(h.readout); }
+  return h.readout;
 }
-// Tell Wowhead's tooltip widget (power.js) to scan links added since last call.
-// Debounced because the report streams in line by line.
+
+// Tell Wowhead's tooltip widget (power.js) to (re)scan links as the report
+// streams. Debounced because lines arrive one at a time.
 let _whTimer = null;
 function refreshWowhead() {
   clearTimeout(_whTimer);
   _whTimer = setTimeout(() => { try { window.$WowheadPower?.refreshLinks?.(); } catch (e) {} }, 250);
 }
-// Render text into `el`, turning [label](https://…) markdown links into safe
-// anchors (built as DOM nodes, never innerHTML). Used for Wowhead links.
-function linkify(el, text) {
+// Fill `el` with `text`, turning [label](https://…) markdown into safe anchors
+// (DOM nodes, never innerHTML).
+function fillText(el, text) {
   const re = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
   let last = 0, m, linked = false;
   while ((m = re.exec(text)) !== null) {
@@ -199,44 +199,65 @@ function linkify(el, text) {
   if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
   if (linked) refreshWowhead();
 }
-// Render markdown-link text into el (links if it contains "](", else plain text).
-function fillText(el, text) {
-  if (text.includes("](")) linkify(el, text); else el.textContent = text;
-}
-function noteTo(h, text, cls = "") {
-  const d = document.createElement("div"); d.className = "note " + cls;
-  fillText(d, text);
-  appendTo(h, d);
+
+// One streamed text line -> a styled readout node. The analyses share a small
+// vocabulary, mapped here to one visual language: section/subsection headers,
+// "-> takeaway" callouts, a trailing "<-- annotation" lifted into a colored flag
+// (red worse / green do-more), and otherwise an aligned data row.
+function readoutLine(raw) {
+  const trimmed = raw.trim();
+  let m;
+  if ((m = trimmed.match(/^={3,}\s*(.+?)\s*={3,}$/))) { const d = document.createElement("div"); d.className = "r-head"; d.textContent = m[1]; return d; }
+  if ((m = trimmed.match(/^---\s*(.+?)\s*---$/)))     { const d = document.createElement("div"); d.className = "r-sub";  d.textContent = m[1]; return d; }
+  const d = document.createElement("div");
+  d.className = /^-?->/.test(trimmed) ? "r-call" : "r-line";
+  let body = raw, flag = null;
+  const fi = raw.indexOf("<--");
+  if (fi >= 0) { flag = raw.slice(fi + 3).trim(); body = raw.slice(0, fi).replace(/\s+$/, ""); }
+  fillText(d, body);
+  if (flag) {
+    const s = document.createElement("span");
+    s.className = "r-flag " + (/(more|good|^ok\b|✓)/i.test(flag) ? "good" : "bad");
+    s.textContent = "  ← " + flag;
+    d.appendChild(s);
+  }
+  return d;
 }
 
 // Turn one streamed text line into the right DOM node inside card `h`.
 function logTo(h, line) {
-  let m;
-  if (/^[=#-]{3,}$/.test(line.trim())) return;                 // separator bars
-  if ((m = line.match(/^={3,}\s*(.+?)\s*={3,}$/))) { const d = document.createElement("div"); d.className = "sub-h"; d.textContent = m[1]; return appendTo(h, d); }
-  if ((m = line.match(/^---\s*(.+?)\s*---$/))) { const d = document.createElement("div"); d.className = "sub-h2"; d.textContent = m[1]; return appendTo(h, d); }
-  if ((m = line.match(/^\s*(\d+)\.\s*\[\s*(.+?)\s*\]\s*(.+)$/))) {
+  if (/^[=#-]{3,}$/.test(line.trim())) return;                  // bare separator bars
+  const m = line.match(/^\s*(\d+)\.\s*\[\s*(.+?)\s*\]\s*(.+)$/); // prescription item -> its own card
+  if (m) {
     const info = /info/i.test(m[2]);
     const d = document.createElement("div"); d.className = "rx" + (info ? " info" : "");
     const n = document.createElement("div"); n.className = "num"; n.textContent = m[1];
-    const b = document.createElement("div"); b.className = "badge"; b.textContent = m[2];
-    const t = document.createElement("div"); t.className = "txt";
-    fillText(t, m[3]);
-    d.append(n, b, t); return appendTo(h, d);
+    const b = document.createElement("div"); b.className = "badge"; b.textContent = m[2].replace(/\s+/g, " ");
+    const t = document.createElement("div"); t.className = "txt"; fillText(t, m[3]);
+    d.append(n, b, t); return appendBlock(h, d);
   }
-  if (/^\[error]/.test(line)) return noteTo(h, line.replace(/^\[error]\s*/, ""), "err");
-  if (line.trim() === "") { h.mono = null; return; }            // blank ends a data block
-  // aligned (has a run of 2+ spaces between non-space chars) -> data; else prose
-  if (/\S\s{2,}\S/.test(line)) return appendMonoTo(h, line);
-  noteTo(h, line);
+  if (/^\[error]/.test(line)) {
+    const d = document.createElement("div"); d.className = "note err";
+    fillText(d, line.replace(/^\[error]\s*/, "")); return appendBlock(h, d);
+  }
+  if (line.trim() === "") {                                     // blank -> a gap in the readout
+    if (h.readout) { const g = document.createElement("div"); g.className = "r-gap"; h.readout.appendChild(g); }
+    return;
+  }
+  readoutOf(h).appendChild(readoutLine(line));
+  scroll();
 }
 
 // A logger bound to one card -- this is what each section streams into.
 const makeLog = (h) => (line) => logTo(h, line);
 
-// Back-compat globals for the non-section paths (auth/validation errors, the
-// placeholder line): they target the current fallback card `cur`.
-function note(text, cls = "") { if (!cur) cur = makeCard("Results"); return noteTo(cur, text, cls); }
+// Globals for the non-section paths (auth/validation errors, the placeholder
+// line): they target the current fallback card `cur`.
+function note(text, cls = "") {
+  if (!cur) cur = makeCard("Results");
+  const d = document.createElement("div"); d.className = "note " + cls;
+  fillText(d, text); return appendBlock(cur, d);
+}
 function log(line) { if (!cur) cur = makeCard("Results"); return logTo(cur, line); }
 
 function setRunning(on) {
@@ -365,7 +386,8 @@ async function runAnalysis({ name, server, region, serverLabel }) {
         (err) => {
           setCardState(card, "error");
           if (err instanceof NeedsAuth) throw err; // bubble up to the reconnect flow
-          noteTo(card, `${err.message || err}`, "err");
+          const d = document.createElement("div"); d.className = "note err";
+          fillText(d, `${err.message || err}`); appendBlock(card, d);
         },
       );
     }));
