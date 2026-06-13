@@ -98,6 +98,15 @@ function setRunning(on) {
   statusEl.innerHTML = on ? '<span class="spin"></span>analyzing…' : "";
 }
 
+// Surface WCL rate-limit waits so the page never just looks frozen.
+let activeHero = null;
+window.addEventListener("wcl-ratelimit", () => {
+  if (activeHero && activeHero.det && activeHero.det.isConnected) {
+    activeHero.det.innerHTML = '<span class="spin"></span>WCL rate limit reached — waiting a moment…';
+  }
+  statusEl.innerHTML = '<span class="spin"></span>rate limited — waiting…';
+});
+
 // Supporting analyses (collapsed by default -- evidence behind the list).
 const SUPPORTING = [
   ["Overview & item-level comparison", (p) => analyze.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
@@ -139,6 +148,7 @@ form.addEventListener("submit", async (e) => {
 
   setRunning(true);
   const hero = buildHero(name, serverLabel, region);
+  activeHero = hero;
   // Pin the action list at the top (filled last, once analyses warm the cache).
   const rxCard = makeCard("What to change", { primary: true });
   cur = rxCard; note("Crunching your kills and the field…", "muted");

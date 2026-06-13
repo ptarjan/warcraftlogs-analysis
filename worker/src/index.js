@@ -111,8 +111,10 @@ export default {
           try { const j = JSON.parse(text); cacheable = !!(j && j.data && !j.errors); } catch {}
         }
         if (cacheable) {
+          // Logs are immutable history; cache 6h so repeat/overlapping runs and
+          // every user share one upstream fetch -- the main defense against 429s.
           ctx.waitUntil(cache.put(cacheKey, new Response(text, {
-            headers: { "Content-Type": "application/json", "Cache-Control": "max-age=3600" },
+            headers: { "Content-Type": "application/json", "Cache-Control": "max-age=21600" },
           })));
         }
         return new Response(text, {

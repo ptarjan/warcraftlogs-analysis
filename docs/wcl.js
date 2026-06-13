@@ -116,11 +116,14 @@ async function _gqlRun(query, retries = 6) {
       if (msg.includes("permission") || msg.includes("do not have")) throw new PrivateReport(msg);
       throw new Error(msg);
     }
-    // Honor HTTP 429 rate limits with exponential backoff -- several parallel
-    // sessions share one API client's hourly point budget.
+    // Rate limited: the Worker already absorbed transient 429s server-side, so a
+    // 429 here means a sustained limit (shared hourly budget across all users).
+    // Signal the UI and back off briefly, then give up with a clear message
+    // rather than hanging silently for minutes.
     if (status === 429 || (j.error && /too many requests/i.test(j.error))) {
-      last = new Error(j.error || "rate limited (429)");
-      await sleep(Math.min(90000, 10000 * 2 ** attempt));
+      last = new Error("WCL is rate-limiting the app right now (one hourly budget is shared by everyone). Try again in a few minutes.");
+      if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("wcl-ratelimit"));
+      await sleep(Math.min(12000, 2000 * 2 ** attempt));
       continue;
     }
     if (j.error) throw new Error(j.error); // other non-GraphQL error
