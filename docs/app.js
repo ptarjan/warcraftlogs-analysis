@@ -4,6 +4,7 @@
 import { detectContext, detectPriority, DIFFICULTY } from "./core.js";
 import { isAuthed, beginLogin, handleRedirectCallback, logout } from "./auth.js";
 import { NeedsAuth, myCharacters } from "./wcl.js";
+import { paramsFromSearch, shareSearch } from "./share.js";
 import * as analyze from "./analyze.js";
 import * as diagnose from "./diagnose.js";
 import * as rotation from "./rotation.js";
@@ -93,13 +94,31 @@ async function renderMode() {
   picker.appendChild(grid);
 }
 
+// A ?char=&region=&server= deep link prefills the form and, when it has enough
+// to run (a shared result link), analyzes immediately -- overriding the picker.
+async function deepLink() {
+  const q = paramsFromSearch(location.search);
+  if (!q.name) return false;
+  await realmsReady;
+  $("name").value = q.name;
+  if (q.region) { regionSel.value = q.region; fillServers(); }
+  if (q.server) serverSel.value = q.server;
+  showForm(true); // hide the picker; show the form context behind the result
+  if (q.name && q.server && q.region) {
+    const serverLabel = serverSel.options[serverSel.selectedIndex]?.text || q.server;
+    runAnalysis({ name: q.name, server: q.server, region: q.region, serverLabel });
+  }
+  return true;
+}
+
 // On load: finish any returning OAuth redirect, reflect auth state, then show
-// the right mode (form for anonymous, character picker for connected).
+// the right mode (form for anonymous, character picker for connected) -- unless
+// a deep link tells us exactly which character to analyze.
 (async () => {
   try { await handleRedirectCallback(); }
   catch (e) { showAuthErr(e); }
   renderAuth();
-  renderMode();
+  if (!(await deepLink())) renderMode();
 })();
 
 // --------------------------------------------------------------------------- //
@@ -218,6 +237,8 @@ function setPills(hero, items) {
 // Run the full analysis for one character. Called by the manual form (anonymous)
 // and by clicking a character in the connected picker.
 async function runAnalysis({ name, server, region, serverLabel }) {
+  // Keep the address bar in sync so the result is bookmarkable / shareable.
+  try { history.replaceState(null, "", location.pathname + shareSearch({ name, region, server })); } catch (e) { /* ignore */ }
   out.innerHTML = ""; cur = null;
   setRunning(true);
   const intro = document.getElementById("intro");
