@@ -1,55 +1,32 @@
-// Pure rotation logic: opener extraction, effective-cooldown estimation, and
-// priority-miss ("wrong button") counting. No network.
+// Pure, class-agnostic rotation helpers: empowered-hit detection and opener
+// extraction. No ability names, no class assumptions, no network.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { effectiveCooldown, priorityMisses, openerSequence } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence } = await import("../docs/rotation.js");
 
-test("effectiveCooldown finds the gap floor, ignoring an early recast", () => {
-  // Keg Smash mostly every ~8s, with one tight 5s outlier.
-  const ts = [0, 8000, 16000, 21000, 29000, 37000];
-  const cd = effectiveCooldown(ts);
-  assert.ok(cd >= 5000 && cd <= 8000, `cd ${cd} should sit near the floor`);
-  assert.equal(effectiveCooldown([1000]), Infinity); // single cast => unknown
+test("empoweredCount finds the high cluster of outsized hits", () => {
+  // Mostly ~60k baseline hits, plus a few empowered ~140k ones.
+  const amts = [60000, 62000, 58000, 61000, 59000, 140000, 145000, 138000];
+  assert.equal(empoweredCount(amts), 3);          // the three ~140k hits
+  assert.equal(empoweredCount([1, 2, 3]), 0);     // too few samples -> 0
+  assert.equal(empoweredCount([]), 0);
 });
 
-test("priorityMisses flags fillers cast while Keg Smash was available", () => {
-  const fillers = new Set(["Tiger Palm"]);
-  const watch = [{ name: "Keg Smash", cd: 8000 }];
-  // KS at 0; at 9000 KS is back up but a Tiger Palm is cast -> 1 miss.
-  // At 2000 KS still on CD, Tiger Palm is correct -> not a miss.
-  const casts = [
-    { t: 0, name: "Keg Smash" },
-    { t: 2000, name: "Tiger Palm" },   // KS on CD: fine
-    { t: 9000, name: "Tiger Palm" },   // KS available: MISS
-    { t: 9500, name: "Keg Smash" },
-  ];
-  const r = priorityMisses(casts, fillers, watch);
-  assert.equal(r.fillers, 2);
-  assert.equal(r.misses, 1);
-});
-
-test("priorityMisses: clean play has zero misses", () => {
-  const casts = [
-    { t: 0, name: "Keg Smash" },
-    { t: 1500, name: "Tiger Palm" },
-    { t: 3000, name: "Blackout Kick" },
-    { t: 8200, name: "Keg Smash" },   // refreshed right on cooldown
-    { t: 9700, name: "Tiger Palm" },
-  ];
-  const r = priorityMisses(casts, new Set(["Tiger Palm"]), [{ name: "Keg Smash", cd: 8000 }]);
-  assert.equal(r.misses, 0);
+test("empoweredCount is class-agnostic (works on any ability's amounts)", () => {
+  // A caster nuke that crits hard occasionally.
+  const amts = [10000, 11000, 9000, 10500, 9500, 22000, 21000];
+  assert.equal(empoweredCount(amts, 1.8), 2);
 });
 
 test("openerSequence takes the first N casts within the window", () => {
   const casts = [
-    { t: 0, name: "Keg Smash" }, { t: 1000, name: "Breath of Fire" },
-    { t: 2000, name: "Blackout Kick" }, { t: 25000, name: "Tiger Palm" },
+    { t: 0, name: "A" }, { t: 1000, name: "B" }, { t: 2000, name: "C" },
+    { t: 25000, name: "D" },
   ];
-  assert.deepEqual(openerSequence(casts, 20000, 8),
-    ["Keg Smash", "Breath of Fire", "Blackout Kick"]); // the 25s cast is excluded
-  assert.deepEqual(openerSequence(casts, 20000, 2),
-    ["Keg Smash", "Breath of Fire"]); // capped at n
+  assert.deepEqual(openerSequence(casts, 20000, 8), ["A", "B", "C"]); // 25s excluded
+  assert.deepEqual(openerSequence(casts, 20000, 2), ["A", "B"]);      // capped at n
+  assert.deepEqual(openerSequence([], 20000, 8), []);
 });

@@ -1,48 +1,26 @@
-// Rotation analysis: your OPENER and PRIORITY ("wrong button") quality, vs the
-// field. Distinguishes "occasional gaps" (timing, see diagnose.js) from "wrong
-// buttons" (casting a filler while a higher-priority ability was off cooldown),
-// and shows how your opening sequence + cooldown usage compares to top players.
+// Rotation analysis -- CLASS-AGNOSTIC. Works for any spec because it hard-codes
+// no ability names or priorities (the bug before: assuming Tiger Palm was a
+// filler when an empowered Tiger Palm is actually the biggest hit). Everything
+// is derived from the data and compared to the field:
+//   - which of YOUR abilities hits hardest (per-hit), for any class
+//   - "empowered" hits: abilities with a high cluster of outsized hits (procs);
+//     how often you land them vs the field
+//   - your opener sequence vs the field's
 import { gql } from "./wcl.js";
 import { characterZone, characterEncounter, playerMetrics, topRankings, median } from "./core.js";
 
-// Brewmaster damage priority (highest first). Fillers are the lowest-value
-// presses that should yield to anything above them when it's available.
-const FILLERS = new Set(["Tiger Palm"]);
-const WATCH = ["Keg Smash"]; // clearest cooldown-gated high-priority button
-const OPENER_CDS = ["Weapons of Order", "Invoke Niuzao, the Black Ox",
-                    "Exploding Keg", "Celestial Brew", "Rising Sun Kick"];
-
 // --- pure, unit-tested helpers ----------------------------------------------
 
-// Effective cooldown ~ the floor of inter-cast gaps (10th percentile is robust
-// against the odd early recast from haste/resets).
-export function effectiveCooldown(ts) {
-  if (ts.length < 2) return Infinity;
-  const gaps = [];
-  for (let i = 1; i < ts.length; i++) gaps.push(ts[i] - ts[i - 1]);
-  gaps.sort((a, b) => a - b);
-  return gaps[Math.floor(gaps.length * 0.1)];
+// Count "empowered" hits: those far above the ability's own median. Procs form
+// a high cluster; baseline hits a low one -- a multiple of the median separates
+// them with no hard-coded numbers, so it generalizes across classes.
+export function empoweredCount(amounts, factor = 1.8) {
+  if (amounts.length < 4) return 0;
+  const s = [...amounts].sort((a, b) => a - b);
+  const med = s[Math.floor(s.length / 2)] || 0;
+  return amounts.filter((a) => a > med * factor).length;
 }
 
-// Count filler casts made while a higher-priority watched ability was available
-// (off cooldown). casts: [{t, name}] sorted by t. watch: [{name, cd}].
-export function priorityMisses(casts, fillers, watch) {
-  const last = {};
-  let misses = 0, fillers_n = 0;
-  for (const c of casts) {
-    if (fillers.has(c.name)) {
-      fillers_n++;
-      for (const w of watch) {
-        const lt = last[w.name];
-        if (lt === undefined || c.t - lt >= w.cd * 1.05) { misses++; break; }
-      }
-    }
-    last[c.name] = c.t;
-  }
-  return { misses, fillers: fillers_n };
-}
-
-// First n GCD-casts within `windowMs` of the first cast.
 export function openerSequence(casts, windowMs = 20000, n = 8) {
   if (!casts.length) return [];
   const t0 = casts[0].t;
@@ -57,22 +35,22 @@ async function fightWindow(code, fight) {
   return [f.startTime, f.endTime];
 }
 
-// Ability guid -> name. Filtering the Casts table by sourceID returns empty
-// abilities, so query by class and merge all entries (ability ids are global).
-async function nameMap(code, fight, className) {
-  const d = await gql(`query{reportData{report(code:"${code}"){table(fightIDs:${fight},dataType:Casts,sourceClass:"${className}")}}}`);
-  const m = {};
-  for (const e of d.reportData.report.table.data.entries || [])
-    for (const a of e.abilities || []) if (a.guid != null) m[a.guid] = a.name;
-  return m;
+// One player's damage abilities (guid/name/total), highest total first.
+async function damageAbilities(code, fight, name, className) {
+  const d = await gql(`query{reportData{report(code:"${code}"){table(fightIDs:${fight},dataType:DamageDone,sourceClass:"${className}")}}}`);
+  const e = (d.reportData.report.table.data.entries || []).find((x) => x.name === name)
+    || (d.reportData.report.table.data.entries || [])[0];
+  if (!e) return [];
+  return (e.abilities || []).filter((a) => a.guid != null && a.total > 0)
+    .sort((a, b) => b.total - a.total);
 }
 
-async function castEvents(code, fight, sourceId, start, end) {
+async function pageEvents(code, fight, sourceId, dataType, abilityId, s, e) {
   const out = [];
-  let cursor = start;
+  let cursor = s;
+  const ab = abilityId != null ? `,abilityID:${abilityId}` : "";
   while (true) {
-    const st = cursor != null ? `, startTime:${cursor}` : "";
-    const d = await gql(`query{reportData{report(code:"${code}"){events(fightIDs:${fight},sourceID:${sourceId},dataType:Casts,limit:10000${st}, endTime:${end}){data nextPageTimestamp}}}}`);
+    const d = await gql(`query{reportData{report(code:"${code}"){events(fightIDs:${fight},sourceID:${sourceId},dataType:${dataType}${ab},limit:10000,startTime:${cursor},endTime:${e}){data nextPageTimestamp}}}}`);
     const ev = d.reportData.report.events;
     out.push(...ev.data);
     if (!ev.nextPageTimestamp) break;
@@ -81,39 +59,48 @@ async function castEvents(code, fight, sourceId, start, end) {
   return out;
 }
 
-// Build the {t, name} cast list for one actor on one fight (GCD casts only).
-async function timeline(code, fight, sourceId, className) {
-  const [s, e] = await fightWindow(code, fight);
-  const names = await nameMap(code, fight, className);
-  const raw = (await castEvents(code, fight, sourceId, s, e))
-    .filter((x) => !x.fake && names[x.abilityGameID])
-    .map((x) => ({ t: x.timestamp - s, name: names[x.abilityGameID] }))
-    .sort((a, b) => a.t - b.t);
-  return { casts: raw, dur: (e - s) / 1000 };
+function perHit(amounts) {
+  const s = [...amounts].sort((a, b) => a - b);
+  return { count: s.length, med: s.length ? s[Math.floor(s.length / 2)] : 0,
+           max: s.length ? s[s.length - 1] : 0, emp: empoweredCount(amounts) };
 }
 
-// Analyze one fight: opener sequence, opener cooldowns used, priority misses/min.
-function analyzeFight(tl) {
-  const byName = {};
-  for (const c of tl.casts) (byName[c.name] ||= []).push(c.t);
-  const watch = WATCH.map((n) => ({ name: n, cd: effectiveCooldown(byName[n] || []) }))
-    .filter((w) => Number.isFinite(w.cd));
-  const { misses, fillers } = priorityMisses(tl.casts, FILLERS, watch);
-  const openCds = OPENER_CDS.filter((n) => (byName[n] || []).some((t) => t <= 20000));
-  return {
-    opener: openerSequence(tl.casts),
-    openCds,
-    missesPerMin: tl.dur ? misses / (tl.dur / 60) : 0,
-    missPct: fillers ? (100 * misses) / fillers : 0,
-  };
-}
-
-async function analyzeKill(name, code, fight, specName, className) {
+// Analyze one kill. `topN` damage abilities get per-hit detail (you); peers pass
+// `onlyAbility` (a name) to measure just that ability's empowered rate.
+async function analyzeKill(name, code, fight, specName, className, opts = {}) {
   const m = await playerMetrics(code, fight, name, specName, className);
   if (!m) return null;
-  const tl = await timeline(code, fight, m.sourceID, className);
-  if (tl.casts.length < 5) return null;
-  return analyzeFight(tl);
+  const [s, e] = await fightWindow(code, fight);
+  const dur = (e - s) / 1000;
+
+  // Opener from cast events (names via the damage-ability map is enough here).
+  const abils = await damageAbilities(code, fight, m.name, className);
+  const id2name = Object.fromEntries(abils.map((a) => [a.guid, a.name]));
+  const name2id = Object.fromEntries(abils.map((a) => [a.name, a.guid]));
+  const casts = (await pageEvents(code, fight, m.sourceID, "Casts", null, s, e))
+    .filter((x) => !x.fake && id2name[x.abilityGameID])
+    .map((x) => ({ t: x.timestamp - s, name: id2name[x.abilityGameID] }))
+    .sort((a, b) => a.t - b.t);
+  if (casts.length < 5) return null;
+
+  if (opts.onlyAbility) {
+    const id = name2id[opts.onlyAbility];
+    let emp = 0;
+    if (id) {
+      const amts = (await pageEvents(code, fight, m.sourceID, "DamageDone", id, s, e)).map((x) => x.amount || 0);
+      emp = empoweredCount(amts) / (dur / 60 || 1);
+    }
+    return { opener: openerSequence(casts), empPerMin: emp };
+  }
+
+  // You: per-hit detail for the top damage abilities (bounded for API cost).
+  const top = abils.slice(0, opts.topN || 4);
+  const hits = [];
+  for (const a of top) {
+    const amts = (await pageEvents(code, fight, m.sourceID, "DamageDone", a.guid, s, e)).map((x) => x.amount || 0);
+    if (amts.length) hits.push({ name: a.name, ...perHit(amts), perMin: empoweredCount(amts) / (dur / 60 || 1) });
+  }
+  return { opener: openerSequence(casts), hits, dur };
 }
 
 // --- entry point -------------------------------------------------------------
@@ -125,19 +112,26 @@ export async function run(log, name, server, region, className = "Monk",
     .filter((r) => r.totalKills > 0 && r.rankPercent != null)
     .sort((a, b) => b.totalKills - a.totalKills);
   if (!killed.length) { log("[error] no kills found"); return; }
-  const boss = killed[0].encounter; // most-killed = most data
-  log(`Rotation analysis on ${boss.name} (your most-killed boss).`);
+  const boss = killed[0].encounter;
+  log(`Rotation analysis on ${boss.name} (your most-killed boss). ` +
+      `Spec-agnostic: nothing about ${specName} is hard-coded.`);
 
-  // Your kills (up to 3).
   const er = await characterEncounter(name, server, region, boss.id, difficulty);
-  const yours = [];
-  for (const rk of (er.ranks || []).slice(0, 3)) {
-    const a = await analyzeKill(name, rk.report.code, rk.report.fightID, specName, className);
-    if (a) yours.push(a);
-  }
-  if (!yours.length) { log("[error] could not read your casts"); return; }
+  const you = await analyzeKill(name, er.ranks[0].report.code, er.ranks[0].report.fightID,
+                                specName, className, { topN: 5 });
+  if (!you || !you.hits.length) { log("[error] could not read your casts/damage"); return; }
 
-  // Peers (up to 4, similar ilvl).
+  const biggest = [...you.hits].sort((a, b) => b.med - a.med)[0];      // hardest per hit
+  const empAbil = [...you.hits].sort((a, b) => b.emp - a.emp)[0];      // most "empowered" -> the proc
+
+  log("");
+  log("=== YOUR HARDEST-HITTING ABILITIES (per hit) ===");
+  for (const h of [...you.hits].sort((a, b) => b.med - a.med))
+    log(`  ${h.name.padEnd(20)} median ${Math.round(h.med).toLocaleString().padStart(8)}  ` +
+        `max ${Math.round(h.max).toLocaleString().padStart(8)}  (${h.emp} empowered hits)`);
+  log(`  -> biggest single-hit ability: ${biggest.name}`);
+
+  // Compare the empowerment proc to the field, by the SAME ability name.
   const peers = [];
   const myIlvl = (er.ranks[0] || {}).bracketData || 0;
   outer:
@@ -146,30 +140,24 @@ export async function run(log, name, server, region, className = "Monk",
       if (peers.length >= 4) break outer;
       if (Math.abs((r.bracketData || 0) - myIlvl) > 4) continue;
       try {
-        const a = await analyzeKill(r.name, r.report.code, r.report.fightID, specName, className);
+        const a = await analyzeKill(r.name, r.report.code, r.report.fightID, specName, className,
+                                    { onlyAbility: empAbil.name });
         if (a) peers.push(a);
       } catch (e) { /* private/skip */ }
     }
   }
-
-  const yMiss = median(yours.map((a) => a.missesPerMin));
-  const pMiss = peers.length ? median(peers.map((a) => a.missesPerMin)) : NaN;
+  const pEmp = peers.length ? median(peers.map((a) => a.empPerMin)) : NaN;
   log("");
-  log("=== WRONG BUTTONS (filler cast while Keg Smash was available) ===");
-  log(`  you:   ${yMiss.toFixed(1)} priority-misses/min  (${median(yours.map((a) => a.missPct)).toFixed(0)}% of your fillers)`);
-  log(`  field: ${pMiss.toFixed(1)} /min`);
-  log(yMiss <= pMiss + 0.5
-    ? "  -> Your button PRIORITY is fine -- not a wrong-button problem."
-    : "  -> You press fillers while Keg Smash is up more than the field -- a real priority leak.");
+  log(`=== EMPOWERED PROC (${empAbil.name} -- your most-empowered ability) ===`);
+  log(`  empowered ${empAbil.name}/min:  you ${empAbil.perMin.toFixed(1)}   ` +
+      `field ${Number.isNaN(pEmp) ? "?" : pEmp.toFixed(1)}`);
+  if (!Number.isNaN(pEmp))
+    log(empAbil.perMin >= pEmp - 0.4
+      ? "  -> You're landing empowered procs about as often as the field. Good."
+      : "  -> Fewer empowered procs than the field -- you're under-generating/using it.");
 
   log("");
   log("=== OPENER ===");
-  log(`  your opener:  ${yours[0].opener.join(" > ")}`);
+  log(`  your opener:  ${you.opener.join(" > ")}`);
   if (peers.length) log(`  field opener: ${peers[0].opener.join(" > ")}`);
-  const yCds = yours[0].openCds, pCds = peers.length ? peers[0].openCds : [];
-  log(`  cooldowns you used in first 20s:  ${yCds.join(", ") || "(none)"}`);
-  if (peers.length) log(`  cooldowns field used in first 20s: ${pCds.join(", ") || "(none)"}`);
-  const missingCds = pCds.filter((x) => !yCds.includes(x));
-  if (missingCds.length)
-    log(`  -> field opens with cooldowns you don't: ${missingCds.join(", ")}`);
 }

@@ -1,7 +1,7 @@
 // Generate a concrete, prioritized prescription. Ported from prescribe.py.
 import {
   ENCHANTABLE_SLOTS, characterZone, characterEncounter, playerMetrics,
-  topRankings, secondaryStats, buffUptimes, median, f,
+  topRankings, secondaryStats, buffUptimes, median, f, detectPriority,
 } from "./core.js";
 import { PrivateReport } from "./wcl.js";
 import { compareBoss } from "./diagnose.js";
@@ -20,10 +20,10 @@ async function bestIlvlKill(name, server, region, encounterId, difficulty) {
   return [best.report.code, best.report.fightID, best.bracketData];
 }
 
-async function fieldGearConsumables(encounterId, difficulty, className, specName, targetIlvl, n = 10) {
+async function fieldGearConsumables(encounterId, difficulty, className, specName, targetIlvl, priority = "crit", n = 10) {
   const enchBySlot = {};   // slot -> Map(name -> count)
   const trinkets = new Map(), flasks = new Map(), foods = new Map();
-  const critPcts = [];
+  const statPcts = [];
   let got = 0;
   for (let page = 1; page <= 7; page++) {
     if (got >= n) break;
@@ -52,7 +52,7 @@ async function fieldGearConsumables(encounterId, difficulty, className, specName
         const s = await secondaryStats(code, fight, m.sourceID);
         if (s) {
           const sec = ["crit", "haste", "mastery", "vers"].reduce((acc, k) => acc + s[k], 0) || 1;
-          critPcts.push(100 * s.crit / sec);
+          statPcts.push(100 * s[priority] / sec);
         }
         got++;
       } catch (e) {
@@ -62,21 +62,21 @@ async function fieldGearConsumables(encounterId, difficulty, className, specName
   }
   return {
     ench_by_slot: enchBySlot, trinkets, flasks, foods,
-    crit_pct: critPcts.length ? median(critPcts) : null, n: got,
+    stat_pct: statPcts.length ? median(statPcts) : null, n: got,
   };
 }
 
-async function mySetup(code, fight, sourceId, gear) {
+async function mySetup(code, fight, sourceId, gear, priority = "crit") {
   const bf = await buffUptimes(code, fight, sourceId);
   const flask = Object.entries(bf).find(([n, u]) => n.toLowerCase().includes("flask") && u > 50);
   const food = Object.entries(bf).find(([n, u]) => n.toLowerCase().includes("well fed") && u > 50);
   const stats = await secondaryStats(code, fight, sourceId);
-  const crit = stats
-    ? 100 * stats.crit / (["crit", "haste", "mastery", "vers"].reduce((a, k) => a + stats[k], 0) || 1)
+  const statPct = stats
+    ? 100 * stats[priority] / (["crit", "haste", "mastery", "vers"].reduce((a, k) => a + stats[k], 0) || 1)
     : null;
   const trinkets = gear.filter((g) => g.slot === 12 || g.slot === 13).map((g) => g.name);
   const ench = new Set(gear.filter((g) => g.slot in SLOT_NAME && g.permanentEnchant).map((g) => SLOT_NAME[g.slot]));
-  return { flask: flask ? flask[0] : null, food: food ? food[0] : null, crit, trinkets, ench };
+  return { flask: flask ? flask[0] : null, food: food ? food[0] : null, statPct, trinkets, ench };
 }
 
 async function aggregateExecution(name, server, region, difficulty, className, specName, bosses) {
@@ -117,8 +117,11 @@ export async function run(log, name, server, region, className = "Monk", specNam
   }
   encBest.sort((a, b) => b[0] - a[0]);
   const [curIlvl, gearBoss, [code, fight, ilvl]] = encBest[0];
+  // Stat priority derived from what the field stacks -- never hard-coded.
+  const priority = await detectPriority(CL, SP, D, gearBoss.encounter.id);
+  const PRI = priority.toUpperCase();
   const you = await playerMetrics(code, fight, N, SP, CL);
-  const my = await mySetup(code, fight, you.sourceID, you.gear);
+  const my = await mySetup(code, fight, you.sourceID, you.gear, priority);
 
   log("");
   log("=".repeat(66));
@@ -126,7 +129,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   log(`Aggregated across ${ranks.length} killed bosses; gear from your ${gearBoss.encounter.name} kill; execution normalized vs peers.`);
   log("=".repeat(66));
 
-  const field = await fieldGearConsumables(gearBoss.encounter.id, D, CL, SP, curIlvl);
+  const field = await fieldGearConsumables(gearBoss.encounter.id, D, CL, SP, curIlvl, priority);
   const execd = await aggregateExecution(N, S, R, D, CL, SP, ranks);
 
   const rx = []; // [sortKey, impact, text]
@@ -141,7 +144,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
       const where = execd.worst_range.length ? " Worst on: " + execd.worst_range.join(", ") + "." : "";
       const pct = Math.max(execd.range_excess, 0.1) / 60 * 100;
       rx.push([-execd.range_excess, `~${f(pct, 0)}% DPS`,
-        `UPTIME on specific fights: you're out of melee ~${f(execd.range_excess, 1)}s/min more than peers (intermissions excluded).${where} Pre-position and use mobility (Roll / Tiger's Lust) to stay on the boss through mechanics.`]);
+        `UPTIME on specific fights: you're out of melee ~${f(execd.range_excess, 1)}s/min more than peers (intermissions excluded).${where} Pre-position and use your mobility / gap-closers to stay on target through mechanics.`]);
     }
   }
 
@@ -156,18 +159,17 @@ export async function run(log, name, server, region, className = "Monk", specNam
     if (my.food && my.food !== tfo) rx.push([-1.0, "~1% DPS", `FOOD: ${my.food} -> ${tfo}.`]);
   }
 
-  const priority = "crit";
   const gf = await gearFindings(N, S, R, D, CL, SP, priority);
-  const critGap = (my.crit !== null && field.crit_pct) ? field.crit_pct - my.crit : 0;
-  let howToCrit = false;
+  const statGap = (my.statPct !== null && field.stat_pct) ? field.stat_pct - my.statPct : 0;
+  let howToStat = false;
   if (gf) {
     for (const [slot, mine, theirs, amt, cnt, tot] of gf.swaps) {
-      howToCrit = true;
-      rx.push([-2.0, "~1-3% DPS", `CRIT via ${slot}: replace '${mine}' with '${theirs}' (+${amt} ${priority}; ${cnt}/${tot} of field -- sim to confirm).`]);
+      howToStat = true;
+      rx.push([-2.0, "~1-3% DPS", `${PRI} via ${slot}: replace '${mine}' with '${theirs}' (+${amt} ${priority}; ${cnt}/${tot} of field -- sim to confirm).`]);
     }
     for (const [slot, name2, mine, best] of gf.restats) {
-      howToCrit = true;
-      rx.push([-1.5, "~1-2% DPS", `CRIT via ${slot}: '${name2}' is selectable -- recraft to ${best} ${priority} (you have ${mine}).`]);
+      howToStat = true;
+      rx.push([-1.5, "~1-2% DPS", `${PRI} via ${slot}: '${name2}' is selectable -- recraft to ${best} ${priority} (you have ${mine}).`]);
     }
     const emb = gf.embellishedSlots;
     if (emb.length < 2) {
@@ -179,9 +181,9 @@ export async function run(log, name, server, region, className = "Monk", specNam
       rx.push([-2.0, "~2-4% DPS", `EMBELLISHMENT COMBO: yours (${ec.your_combo.join("+") || "none"}) isn't one top performers run; the #1 combo is ${top[0].join("+")} (${top[1]}/${ec.field_n}). Match it.`]);
     }
   }
-  if (critGap >= 4 && !howToCrit) {
-    rx.push([0.0, "info", `CRIT: yours (${f(my.crit, 0)}%) is below the field (${f(field.crit_pct, 0)}%), but NOT actionable now -- every item you own is already crit-maxed and no crit-itemized upgrade exists to swap to. It only rises when crit-itemized drops come (watch belt/boots).`]);
-  } else if (gf && !gf.swaps.length && !gf.restats.length && critGap < 4) {
+  if (statGap >= 4 && !howToStat) {
+    rx.push([0.0, "info", `${PRI}: yours (${f(my.statPct, 0)}%) is below the field (${f(field.stat_pct, 0)}%), but NOT actionable now -- every item you own is already ${priority}-maxed and no ${priority}-itemized upgrade exists to swap to. It only rises when ${priority}-itemized drops come.`]);
+  } else if (gf && !gf.swaps.length && !gf.restats.length && statGap < 4) {
     rx.push([0.0, "info", "GEAR/STATS: optimal for what you own -- no lever; gains are future drops + a sim (Droptimizer)."]);
   }
 

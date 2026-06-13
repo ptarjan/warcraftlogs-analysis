@@ -4,7 +4,6 @@ import {
   characterZone, characterEncounter, playerMetrics, topRankings, median, f,
 } from "./core.js";
 
-const AUTO_ATTACK = 1; // abilityGameID for melee auto-attacks
 
 async function paginateEvents(code, fight, sourceId, dataType, abilityId = null, start = null, end = null) {
   const out = [];
@@ -43,7 +42,12 @@ async function fightMetrics(code, fight, sourceId) {
   const dur = (fEnd - fStart) / 1000.0;
   const castEvents = (await paginateEvents(code, fight, sourceId, "Casts", null, fStart, fEnd))
     .filter((e) => !e.fake);
-  const autos = await paginateEvents(code, fight, sourceId, "DamageDone", AUTO_ATTACK, fStart, fEnd);
+  // Auto-attacks anchor the "in range vs not pressing" split. Melee = ability 1,
+  // Hunters = Auto Shot (75). Casters have none -> hasAuto false, and we stop
+  // claiming "out of range" (their gaps are casting/movement, not melee range).
+  let autos = await paginateEvents(code, fight, sourceId, "DamageDone", 1, fStart, fEnd);
+  if (!autos.length) autos = await paginateEvents(code, fight, sourceId, "DamageDone", 75, fStart, fEnd);
+  const hasAuto = autos.length > 0;
   const autoTs = autos.map((e) => e.timestamp).sort((a, b) => a - b);
   const castTs = castEvents.map((e) => e.timestamp).sort((a, b) => a - b);
   if (castTs.length < 5) return null;
@@ -69,7 +73,9 @@ async function fightMetrics(code, fight, sourceId) {
     const excess = g - gcd;
     const expected = Math.max(1, (g - swing) / swing);
     const got = autosIn(merged[i], merged[i + 1]);
-    if (got >= expected * 0.5) lostNotPressing += excess;
+    // No autos (caster): can't tell range from idle -> count as a press gap,
+    // never as "out of range".
+    if (!hasAuto || got >= expected * 0.5) lostNotPressing += excess;
     else lostRangeMove += excess;
     stalls.push([merged[i] - fStart, g, got >= Math.max(1, expected) * 0.5]);
   }

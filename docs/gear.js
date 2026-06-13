@@ -91,7 +91,7 @@ async function fieldEmbellishments(className, specName, difficulty, encounters, 
 }
 
 // Gear from your highest-ilvl kill (= current).
-async function yourGear(name, server, region, difficulty) {
+async function yourGear(name, server, region, difficulty, className) {
   const c = await characterZone(name, server, region, difficulty);
   const ranks = (c.zoneRankings.rankings || []).filter((r) => (r.totalKills || 0) > 0);
   let best = null;
@@ -104,7 +104,9 @@ async function yourGear(name, server, region, difficulty) {
     }
   }
   if (!best) return null;
-  return playerMetrics(best[1], best[2], name, null, "Monk");
+  const m = await playerMetrics(best[1], best[2], name, null, className);
+  if (m) m.encIds = ranks.map((r) => r.encounter.id); // killed bosses, for field sampling
+  return m;
 }
 
 // What top-DPS players wear: per-slot item counts, representative bonus IDs,
@@ -156,11 +158,11 @@ const topItem = (counter) => {
 };
 
 export async function gearFindings(name, server, region, difficulty, className, specName, priority) {
-  const you = await yourGear(name, server, region, difficulty);
+  const you = await yourGear(name, server, region, difficulty, className);
   if (!you) return null;
   const ymap = {};
   for (const g of you.gear) ymap[g.slot] = g;
-  const enc = [3176, 3177, 3179, 3181, 3306];
+  const enc = (you.encIds && you.encIds.length) ? you.encIds : []; // killed bosses (tier-agnostic)
   const fc = await fieldConsensus(className, specName, difficulty, enc);
   const { perSlot, bonusSample, variants } = fc;
   const myItemIds = new Set(you.gear.map((g) => g.id));
