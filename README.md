@@ -49,6 +49,28 @@ survived:
 - **Difficulty inflation** — samples players and compares their own Heroic vs
   Mythic percentile, quantifying how much an easier tier inflates the number.
 
+
+## Diagnose & prescribe
+
+```bash
+# Comparative timeline diagnosis (why uptime/APM is low), aggregated across all
+# your kills and normalized vs peers on the same fights (intermissions cancel):
+python3 diagnose.py "Hadryan" proudmoore US
+
+# A prioritized prescription: exact stat/flask/trinket/enchant swaps + the
+# execution habits to fix, each with a rough DPS-impact estimate:
+python3 prescribe.py "Hadryan" proudmoore US
+```
+
+`diagnose.py` reads cast + auto-attack event timelines. The key trick: during a
+GCD gap, if auto-attacks kept swinging you were **in range but not pressing**
+(hesitation/latency); if they stopped too, you were **out of range / moving**.
+Everything is compared to ilvl-matched peers on the SAME boss, so an
+intermission where everyone is off the boss doesn't read as a mistake.
+
+`prescribe.py` aggregates gear/consumable/stat gaps (vs the field) and the
+peer-normalized execution excess into one ordered to-do list.
+
 ## Lessons baked in (don't relearn these)
 
 - Buff/consumable names vary by rank/tier (`"Hearty Well Fed"` vs `"Well Fed"`).
@@ -63,10 +85,14 @@ survived:
   Augmentation Evoker) still inflate top parses and aren't visible per-player.
 - `playerDetails.combatantInfo` is often empty — secondary stats come from
   `events(dataType: CombatantInfo)`, keyed by `sourceID`.
+- Uptime/range stats MUST be compared to peers on the same fight --
+  intermissions and forced-downtime phases otherwise look like your mistakes.
 - Verify "enchantable" slots each season — some (wrist, back) were enchanted by
   ~0% of the field in a given tier.
 
 ## Files
 
 - `wcl.py` — OAuth + GraphQL client (token caching, retry, private-report skip).
-- `analyze.py` — the analyses and CLI.
+- `analyze.py` — overview + ilvl/duration-controlled comparison.
+- `diagnose.py` — comparative timeline root-cause diagnosis.
+- `prescribe.py` — the prioritized, actionable prescription.
