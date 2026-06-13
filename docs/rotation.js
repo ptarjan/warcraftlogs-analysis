@@ -6,8 +6,10 @@
 //   - "empowered" hits: abilities with a high cluster of outsized hits (procs);
 //     how often you land them vs the field
 //   - your opener sequence vs the field's
-import { gql } from "./wcl.js";
-import { characterZone, characterEncounter, playerMetrics, collectPeers, mapLimit, median } from "./core.js";
+import {
+  characterZone, characterEncounter, playerMetrics, collectPeers, mapLimit, median,
+  reportCore, fightWindow, fightEvents, paginateEvents,
+} from "./core.js";
 
 // --- pure, unit-tested helpers ----------------------------------------------
 
@@ -27,36 +29,18 @@ export function openerSequence(casts, windowMs = 20000, n = 8) {
   return casts.filter((c) => c.t - t0 <= windowMs).slice(0, n).map((c) => c.name);
 }
 
-// --- data layer --------------------------------------------------------------
+// --- data layer: everything reads from the shared core loader (reportCore,
+// fightWindow, fightEvents, paginateEvents) so a kill's tables/events are fetched
+// once across rotation, diagnose, and analyze. -------------------------------
 
-async function fightWindow(code, fight) {
-  const d = await gql(`query{reportData{report(code:"${code}"){fights(fightIDs:${fight}){startTime endTime}}}}`);
-  const f = d.reportData.report.fights[0];
-  return [f.startTime, f.endTime];
-}
-
-// One player's damage abilities (guid/name/total), highest total first.
+// One player's damage abilities (guid/name/total), highest total first -- from the
+// shared loader's DamageDone table (className arg ignored; the table is unfiltered).
 async function damageAbilities(code, fight, name, className) {
-  const d = await gql(`query{reportData{report(code:"${code}"){table(fightIDs:${fight},dataType:DamageDone,sourceClass:"${className}")}}}`);
-  const e = (d.reportData.report.table.data.entries || []).find((x) => x.name === name)
-    || (d.reportData.report.table.data.entries || [])[0];
+  const es = (await reportCore(code, fight)).dmg.data.entries || [];
+  const e = es.find((x) => x.name === name) || es[0];
   if (!e) return [];
   return (e.abilities || []).filter((a) => a.guid != null && a.total > 0)
     .sort((a, b) => b.total - a.total);
-}
-
-async function pageEvents(code, fight, sourceId, dataType, abilityId, s, e) {
-  const out = [];
-  let cursor = s;
-  const ab = abilityId != null ? `,abilityID:${abilityId}` : "";
-  while (true) {
-    const d = await gql(`query{reportData{report(code:"${code}"){events(fightIDs:${fight},sourceID:${sourceId},dataType:${dataType}${ab},limit:10000,startTime:${cursor},endTime:${e}){data nextPageTimestamp}}}}`);
-    const ev = d.reportData.report.events;
-    out.push(...ev.data);
-    if (!ev.nextPageTimestamp) break;
-    cursor = ev.nextPageTimestamp;
-  }
-  return out;
 }
 
 // Per-hit stats from raw damage events. Separates crit-driven big hits (a stat
@@ -88,7 +72,7 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
   const abils = await damageAbilities(code, fight, m.name, className);
   const id2name = Object.fromEntries(abils.map((a) => [a.guid, a.name]));
   const name2id = Object.fromEntries(abils.map((a) => [a.name, a.guid]));
-  const casts = (await pageEvents(code, fight, m.sourceID, "Casts", null, s, e))
+  const casts = (await fightEvents(code, fight, m.sourceID, s, e)).casts
     .filter((x) => !x.fake && id2name[x.abilityGameID])
     .map((x) => ({ t: x.timestamp - s, name: id2name[x.abilityGameID] }))
     .sort((a, b) => a.t - b.t);
@@ -105,7 +89,7 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
     const id = name2id[opts.onlyAbility];
     let procPerMin = 0;
     if (id) {
-      const evs = await pageEvents(code, fight, m.sourceID, "DamageDone", id, s, e);
+      const evs = await paginateEvents(code, fight, m.sourceID, "DamageDone", id, s, e);
       procPerMin = perHit(evs).procBig / (dur / 60 || 1);
     }
     return { opener: openerSequence(casts), procPerMin, castRate };
@@ -115,7 +99,7 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
   const top = abils.slice(0, opts.topN || 4);
   const hits = [];
   for (const a of top) {
-    const evs = await pageEvents(code, fight, m.sourceID, "DamageDone", a.guid, s, e);
+    const evs = await paginateEvents(code, fight, m.sourceID, "DamageDone", a.guid, s, e);
     if (evs.length) {
       const ph = perHit(evs);
       hits.push({ name: a.name, ...ph, procPerMin: ph.procBig / (dur / 60 || 1) });

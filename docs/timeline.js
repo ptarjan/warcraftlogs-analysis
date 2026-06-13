@@ -2,45 +2,9 @@
 // vs ilvl-matched peers on the SAME boss (phase/intermission aware).
 import { gql } from "./wcl.js";
 import {
-  characterZone, characterEncounter, playerMetrics, collectPeers, median, f, mapLimit, fightWindow,
+  characterZone, characterEncounter, playerMetrics, collectPeers, median, f, mapLimit,
+  fightWindow, fightEvents,
 } from "./core.js";
-
-
-async function paginateEvents(code, fight, sourceId, dataType, abilityId = null, start = null, end = null) {
-  const out = [];
-  const ab = abilityId !== null ? `, abilityID: ${abilityId}` : "";
-  let cursor = start;
-  for (;;) {
-    const stArg = cursor !== null && cursor !== undefined ? `, startTime: ${cursor}` : "";
-    const enArg = end !== null && end !== undefined ? `, endTime: ${end}` : "";
-    const q = `query { reportData { report(code:"${code}") { events(
-      fightIDs:${fight}, sourceID:${sourceId}, dataType:${dataType}, limit:10000${ab}${stArg}${enArg}) {
-      data nextPageTimestamp } } } }`;
-    const ev = (await gql(q)).reportData.report.events;
-    out.push(...ev.data);
-    const nxt = ev.nextPageTimestamp;
-    if (!nxt) break;
-    cursor = nxt;
-  }
-  return out;
-}
-
-// Casts + auto-attack events for one actor on one fight, in ONE query. Each is
-// well under the 10k page limit for a single player, so a second page is rare
-// (handled if it happens). Melee autos = ability 1; if empty (hunters/casters)
-// fall back to Auto Shot (75). Bundling halves the per-kill event requests.
-async function fightEvents(code, fight, sourceId, start, end) {
-  const win = `, startTime: ${start}, endTime: ${end}`;
-  const q = `query { reportData { report(code:"${code}") {
-    casts: events(fightIDs:${fight}, sourceID:${sourceId}, dataType:Casts, limit:10000${win}) { data nextPageTimestamp }
-    autos: events(fightIDs:${fight}, sourceID:${sourceId}, dataType:DamageDone, abilityID:1, limit:10000${win}) { data nextPageTimestamp } } } }`;
-  const r = (await gql(q)).reportData.report;
-  let casts = r.casts.data, autos = r.autos.data;
-  if (r.casts.nextPageTimestamp) casts = casts.concat(await paginateEvents(code, fight, sourceId, "Casts", null, r.casts.nextPageTimestamp, end));
-  if (r.autos.nextPageTimestamp) autos = autos.concat(await paginateEvents(code, fight, sourceId, "DamageDone", 1, r.autos.nextPageTimestamp, end));
-  if (!autos.length) autos = await paginateEvents(code, fight, sourceId, "DamageDone", 75, start, end);
-  return { casts: casts.filter((e) => !e.fake), autos };
-}
 
 function estimateGcd(gapsMs) {
   const normal = gapsMs.filter((g) => g >= 700 && g <= 1700);

@@ -109,33 +109,72 @@ function metricsFromTables(dmg, casts, name, specName) {
   };
 }
 
-// ONE shared query per (report, fight, class) for the per-report fields the
-// analysis used to fetch in separate calls: the damage + cast tables, the
-// CombatantInfo events (secondary stats), and the fight window. WCL bills ~flat
-// per request (a 100-row table costs ~the same as a tiny one), so folding these
-// into a single query is a real point saving -- playerMetrics, secondaryStats,
-// and fightWindow all share this one fetch. Keyed by sourceClass; the other
-// fields are class-agnostic, so callers pass the same className to share it.
-async function reportCore(code, fight, className = "Monk") {
+// Central per-(report, fight) loader: ONE query for the damage + cast tables, the
+// CombatantInfo events (secondary stats), and the fight window. The tables are
+// fetched UNFILTERED (no sourceClass) -- consumers pick their player by name in
+// metricsFromTables -- so a kill's DamageDone/Casts is fetched exactly ONCE no
+// matter who asks or what class filter they'd otherwise use. WCL bills ~flat per
+// request, so one bundled fetch per report+fight is the structural point saving.
+// Memoized by query string via the gql cache; the loader test enforces "each
+// table once per report". No className: the data is identical for every caller.
+export async function reportCore(code, fight) {
   const q = `query { reportData { report(code:"${code}") {
-    dmg: table(fightIDs:${fight}, dataType:DamageDone, sourceClass:"${clean(className)}")
-    casts: table(fightIDs:${fight}, dataType:Casts, sourceClass:"${clean(className)}")
+    dmg: table(fightIDs:${fight}, dataType:DamageDone)
+    casts: table(fightIDs:${fight}, dataType:Casts)
     combatant: events(fightIDs:${fight}, dataType:CombatantInfo, limit:50) { data }
     fightWin: fights(fightIDs:${fight}) { startTime endTime } } } }`;
   return (await gql(q)).reportData.report;
 }
 
-// Damage + cast metrics for one player on one fight.
-export async function playerMetrics(code, fight, name, specName, className = "Monk") {
-  const d = await reportCore(code, fight, className);
+// Damage + cast metrics for one player on one fight (className arg ignored -- the
+// loader is unfiltered; kept for call-site compatibility).
+export async function playerMetrics(code, fight, name, specName, className) {
+  const d = await reportCore(code, fight);
   return metricsFromTables(d.dmg.data, d.casts.data, name, specName);
 }
 
-// Fight window [start, end] in ms -- from the shared reportCore query.
-export async function fightWindow(code, fight, className = "Monk") {
-  const d = await reportCore(code, fight, className);
+// Fight window [start, end] in ms -- from the shared loader query.
+export async function fightWindow(code, fight) {
+  const d = await reportCore(code, fight);
   const w = (d.fightWin || [])[0] || {};
   return [w.startTime || 0, w.endTime || 0];
+}
+
+// Generic paginated events for one actor (overflow beyond the 10k page limit).
+export async function paginateEvents(code, fight, sourceId, dataType, abilityId = null, start = null, end = null) {
+  const out = [];
+  const ab = abilityId !== null ? `, abilityID: ${abilityId}` : "";
+  let cursor = start;
+  for (;;) {
+    const stArg = cursor !== null && cursor !== undefined ? `, startTime: ${cursor}` : "";
+    const enArg = end !== null && end !== undefined ? `, endTime: ${end}` : "";
+    const q = `query { reportData { report(code:"${code}") { events(
+      fightIDs:${fight}, sourceID:${sourceId}, dataType:${dataType}, limit:10000${ab}${stArg}${enArg}) {
+      data nextPageTimestamp } } } }`;
+    const ev = (await gql(q)).reportData.report.events;
+    out.push(...ev.data);
+    if (!ev.nextPageTimestamp) break;
+    cursor = ev.nextPageTimestamp;
+  }
+  return out;
+}
+
+// Casts + auto-attack events for one actor on one fight, in ONE query -- shared by
+// the timeline diagnosis AND the rotation opener so a kill's Casts/autos are
+// fetched once. Each is well under the 10k page limit for a single player (a
+// second page is rare and handled). Melee autos = ability 1; if empty
+// (hunters/casters) fall back to Auto Shot (75).
+export async function fightEvents(code, fight, sourceId, start, end) {
+  const win = `, startTime: ${start}, endTime: ${end}`;
+  const q = `query { reportData { report(code:"${code}") {
+    casts: events(fightIDs:${fight}, sourceID:${sourceId}, dataType:Casts, limit:10000${win}) { data nextPageTimestamp }
+    autos: events(fightIDs:${fight}, sourceID:${sourceId}, dataType:DamageDone, abilityID:1, limit:10000${win}) { data nextPageTimestamp } } } }`;
+  const r = (await gql(q)).reportData.report;
+  let casts = r.casts.data, autos = r.autos.data;
+  if (r.casts.nextPageTimestamp) casts = casts.concat(await paginateEvents(code, fight, sourceId, "Casts", null, r.casts.nextPageTimestamp, end));
+  if (r.autos.nextPageTimestamp) autos = autos.concat(await paginateEvents(code, fight, sourceId, "DamageDone", 1, r.autos.nextPageTimestamp, end));
+  if (!autos.length) autos = await paginateEvents(code, fight, sourceId, "DamageDone", 75, start, end);
+  return { casts: casts.filter((e) => !e.fake), autos };
 }
 
 // Self-buff uptime % keyed by buff name (match by keyword to compare).
@@ -165,10 +204,10 @@ export async function bossDebuffs(code, fight) {
   return out;
 }
 
-// Crit/haste/mastery/vers ratings from the shared reportCore CombatantInfo data,
-// so it rides on the playerMetrics query for the same kill. Pass the same className.
-export async function secondaryStats(code, fight, sourceId, className = "Monk") {
-  const d = await reportCore(code, fight, className);
+// Crit/haste/mastery/vers ratings from the shared loader's CombatantInfo data, so
+// it rides on the playerMetrics query for the same kill (className arg ignored).
+export async function secondaryStats(code, fight, sourceId, className) {
+  const d = await reportCore(code, fight);
   for (const e of ((d.combatant && d.combatant.data) || [])) {
     if (e.sourceID === sourceId) {
       return {
@@ -268,10 +307,10 @@ async function classSpecFromKill(name, server, region, encounterId, difficulty) 
   const er = await characterEncounter(name, server, region, encounterId, difficulty);
   const best = bestRank(er && er.ranks);
   if (!best) return null;
-  const q = `query { reportData { report(code:"${best.report.code}") {
-    table(fightIDs:${best.report.fightID}, dataType:DamageDone) } } }`;
+  // Share the loader's unfiltered DamageDone table -- so this detect-phase read
+  // doesn't fetch the same kill's table again later.
   let data;
-  try { data = (await gql(q)).reportData.report.table.data; } catch (e) { return null; }
+  try { data = (await reportCore(best.report.code, best.report.fightID)).dmg.data; } catch (e) { return null; }
   const e = (data.entries || []).find((x) => x.name === name);
   if (!e) return null;
   const icon = String(e.icon || ""); // e.g. "Monk-Brewmaster"
