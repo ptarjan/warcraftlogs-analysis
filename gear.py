@@ -87,6 +87,48 @@ def item_stats(item_id, bonus_ids=None):
     return out
 
 
+def field_embellishments(class_name, spec_name, difficulty, encounters, n=18):
+    """What embellishment SLOT-combos and ITEMS top performers run (empirical).
+
+    Needs per-piece bonus IDs to detect embellishments, so it's a separate,
+    smaller sample than field_consensus to keep tooltip reads bounded.
+    """
+    combos = Counter()
+    items = Counter()
+    seen = set()
+    got = 0
+    for eid in encounters:
+        if got >= n:
+            break
+        for page in (1, 2):
+            for r in top_rankings(eid, difficulty, class_name, spec_name, page):
+                if got >= n:
+                    break
+                key = (r["name"], r.get("server", {}).get("name"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                try:
+                    m = player_metrics(r["report"]["code"], r["report"]["fightID"],
+                                       r["name"], spec_name, class_name)
+                except Exception:
+                    continue
+                if not m:
+                    continue
+                emb = []
+                for g in m["gear"]:
+                    if g.get("slot") in SLOT:
+                        s = item_stats(g["id"], g.get("bonusIDs"))
+                        if s.get("embellished"):
+                            emb.append((SLOT[g["slot"]], s["name"]))
+                if emb:
+                    got += 1
+                    combos[tuple(sorted(sl for sl, _ in emb))] += 1
+                    for _, nm in emb:
+                        items[nm] += 1
+    return {"combos": combos, "items": items, "n": got}
+
+
 def your_gear(name, server, region, difficulty):
     """Gear from your highest-ilvl kill (= current)."""
     # find highest-ilvl killed boss
@@ -171,7 +213,7 @@ def gear_findings(name, server, region, difficulty, class_name, spec_name, prior
     per_slot, bonus_sample, npl = fc["per_slot"], fc["bonus_sample"], fc["n"]
     variants = fc["variants"]
     my_item_ids = {g["id"] for g in you["gear"]}
-    rows, swaps, embellished_slots, restats = [], [], [], []
+    rows, swaps, embellished_slots, restats, your_emb_items = [], [], [], [], []
     for s in sorted(SLOT):
         if s not in ymap:
             continue
@@ -185,6 +227,7 @@ def gear_findings(name, server, region, difficulty, class_name, spec_name, prior
         rows.append((SLOT[s], ist, match, ist.get("embellished")))
         if ist.get("embellished"):
             embellished_slots.append(SLOT[s])
+            your_emb_items.append(ist["name"])
         # Re-stat opportunity: does ANYONE run more `priority` on YOUR SAME item?
         # (Catches "this crafted piece's stats are actually selectable" vs fixed.)
         best = ist.get(priority, 0)
@@ -218,23 +261,20 @@ def gear_findings(name, server, region, difficulty, class_name, spec_name, prior
         if best_alt:
             swaps.append((SLOT[s], ist["name"], best_alt[0], best_alt[1],
                           best_alt[2], slot_total))
-    # Tier-set flex analysis: you need only 4 of 5 tier slots. If your non-tier
-    # ("flex") tier slot is a crafted, NON-embellished, lower-ilvl piece, that's
-    # wasted -- you'd do better with tier there and flexing a different slot to a
-    # crit non-tier drop. The exact combination is a sim (Droptimizer) decision.
-    tier_have = [g for g in you["gear"] if g.get("slot") in TIER_SLOTS and g.get("setID")]
-    flex = [g for g in you["gear"] if g.get("slot") in TIER_SLOTS and not g.get("setID")]
-    tier_flex = None
-    if len(tier_have) >= 4 and flex:
-        tier_ilvls = sorted(t.get("itemLevel") or 0 for t in tier_have)
-        tier_med = tier_ilvls[len(tier_ilvls) // 2] if tier_ilvls else None
-        for g in flex:
-            fst = item_stats(g["id"], g.get("bonusIDs"))
-            if not fst.get("embellished"):
-                tier_flex = {"slot": SLOT[g["slot"]], "item": fst["name"],
-                             "ilvl": g.get("itemLevel") or fst.get("ilvl"),
-                             "tier_ilvl": tier_med}
-                break
+    # Embellishment combo vs the field -- empirical: how does YOUR pair of
+    # embellishments rank among what top performers actually run? (Replaces the
+    # heuristic tier-flex guess; flexing legs etc. is fine if your two
+    # embellishments match the meta combo.)
+    fe = field_embellishments(class_name, spec_name, difficulty, enc)
+    your_combo = tuple(sorted(embellished_slots))
+    combo_list = fe["combos"].most_common()
+    your_rank = next(((i + 1, cnt) for i, (c, cnt) in enumerate(combo_list)
+                      if c == your_combo), None)
+    your_items_pop = [(nm, fe["items"].get(nm, 0)) for nm in your_emb_items]
+    emb_compare = {"your_combo": your_combo, "your_rank": your_rank,
+                   "top_combos": combo_list[:4], "field_n": fe["n"],
+                   "your_items_pop": your_items_pop,
+                   "top_items": fe["items"].most_common(4)}
 
     # Gem analysis: your usage + variety vs the field.
     my_gems = [gm.get("id") for g in you["gear"] for gm in g.get("gems", [])]
@@ -245,7 +285,7 @@ def gear_findings(name, server, region, difficulty, class_name, spec_name, prior
                               if fc["gem_variety"] else None),
     }
     return {"rows": rows, "swaps": swaps, "embellished_slots": embellished_slots,
-            "restats": restats, "tier_flex": tier_flex, "n": npl,
+            "restats": restats, "emb_compare": emb_compare, "n": npl,
             "priority": priority, "gems": gem_info}
 
 
@@ -269,13 +309,18 @@ def audit(name, server, region, difficulty, class_name, spec_name, priority):
     if len(emb) < 2:
         print(f"  -> You have a free embellishment slot -- a big throughput gain you're "
               f"not using.")
-    tf = f.get("tier_flex")
-    if tf:
-        print(f"\nTier flex: your {tf['slot']} ('{tf['item']}', ilvl {tf['ilvl']}) is your "
-              f"non-tier 'flex' slot but it's crafted & NOT embellished"
-              + (f" (tier med ilvl {tf['tier_ilvl']})" if tf['tier_ilvl'] else "") + ".")
-        print(f"  -> Wear TIER {tf['slot']} instead, and flex a DIFFERENT tier slot to a crit "
-              f"non-tier drop. Keeps 4pc, raises ilvl, adds crit. Sim to pick the combo.")
+    ec = f.get("emb_compare")
+    if ec:
+        rank = (f"#{ec['your_rank'][0]} most common ({ec['your_rank'][1]}/{ec['field_n']})"
+                if ec["your_rank"] else "NOT seen in the field")
+        print(f"\nEmbellishment combo vs field: yours = {' + '.join(ec['your_combo']) or 'none'} "
+              f"-> {rank}.")
+        print(f"  top field combos: " +
+              ", ".join(f"{'+'.join(c)} ({n})" for c, n in ec["top_combos"]))
+        print(f"  your embellishment items' field popularity: " +
+              ", ".join(f"{nm} ({pop})" for nm, pop in ec["your_items_pop"]))
+        if not ec["your_rank"]:
+            print(f"  -> Consider matching a top combo above (yours isn't one top performers run).")
     # Gems
     gi = f["gems"]
     print(f"\nGems: you run {sum(gi['your_gems'].values())} gem(s), {gi['your_variety']} "

@@ -9,6 +9,7 @@ import base64
 import json
 import os
 import time
+import urllib.error
 import urllib.request
 
 TOKEN_URL = "https://www.warcraftlogs.com/oauth/token"
@@ -70,11 +71,13 @@ def get_token(force=False):
     return r["access_token"]
 
 
-def gql(query, token=None, retries=3):
+def gql(query, token=None, retries=6):
     """Run a GraphQL query string and return the parsed `data` object.
 
     Retries transient errors; raises PrivateReport on permission errors so
-    callers can skip a report and continue.
+    callers can skip a report and continue. Honors HTTP 429 rate limits
+    (Retry-After header, else exponential backoff) -- important when several
+    parallel sessions share one API client's hourly point budget.
     """
     token = token or get_token()
     last = None
@@ -95,6 +98,15 @@ def gql(query, token=None, retries=3):
             return r["data"]
         except PrivateReport:
             raise
+        except urllib.error.HTTPError as e:
+            last = e
+            if e.code == 429:  # rate limited -- wait it out
+                retry_after = e.headers.get("Retry-After")
+                wait = int(retry_after) if (retry_after and retry_after.isdigit()) \
+                    else min(90, 10 * (2 ** attempt))
+                time.sleep(wait)
+            else:
+                time.sleep(2 + attempt)
         except Exception as e:  # noqa: BLE001 - transient network/server errors
             last = e
             time.sleep(2 + attempt)

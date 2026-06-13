@@ -198,13 +198,12 @@ def run(name, server, region, class_name="Monk", spec_name="Brewmaster",
         if len(emb) < 2:
             rx.append((-2.5, "~2-4% DPS", f"EMBELLISHMENTS: you run {len(emb)}/2 -- fill the "
                        f"free slot (throughput you can't get from drops)."))
-        tf = gf.get("tier_flex")
-        if tf:
-            how_to_crit = True
-            rx.append((-1.5, "~1-2% DPS", f"TIER FLEX: your {tf['slot']} ('{tf['item']}', ilvl "
-                       f"{tf['ilvl']}) is a crafted non-embellished flex piece -- wear TIER "
-                       f"{tf['slot']} and flex a different tier slot to a crit drop (keeps 4pc, "
-                       f"+ilvl, +crit). Sim the combo."))
+        ec = gf.get("emb_compare")
+        if ec and not ec["your_rank"] and ec["top_combos"]:
+            top = ec["top_combos"][0]
+            rx.append((-2.0, "~2-4% DPS", f"EMBELLISHMENT COMBO: yours "
+                       f"({'+'.join(ec['your_combo']) or 'none'}) isn't one top performers run; "
+                       f"the #1 combo is {'+'.join(top[0])} ({top[1]}/{ec['field_n']}). Match it."))
     # Only mention the crit gap if we can't act on it -- and say WHY, not "raise crit".
     if crit_gap >= 4 and not how_to_crit:
         rx.append((0.0, "info", f"CRIT: yours ({my_crit:.0f}%) is below the field "
