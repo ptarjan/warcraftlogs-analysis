@@ -122,6 +122,64 @@ async function browserWcl(query) {
 const _gqlInflight = new Map();
 const _gqlCache = new Map();
 
+// --- Persistent (cross-reload) query cache -----------------------------------
+// The in-memory cache above dies on refresh; on the connected path that means a
+// reload re-spends the user's own quota. So also stash successful results in
+// localStorage with a 1h TTL (WCL rankings/reports are static enough within the
+// hour -- the same window the Worker uses). Browser only: the CLI/tests keep the
+// in-memory cache so their behavior is unchanged. Every storage access is
+// wrapped -- a failure (quota, private mode) just falls through to the network.
+const PERSIST = !IS_NODE;
+const LS_PREFIX = "gqlc:";
+const LS_TTL = 60 * 60 * 1000;     // 1 hour
+const LS_MAX_ENTRY = 400 * 1024;   // skip persisting responses bigger than ~400 KB
+
+// Short, stable key from the query text (FNV-1a). Collisions are made safe by
+// storing the query alongside the value and verifying it on read.
+function _hash(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return LS_PREFIX + (h >>> 0).toString(36);
+}
+
+// Exported for tests. Read returns undefined on miss / stale / collision / error.
+export function _cacheRead(query) {
+  try {
+    const raw = localStorage.getItem(_hash(query));
+    if (!raw) return undefined;
+    const e = JSON.parse(raw);
+    if (e.q !== query || Date.now() - e.t > LS_TTL) return undefined;
+    return e.d;
+  } catch { return undefined; }
+}
+export function _cacheWrite(query, data) {
+  let raw;
+  try { raw = JSON.stringify({ q: query, t: Date.now(), d: data }); } catch { return; }
+  if (raw.length > LS_MAX_ENTRY) return; // memory cache still holds it for this session
+  const key = _hash(query);
+  for (let i = 0; i < 4; i++) {
+    try { localStorage.setItem(key, raw); return; }
+    catch { if (!_evictOldest()) return; } // quota: drop oldest 25% and retry
+  }
+}
+// Drop the oldest ~quarter of persisted queries. Returns false when there's
+// nothing left to evict, so the caller stops retrying.
+function _evictOldest() {
+  try {
+    const items = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(LS_PREFIX)) continue;
+      let t = 0; try { t = JSON.parse(localStorage.getItem(k)).t || 0; } catch { /* keep 0 */ }
+      items.push([k, t]);
+    }
+    if (!items.length) return false;
+    items.sort((a, b) => a[1] - b[1]);
+    for (let i = 0, n = Math.max(1, items.length >> 2); i < n; i++) localStorage.removeItem(items[i][0]);
+    return true;
+  } catch { return false; }
+}
+
 export function clearGqlCache() { _gqlCache.clear(); }
 
 // ---- Node-only on-disk cache -------------------------------------------------
@@ -188,12 +246,17 @@ export async function gql(query, retries = 6) {
   await initDisk();                 // seeds _gqlCache from disk on first call (Node)
   if (_gqlCache.has(query)) return _gqlCache.get(query);
   if (_gqlInflight.has(query)) return _gqlInflight.get(query);
+  if (PERSIST) {
+    const stored = _cacheRead(query);
+    if (stored !== undefined) { _gqlCache.set(query, stored); return stored; }
+  }
   const p = _gqlRun(query, retries);
   _gqlInflight.set(query, p);
   try {
     const data = await p;
     _gqlCache.set(query, data);
-    diskPut(query, data);           // persist for the next run (Node only)
+    diskPut(query, data);              // Node CLI disk cache (no-op in the browser)
+    if (PERSIST) _cacheWrite(query, data); // browser localStorage cache (1h TTL)
     return data;
   } finally {
     _gqlInflight.delete(query);
