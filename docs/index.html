@@ -53,7 +53,7 @@
     box-shadow: 0 4px 14px rgba(245,196,81,.22); }
   .linkbtn.accent:hover { filter: brightness(1.07); color: #20180a; }
   /* back-to-list link at the top of a report */
-  .backbar { margin-bottom: -4px; display: flex; align-items: center; gap: 16px; }
+  .backbar { margin-bottom: -4px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; row-gap: 8px; }
   .linkbtn.back { font-size: 13px; font-weight: 600; text-decoration: none; }
   .linkbtn.back:hover { text-decoration: underline; }
   .linkbtn.share { font-size: 13px; font-weight: 600; text-decoration: none; margin-left: auto; }
@@ -179,7 +179,7 @@
      --- subsection ---, "-> takeaway", trailing "<-- annotation", space-aligned
      data). We map all of it to one readout language with semantic color, so a
      card never flips between dark code panels and sans prose. */
-  .readout { overflow-x: auto; color: #b3bdd2;
+  .readout { overflow-x: auto; min-width: 0; -webkit-overflow-scrolling: touch; color: #b3bdd2;
     font: 12.5px/1.7 ui-monospace, SFMono-Regular, Menlo, "Liberation Mono", monospace; }
   .readout > div { white-space: pre; }                 /* preserve column alignment */
   .r-gap { height: 9px; }
@@ -212,11 +212,11 @@
   .rx .num { font-weight: 800; color: var(--ok); min-width: 16px; font-size: 14px; }
   .rx .badge { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px;
     background: var(--ok); color: #06110b; white-space: nowrap; }
-  .rx .txt { flex: 1; font-size: 13.5px; line-height: 1.5; }
+  .rx .txt { flex: 1; min-width: 0; font-size: 13.5px; line-height: 1.5; overflow-wrap: break-word; }
   .rx.info { background: rgba(143,184,255,.06); border-color: rgba(143,184,255,.22); }
   .rx.info .num { color: var(--info); }
   .rx.info .badge { background: var(--info); color: #06111f; }
-  .note { font-size: 13.5px; line-height: 1.5; color: var(--ink); }
+  .note { font-size: 13.5px; line-height: 1.5; color: var(--ink); overflow-wrap: break-word; }
   .note.muted { color: var(--muted); }
   .note.err { color: var(--warn); font-weight: 600; }
   a { color: var(--accent); }
@@ -229,6 +229,30 @@
   .reveal { animation: fadeUp .5s cubic-bezier(.2,.7,.3,1) both; }
   .d1 { animation-delay: .05s; } .d2 { animation-delay: .12s; } .d3 { animation-delay: .2s; }
   @media (prefers-reduced-motion: reduce) { .reveal { animation: none; } html { scroll-behavior: auto; } }
+
+  /* ---------- mobile / small screens ---------- */
+  @media (max-width: 640px) {
+    header { padding: 32px 16px 8px; }
+    main { padding: 18px 16px 36px; }
+    footer { padding: 16px 16px 40px; }
+    /* The search form stacks one field per row; the button fills the width as a
+       big tap target. */
+    form { grid-template-columns: 1fr; padding: 16px; gap: 13px; }
+    .actions { gap: 10px; }
+    #go { flex: 1; padding: 12px 20px; }
+    .connect-prompt { padding: 18px 16px 20px; }
+    .picker-grid { grid-template-columns: 1fr; }
+    .hero { padding: 16px; }
+    .hero .who { font-size: 21px; }
+    /* tighter cards so the report has more width on a phone */
+    .card-head { padding: 12px 14px; }
+    .card .body { padding: 14px 14px; }
+    .readout { font-size: 11.5px; line-height: 1.65; }
+    .rx { padding: 12px; gap: 10px; }
+    /* roomier tap targets for the secondary text links */
+    .linkbtn.back, .linkbtn.share { padding: 6px 0; }
+    .linkbtn.share { margin-left: 0; }
+  }
 </style>
 <!-- Wowhead hover tooltips for the [item]/[spell] links the report emits.
      colorLinks = quality colors; keep our own labels (renameLinks off). -->
