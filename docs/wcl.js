@@ -288,7 +288,9 @@ async function _gqlRun(query, retries = 6) {
     // Signal the UI and back off briefly, then give up with a clear message
     // rather than hanging silently for minutes.
     if (status === 429 || (j.error && /too many requests/i.test(j.error))) {
-      last = new Error("WCL is rate-limiting the app right now (one hourly budget is shared by everyone). Try again in a few minutes.");
+      const mins = retryAfter ? Math.max(1, Math.ceil(retryAfter / 60)) : null;
+      const when = mins ? `try again in ~${mins} min` : "try again in a few minutes";
+      last = new Error(`WCL rate limit reached — the app shares one hourly budget across everyone. ${when}. (Connect your Warcraft Logs account to use your own budget instead.)`);
       if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("wcl-ratelimit", { detail: { retryAfter } }));
       await sleep(retryAfter ? Math.min(20000, retryAfter * 1000) : Math.min(12000, 2000 * 2 ** attempt));
       continue;
