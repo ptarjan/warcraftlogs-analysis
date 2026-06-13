@@ -372,6 +372,7 @@ async function _gqlRun(query, retries = 6) {
 // concurrent identical fetches within a session and times out hung sockets.
 const WOWHEAD_SPELL = "https://nether.wowhead.com/tooltip/spell/";
 const WOWHEAD_ZONE = "https://nether.wowhead.com/tooltip/zone/";
+const WOWHEAD_NPC = "https://nether.wowhead.com/tooltip/npc/";
 const WOWHEAD_ITEM_XML = "https://www.wowhead.com/item=";
 const _whInflight = new Map();
 async function wowhead(directUrl, workerPath, parse = "json") {
@@ -407,6 +408,12 @@ export function itemXml(id) {
 // Zone tooltip JSON ({name, ...}) -- resolves a zone id to its name.
 export function zoneTooltip(id) {
   return wowhead(`${WOWHEAD_ZONE}${encodeURIComponent(id)}`, `/zone/${id}`);
+}
+
+// NPC tooltip JSON ({name, map:{zone}, ...}) -- gives a boss's instance zone id
+// when the item itself doesn't carry one.
+export function npcTooltip(id) {
+  return wowhead(`${WOWHEAD_NPC}${encodeURIComponent(id)}`, `/npc/${id}`);
 }
 
 // The connected user's characters that actually RAIDED the current tier, most

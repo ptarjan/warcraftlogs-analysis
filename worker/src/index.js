@@ -158,6 +158,11 @@ export default {
         const id = encodeURIComponent(url.pathname.slice("/zone/".length));
         return wowheadProxy(ctx, ch, "https://nether.wowhead.com/tooltip/zone/" + id);
       }
+      // NPC tooltip: a boss's map.zone gives the instance when the item doesn't.
+      if (url.pathname.startsWith("/npc/") && req.method === "GET") {
+        const id = encodeURIComponent(url.pathname.slice("/npc/".length));
+        return wowheadProxy(ctx, ch, "https://nether.wowhead.com/tooltip/npc/" + id);
+      }
       // Item XML: the tooltip JSON omits the drop source's zone id; the XML's
       // <json> block carries `sourcemore` (zone id per source).
       if (url.pathname.startsWith("/itemxml/") && req.method === "GET") {

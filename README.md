@@ -161,13 +161,14 @@ query coalescing), and a smoke test that the browser modules import under Node.
 - WoW only exposes item IDs in logs; real per-item stats come from Wowhead's
   tooltip API, and **crafted gear shows 0/0/0/0 without its bonus IDs** (which
   also reveal the Embellishment).
-- An item's **source comes from Wowhead, no hardcoded boss→dungeon table**: the
-  tooltip's `whtt-droppedby`/`whtt-dropchance` give the boss + chance, and the
-  item **XML**'s `<json>` block has `sourcemore` carrying the drop's **zone id**,
-  which the **zone tooltip** (`/tooltip/zone/<id>`) turns into the instance name.
-  Match `sourcemore[].n` to the boss to disambiguate multi-source items; else use
-  the only zoned entry. Resolve only the handful of items you actually recommend
-  (2 extra Wowhead fetches each, cached). Embellished gear is crafted (no drop).
+- An item's **source comes from Wowhead, no hardcoded boss→dungeon table** — we
+  lead with the instance ("dropped in Windrunner Spire"), boss only as fallback.
+  The item **XML**'s `<json>.sourcemore` carries the drop sources; resolve the
+  instance two ways so it works for **any** item: the source may have the **zone
+  id** (`z`) directly, or just the **boss NPC id** (`ti`) — then the **NPC
+  tooltip**'s `map.zone` gives the zone. The **zone tooltip** (`/tooltip/zone/`)
+  names it. Match `sourcemore[].n` to the boss to disambiguate multi-source items.
+  Resolve only the handful of items you recommend (cached). Embellished = crafted.
 - **Gear advice is reconciled per slot — one plan per slot.** A slot earmarked
   for an embellishment (yours, or the combo we recommend) must NOT also get a
   "swap to a drop here" line; otherwise the list contradicts itself (the bug:

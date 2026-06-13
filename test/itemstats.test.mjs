@@ -94,6 +94,17 @@ test("itemInstance: uses the only zoned source when none names the boss", async 
   assert.equal(await itemInstance(249368, "Alleria Windrunner"), "The Voidspire");
 });
 
+test("itemInstance: when the item lists only the boss NPC, the NPC's map.zone names the instance", async () => {
+  // sourcemore has the boss NPC (ti) but NO zone id -> resolve via the NPC tooltip.
+  globalThis.fetch = mockFetch([
+    ["item=300001", { text: ITEMXML(300001, [{ n: "Emberdawn", t: 1, ti: 240999 }]) }],
+    ["npc/240999", { json: { name: "Emberdawn", map: { zone: 16555 } } }],
+    ["tooltip/zone/16555", { json: { name: "Windrunner Spire" } }],
+  ]);
+  const { itemInstance } = await import("../docs/gear.js");
+  assert.equal(await itemInstance(300001, "Emberdawn"), "Windrunner Spire");
+});
+
 test("itemInstance: crafted/sourceless item -> null", async () => {
   globalThis.fetch = mockFetch([
     ["item=222820", { text: ITEMXML(222820, []) }],
@@ -102,12 +113,12 @@ test("itemInstance: crafted/sourceless item -> null", async () => {
   assert.equal(await itemInstance(222820, null), null);
 });
 
-test("sourceText: composes boss + instance + chance, omitting unknowns", async () => {
+test("sourceText: leads with the instance, falls back to the boss", async () => {
   const { sourceText } = await import("../docs/gear.js");
-  assert.equal(sourceText("Alleria Windrunner", "The Voidspire", "15%"),
-    " -- from Alleria Windrunner in The Voidspire (15%)");
-  assert.equal(sourceText("Some Boss", null, null), " -- from Some Boss");
-  assert.equal(sourceText(null, "The Voidspire", null), " -- from The Voidspire");
+  assert.equal(sourceText("Alleria Windrunner", "Windrunner Spire", "15%"),
+    " -- dropped in Windrunner Spire (15%)");
+  assert.equal(sourceText("Emberdawn", null, null), " -- dropped by Emberdawn");
+  assert.equal(sourceText(null, "Windrunner Spire", null), " -- dropped in Windrunner Spire");
   assert.equal(sourceText(null, null, null), "");
 });
 

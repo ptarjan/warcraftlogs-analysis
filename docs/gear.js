@@ -1,6 +1,6 @@
 // Automatic gear audit: reads each item's real secondary stats (via the Worker's
 // Wowhead proxy) and compares slot-by-slot to the field. Ported from gear.py.
-import { itemTooltip, itemXml, zoneTooltip } from "./wcl.js";
+import { itemTooltip, itemXml, zoneTooltip, npcTooltip } from "./wcl.js";
 import {
   characterZone, characterEncounter, playerMetrics, topRankings, f, mapLimit, topEntry,
 } from "./core.js";
@@ -83,24 +83,24 @@ export async function itemStats(itemId, bonusIds) {
   return out;
 }
 
-// Human "where to get it" suffix shared by the audit and the prescription:
-// " -- from <boss> in <instance> (<chance>)", omitting whatever's unknown.
+// Human "where to get it" suffix shared by the audit and the prescription.
+// Leads with the instance ("dropped in Windrunner Spire") -- that's the place you
+// actually go; the boss is only a fallback when the instance can't be resolved.
 export function sourceText(boss, instance, chance) {
-  let where = "";
-  if (boss && instance) where = `${boss} in ${instance}`;
-  else if (boss) where = boss;
-  else if (instance) where = instance;
-  if (!where) return "";
-  return ` -- from ${where}${chance ? ` (${chance})` : ""}`;
+  const c = chance ? ` (${chance})` : "";
+  if (instance) return ` -- dropped in ${instance}${c}`;
+  if (boss) return ` -- dropped by ${boss}${c}`;
+  return "";
 }
 
-// The instance an item drops in, resolved entirely from Wowhead (no hardcoded
-// boss->dungeon table): the item XML's <json> has `sourcemore` carrying the drop
-// source's zone id, which the zone tooltip turns into a name. Returns null for
-// crafted/unknown sources. Cached per item id. bossName (from the tooltip's
-// "Dropped by") disambiguates when an item lists multiple sources.
+// The instance an item drops in, resolved entirely from Wowhead -- NO hardcoded
+// boss->dungeon table, so it works for any item/tier. The item XML's <json> has
+// `sourcemore` (the drop sources). Two ways in: the source may carry the instance
+// zone id directly (`z`), or just the boss NPC id (`ti`) -- in which case the
+// NPC's tooltip gives its `map.zone`. Either way the zone tooltip names it.
+// Cached per item id. bossName (from "Dropped by") disambiguates multi-source items.
 export async function itemInstance(itemId, bossName) {
-  const ck = "inst:" + String(itemId);
+  const ck = "inst2:" + String(itemId);
   const cached = cacheGet(ck);
   if (cached) return cached.instance || null;
   let instance = null;
@@ -108,13 +108,17 @@ export async function itemInstance(itemId, bossName) {
     const xml = await itemXml(itemId);
     const m = xml.match(/<json><!\[CDATA\[([\s\S]*?)\]\]><\/json>/);
     if (m) {
-      const obj = JSON.parse("{" + m[1] + "}");
-      const withZ = (obj.sourcemore || []).filter((e) => e && e.z);
-      if (withZ.length) {
-        const norm = (s) => String(s || "").toLowerCase().trim();
-        const pick = (bossName && withZ.find((e) => e.n && norm(e.n) === norm(bossName))) || withZ[0];
-        const zt = await zoneTooltip(pick.z);
-        instance = (zt && zt.name) ? zt.name : null;
+      const sm = (JSON.parse("{" + m[1] + "}").sourcemore || []).filter((e) => e && (e.z || e.ti));
+      const norm = (s) => String(s || "").toLowerCase().trim();
+      // Prefer the source naming the dropping boss; else the first zoned/NPC one.
+      const pick = (bossName && sm.find((e) => e.n && norm(e.n) === norm(bossName))) || sm[0];
+      if (pick) {
+        let zoneId = pick.z;
+        if (!zoneId && pick.ti) {                       // no zone on the item -> ask the boss NPC
+          const npc = await npcTooltip(pick.ti);
+          zoneId = npc && npc.map && npc.map.zone;
+        }
+        if (zoneId) { const zt = await zoneTooltip(zoneId); instance = (zt && zt.name) ? zt.name : null; }
       }
     }
   } catch (e) { instance = null; }
