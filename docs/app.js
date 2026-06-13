@@ -2,6 +2,7 @@
 import { detectContext, detectPriority, DIFFICULTY } from "./core.js?v=2";
 import * as analyze from "./analyze.js?v=2";
 import * as diagnose from "./diagnose.js?v=2";
+import * as rotation from "./rotation.js?v=2";
 import * as gear from "./gear.js?v=2";
 import * as prescribe from "./prescribe.js?v=2";
 
@@ -52,6 +53,8 @@ const SECTIONS = {
     (log, p) => analyze.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   diagnose: ["TIMELINE DIAGNOSIS",
     (log, p) => diagnose.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  rotation: ["ROTATION: OPENER & PRIORITY",
+    (log, p) => rotation.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   gear: ["GEAR AUDIT",
     (log, p) => gear.audit(log, p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority)],
   prescribe: ["PRESCRIPTION",

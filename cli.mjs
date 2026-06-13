@@ -62,6 +62,7 @@ const only = opt.only ? new Set(opt.only.split(",").map((s) => s.trim())) : null
 // --- run ---
 const analyze = await import("./docs/analyze.js");
 const diagnose = await import("./docs/diagnose.js");
+const rotation = await import("./docs/rotation.js");
 const gear = await import("./docs/gear.js");
 const prescribe = await import("./docs/prescribe.js");
 
@@ -71,6 +72,8 @@ const SECTIONS = {
     () => analyze.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   diagnose: ["TIMELINE DIAGNOSIS",
     () => diagnose.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  rotation: ["ROTATION: OPENER & PRIORITY",
+    () => rotation.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   gear: ["GEAR AUDIT",
     () => gear.audit(log, p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority)],
   prescribe: ["PRESCRIPTION",
