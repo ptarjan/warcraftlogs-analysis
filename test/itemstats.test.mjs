@@ -73,6 +73,44 @@ test("an embellished item with no drop source is flagged crafted", async () => {
   assert.equal(s.crafted, true);
 });
 
+const ITEMXML = (id, sourcemore) =>
+  `<wowhead><item id="${id}"><json><![CDATA["id":${id},"sourcemore":${JSON.stringify(sourcemore)}]]></json></item></wowhead>`;
+
+test("itemInstance: resolves the drop's zone id to an instance name", async () => {
+  globalThis.fetch = mockFetch([
+    ["item=251093", { text: ITEMXML(251093, [{ n: "Corewarden Nysarra", t: 1, ti: 254227, z: 16573 }]) }],
+    ["tooltip/zone/16573", { json: { name: "Nexus-Point Xenas" } }],
+  ]);
+  const { itemInstance } = await import("../docs/gear.js");
+  assert.equal(await itemInstance(251093, "Corewarden Nysarra"), "Nexus-Point Xenas");
+});
+
+test("itemInstance: uses the only zoned source when none names the boss", async () => {
+  globalThis.fetch = mockFetch([
+    ["item=249368", { text: ITEMXML(249368, [{ z: 16340 }]) }],
+    ["tooltip/zone/16340", { json: { name: "The Voidspire" } }],
+  ]);
+  const { itemInstance } = await import("../docs/gear.js");
+  assert.equal(await itemInstance(249368, "Alleria Windrunner"), "The Voidspire");
+});
+
+test("itemInstance: crafted/sourceless item -> null", async () => {
+  globalThis.fetch = mockFetch([
+    ["item=222820", { text: ITEMXML(222820, []) }],
+  ]);
+  const { itemInstance } = await import("../docs/gear.js");
+  assert.equal(await itemInstance(222820, null), null);
+});
+
+test("sourceText: composes boss + instance + chance, omitting unknowns", async () => {
+  const { sourceText } = await import("../docs/gear.js");
+  assert.equal(sourceText("Alleria Windrunner", "The Voidspire", "15%"),
+    " -- from Alleria Windrunner in The Voidspire (15%)");
+  assert.equal(sourceText("Some Boss", null, null), " -- from Some Boss");
+  assert.equal(sourceText(null, "The Voidspire", null), " -- from The Voidspire");
+  assert.equal(sourceText(null, null, null), "");
+});
+
 test("result is cached: identical lookup does not refetch", async () => {
   const fx = mockFetch([["wowhead", () => tooltip("X", "+10 Haste")]]);
   globalThis.fetch = fx;

@@ -27,7 +27,7 @@ export function mockFetch(routes) {
           status,
           headers: { get: () => null },
           json: async () => body.json,
-          text: async () => JSON.stringify(body.json),
+          text: async () => (body.text != null ? body.text : JSON.stringify(body.json)),
         };
       }
     }

@@ -1,6 +1,6 @@
 // Automatic gear audit: reads each item's real secondary stats (via the Worker's
 // Wowhead proxy) and compares slot-by-slot to the field. Ported from gear.py.
-import { itemTooltip } from "./wcl.js";
+import { itemTooltip, itemXml, zoneTooltip } from "./wcl.js";
 import {
   characterZone, characterEncounter, playerMetrics, topRankings, f, mapLimit,
 } from "./core.js";
@@ -81,6 +81,45 @@ export async function itemStats(itemId, bonusIds) {
   }
   cacheSet(key, out);
   return out;
+}
+
+// Human "where to get it" suffix shared by the audit and the prescription:
+// " -- from <boss> in <instance> (<chance>)", omitting whatever's unknown.
+export function sourceText(boss, instance, chance) {
+  let where = "";
+  if (boss && instance) where = `${boss} in ${instance}`;
+  else if (boss) where = boss;
+  else if (instance) where = instance;
+  if (!where) return "";
+  return ` -- from ${where}${chance ? ` (${chance})` : ""}`;
+}
+
+// The instance an item drops in, resolved entirely from Wowhead (no hardcoded
+// boss->dungeon table): the item XML's <json> has `sourcemore` carrying the drop
+// source's zone id, which the zone tooltip turns into a name. Returns null for
+// crafted/unknown sources. Cached per item id. bossName (from the tooltip's
+// "Dropped by") disambiguates when an item lists multiple sources.
+export async function itemInstance(itemId, bossName) {
+  const ck = "inst:" + String(itemId);
+  const cached = cacheGet(ck);
+  if (cached) return cached.instance || null;
+  let instance = null;
+  try {
+    const xml = await itemXml(itemId);
+    const m = xml.match(/<json><!\[CDATA\[([\s\S]*?)\]\]><\/json>/);
+    if (m) {
+      const obj = JSON.parse("{" + m[1] + "}");
+      const withZ = (obj.sourcemore || []).filter((e) => e && e.z);
+      if (withZ.length) {
+        const norm = (s) => String(s || "").toLowerCase().trim();
+        const pick = (bossName && withZ.find((e) => e.n && norm(e.n) === norm(bossName))) || withZ[0];
+        const zt = await zoneTooltip(pick.z);
+        instance = (zt && zt.name) ? zt.name : null;
+      }
+    }
+  } catch (e) { instance = null; }
+  cacheSet(ck, { instance });
+  return instance;
 }
 
 // What embellishment SLOT-combos and ITEMS top performers run (empirical).
@@ -217,11 +256,14 @@ export async function gearFindings(name, server, region, difficulty, className, 
         if (cst.unique && myItemIds.has(candId)) continue;
         // require real adoption (>=3 of the field) to skip off-meta noise
         if ((cst[priority] || 0) - yoursPri >= 30 && cnt >= 3) {
-          if (!bestAlt || cst[priority] > bestAlt[1]) bestAlt = [cst.name, cst[priority], cnt, cst.source, cst.dropChance];
+          if (!bestAlt || cst[priority] > bestAlt[1]) bestAlt = [cst.name, cst[priority], cnt, cst.source, cst.dropChance, candId];
         }
       }
     }
-    if (bestAlt) swaps.push([SLOT[s], ist.name, bestAlt[0], bestAlt[1], bestAlt[2], slotTotal, bestAlt[3], bestAlt[4]]);
+    if (bestAlt) {
+      const instance = await itemInstance(bestAlt[5], bestAlt[3]); // resolve dungeon/raid name
+      swaps.push([SLOT[s], ist.name, bestAlt[0], bestAlt[1], bestAlt[2], slotTotal, bestAlt[3], bestAlt[4], instance]);
+    }
   }
 
   // Embellishment combo vs the field -- empirical: how does YOUR pair of
@@ -313,9 +355,8 @@ export async function audit(log, name, server, region, difficulty, className, sp
   if (ff.swaps.length) {
     log("");
     log(`${priority[0].toUpperCase() + priority.slice(1)} drop CANDIDATES (a crit-itemized item the field runs in a non-tier/non-embellished slot of yours -- sim to confirm net gain):`);
-    for (const [slot, mine, theirs, amt, cnt, tot, src, chance] of ff.swaps) {
-      const from = src ? ` -- from ${src}${chance ? ` (${chance})` : ""}` : "";
-      log(`  ${slot}: '${mine}' -> '${theirs}' (+${amt} ${priority}; ${cnt}/${tot} of field)${from}`);
+    for (const [slot, mine, theirs, amt, cnt, tot, src, chance, instance] of ff.swaps) {
+      log(`  ${slot}: '${mine}' -> '${theirs}' (+${amt} ${priority}; ${cnt}/${tot} of field)${sourceText(src, instance, chance)}`);
     }
   } else {
     log("");

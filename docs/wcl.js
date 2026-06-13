@@ -335,6 +335,34 @@ export async function spellTooltip(id) {
   try { return await p; } finally { _spellInflight.delete(url); }
 }
 
+// Item XML (text): the tooltip JSON omits the drop source's zone id, but the
+// XML's <json> block has `sourcemore` (zone id per source) so we can name the
+// instance an item drops in. Same routing/caching as the tooltips.
+const WOWHEAD_ITEM_XML = "https://www.wowhead.com/item=";
+const _itemXmlInflight = new Map();
+export async function itemXml(id) {
+  const direct = IS_NODE || !!getAccessToken();
+  const url = direct ? `${WOWHEAD_ITEM_XML}${encodeURIComponent(id)}&xml` : `${WORKER_URL}/itemxml/${id}`;
+  if (_itemXmlInflight.has(url)) return _itemXmlInflight.get(url);
+  const opts = withTimeout(IS_NODE ? { headers: { "User-Agent": "Mozilla/5.0" } } : {});
+  const p = fetch(url, opts).then((r) => r.text());
+  _itemXmlInflight.set(url, p);
+  try { return await p; } finally { _itemXmlInflight.delete(url); }
+}
+
+// Wowhead zone tooltip JSON ({name, ...}) -- resolves a zone id to its name.
+const WOWHEAD_ZONE = "https://nether.wowhead.com/tooltip/zone/";
+const _zoneInflight = new Map();
+export async function zoneTooltip(id) {
+  const direct = IS_NODE || !!getAccessToken();
+  const url = direct ? `${WOWHEAD_ZONE}${encodeURIComponent(id)}` : `${WORKER_URL}/zone/${id}`;
+  if (_zoneInflight.has(url)) return _zoneInflight.get(url);
+  const opts = withTimeout(IS_NODE ? { headers: { "User-Agent": "Mozilla/5.0" } } : {});
+  const p = fetch(url, opts).then((r) => r.json());
+  _zoneInflight.set(url, p);
+  try { return await p; } finally { _zoneInflight.delete(url); }
+}
+
 // The connected user's own characters that have parses on the CURRENT content,
 // most parses first. "Parses" = ranked kills in the current zone (zoneRankings
 // defaults to the current zone), summed across Mythic + Heroic. Connected-only

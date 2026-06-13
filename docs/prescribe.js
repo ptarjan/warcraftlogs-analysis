@@ -5,7 +5,7 @@ import {
 } from "./core.js";
 import { PrivateReport } from "./wcl.js";
 import { compareBoss } from "./diagnose.js";
-import { gearFindings } from "./gear.js";
+import { gearFindings, sourceText } from "./gear.js";
 import { rotationFindings } from "./rotation.js";
 
 const SLOT_NAME = ENCHANTABLE_SLOTS;
@@ -207,9 +207,9 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const statGap = (my.statPct !== null && field.stat_pct) ? field.stat_pct - my.statPct : 0;
   let howToStat = false;
   if (gf) {
-    for (const [slot, mine, theirs, amt, cnt, tot, src, chance] of gf.swaps) {
+    for (const [slot, mine, theirs, amt, cnt, tot, src, chance, instance] of gf.swaps) {
       howToStat = true;
-      const from = src ? ` -- from ${src}${chance ? ` (${chance})` : ""}` : "";
+      const from = sourceText(src, instance, chance);
       rx.push([-2.0, "~1-3% DPS", `${PRI} via ${slot}: replace '${mine}' with '${theirs}' (+${amt} ${priority}; ${cnt}/${tot} of field${from} -- sim to confirm).`]);
     }
     for (const [slot, name2, mine, best] of gf.restats) {
