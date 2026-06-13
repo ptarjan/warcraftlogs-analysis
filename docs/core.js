@@ -101,6 +101,8 @@ function metricsFromTables(dmg, casts, name, specName) {
     dps: e.total / dur, total: e.total,
     active_pct: dmg.totalTime ? 100 * (e.activeTime || 0) / dmg.totalTime : 0,
     targets: (e.targets || []).length,
+    // per-target damage totals (for damage-routing / cleave-funnel analysis)
+    dmg_targets: e.targets || [],
     casts: castCounts, dmg_by: dmgBy,
     casts_per_min: dur ? totalCasts / (dur / 60) : 0,
     sourceID: e.id, gear: e.gear || [],

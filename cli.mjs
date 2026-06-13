@@ -78,6 +78,7 @@ const { detectContext, detectPriority, DIFFICULTY } = await import("./docs/core.
 const analyze = await import("./docs/analyze.js");
 const diagnose = await import("./docs/diagnose.js");
 const rotation = await import("./docs/rotation.js");
+const topparse = await import("./docs/topparse.js");
 const gear = await import("./docs/gear.js");
 const prescribe = await import("./docs/prescribe.js");
 
@@ -106,6 +107,8 @@ const SECTIONS = {
     () => diagnose.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   rotation: ["ROTATION: OPENER & PRIORITY",
     () => rotation.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  chasing99: ["CHASING 99: YOU vs THE TOP PARSES",
+    () => topparse.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   gear: ["GEAR AUDIT",
     () => gear.audit(log, p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority)],
   prescribe: ["PRESCRIPTION",

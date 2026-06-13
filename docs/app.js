@@ -9,6 +9,7 @@ import * as analyze from "./analyze.js";
 import * as diagnose from "./diagnose.js";
 import * as rotation from "./rotation.js";
 import * as profile from "./profile.js";
+import * as topparse from "./topparse.js";
 import * as gear from "./gear.js";
 import * as prescribe from "./prescribe.js";
 
@@ -288,6 +289,7 @@ const SUPPORTING = [
   ["Timeline diagnosis", (p, log) => diagnose.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Rotation: opener & priority", (p, log) => rotation.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Damage profile vs peers", (p, log) => profile.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  ["Chasing 99: you vs the top parses", (p, log) => topparse.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Gear audit", (p, log) => gear.audit(log, p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority)],
 ];
 
