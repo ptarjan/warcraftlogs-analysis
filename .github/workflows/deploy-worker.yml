@@ -1,0 +1,36 @@
+# Deploy the Cloudflare Worker (WCL/Wowhead proxy) on push to worker/**.
+# Mirrors the GitHub Actions deploy used by the other Cloudflare projects.
+#
+# Required repo secrets (Settings -> Secrets and variables -> Actions):
+#   CLOUDFLARE_API_TOKEN  - a token with the "Edit Cloudflare Workers" template
+#   WCL_CLIENT_ID         - already set
+#   WCL_CLIENT_SECRET     - already set
+# wrangler-action uploads WCL_* to the Worker as secrets, then deploys.
+name: Deploy Cloudflare Worker
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'worker/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy Worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          workingDirectory: worker
+          secrets: |
+            WCL_CLIENT_ID
+            WCL_CLIENT_SECRET
+        env:
+          WCL_CLIENT_ID: ${{ secrets.WCL_CLIENT_ID }}
+          WCL_CLIENT_SECRET: ${{ secrets.WCL_CLIENT_SECRET }}
