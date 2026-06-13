@@ -33,9 +33,10 @@ function fillServers() {
 regionSel.addEventListener("change", fillServers);
 
 // --------------------------------------------------------------------------- //
-// Auth (optional): anyone can analyze anonymously via the proxy. Connecting with
-// OAuth PKCE makes the browser use the user's OWN Warcraft Logs token instead --
-// their own rate budget and access to their private logs. No secret either way.
+// Auth (REQUIRED): the app is connect-only. The browser runs every analysis on
+// the user's OWN Warcraft Logs PKCE token -- their own hourly point budget (a
+// full run is too heavy for any shared budget) and access to their private logs.
+// No app secret in the page. Once connected they can analyze ANY character.
 // --------------------------------------------------------------------------- //
 function renderAuth() {
   if (isAuthed()) {
@@ -46,7 +47,7 @@ function renderAuth() {
   } else {
     authEl.innerHTML =
       '<button type="button" id="connect" class="linkbtn accent">Connect Warcraft Logs</button>' +
-      '<span class="conn muted">optional · use your own rate limit &amp; private logs (or just analyze below)</span>';
+      '<span class="conn muted">runs on your own rate budget · reads your private logs</span>';
     $("connect").onclick = () => beginLogin().catch(showAuthErr);
   }
 }
@@ -58,27 +59,47 @@ function realmLabel(region, slug) {
   return r ? r.name : slug;
 }
 
-// Two modes. Anonymous: the manual form (type character + region + server).
-// Connected: hide just the input form and show a clickable list of YOUR
-// most-recently-active characters -- click to analyze. Everything else on the
-// page (intro, sample) stays put.
-// Best-effort: if the list can't be built, fall back to the manual form.
-function showForm(on) {
-  form.style.display = on ? "" : "none";
-  const picker = $("picker"); if (picker) picker.style.display = on ? "none" : "";
+// Connect-only, two states:
+//   NOT connected -> hide the form; show a Connect prompt (no analysis without
+//     your own account). The sample below stays as the marketing.
+//   connected     -> show the search form (analyze ANY character -- yours or a
+//     friend's) AND, below it, a one-click list of YOUR own characters.
+// Best-effort: if your character list can't be built, just the form shows.
+function renderConnectPrompt(picker) {
+  picker.style.display = "";
+  picker.innerHTML = "";
+  const box = document.createElement("div");
+  box.className = "connect-prompt";
+  box.innerHTML =
+    '<div class="cp-t">Connect Warcraft Logs to start</div>' +
+    '<div class="cp-s">Each analysis runs on <b>your own</b> account\'s hourly budget — so it stays fast ' +
+    'and can read your private logs. Once connected, analyze <b>any</b> character: yours in one click, ' +
+    'or a friend\'s by name.</div>';
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "linkbtn accent"; b.textContent = "Connect Warcraft Logs";
+  b.onclick = () => beginLogin().catch(showAuthErr);
+  box.appendChild(b);
+  picker.appendChild(box);
 }
 async function renderMode() {
-  if (!isAuthed()) { showForm(true); const p = $("picker"); if (p) p.innerHTML = ""; return; }
+  const picker = $("picker");
+  if (!isAuthed()) {
+    form.style.display = "none";
+    if (picker) renderConnectPrompt(picker);
+    return;
+  }
+  // Connected: the form analyzes any character; the picker is a shortcut to yours.
+  form.style.display = "";
+  if (!picker) return;
   let chars = [];
   try { chars = await myCharacters(); } catch { chars = []; }
   await realmsReady;
-  const picker = $("picker");
-  if (!chars.length || !picker) { showForm(true); return; } // nothing to click -> manual form
-  showForm(false);
+  if (!chars.length) { picker.style.display = "none"; picker.innerHTML = ""; return; }
+  picker.style.display = "";
   picker.innerHTML = "";
   const h = document.createElement("div");
   h.className = "picker-h";
-  h.textContent = "Your characters — click one to analyze";
+  h.textContent = "Your characters — or type any character above";
   picker.appendChild(h);
   const grid = document.createElement("div");
   grid.className = "picker-grid";
@@ -106,17 +127,21 @@ async function deepLink() {
   $("name").value = q.name;
   if (q.region) { regionSel.value = q.region; fillServers(); }
   if (q.server) serverSel.value = q.server;
-  showForm(true); // hide the picker; show the form context behind the result
-  if (q.name && q.server && q.region) {
+  // Connect-only: can only auto-run a shared link once connected. If not, fall
+  // through to the connect prompt -- the values are prefilled for after connect.
+  if (isAuthed() && q.server && q.region) {
+    form.style.display = "";
+    const picker = $("picker"); if (picker) picker.style.display = "none";
     const serverLabel = serverSel.options[serverSel.selectedIndex]?.text || q.server;
     runAnalysis({ name: q.name, server: q.server, region: q.region, serverLabel });
+    return true;
   }
-  return true;
+  return false;
 }
 
 // On load: finish any returning OAuth redirect, reflect auth state, then show
-// the right mode (form for anonymous, character picker for connected) -- unless
-// a deep link tells us exactly which character to analyze.
+// the right mode (Connect prompt until connected; form + your-characters picker
+// once connected) -- unless a deep link tells us exactly which character to run.
 (async () => {
   try { await handleRedirectCallback(); }
   catch (e) { showAuthErr(e); }
@@ -313,8 +338,8 @@ function setPills(hero, items) {
   }
 }
 
-// A back link at the top of the report returns to the character list (connected)
-// or the search form (anonymous) -- whichever renderMode() shows.
+// A back link at the top of the report returns to the search form + your-
+// characters picker (whatever renderMode() shows when connected).
 function addBackBar() {
   const bar = document.createElement("div");
   bar.className = "backbar";
@@ -334,12 +359,12 @@ function goBack() {
   try { history.replaceState(null, "", location.pathname); } catch (e) { /* ignore */ }
   const intro = document.getElementById("intro");
   if (intro) intro.style.display = "";
-  renderMode();              // re-shows the picker (connected) or the form (anonymous)
+  renderMode();              // re-shows the form + your-characters picker (or Connect prompt)
   window.scrollTo(0, 0);
 }
 
-// Run the full analysis for one character. Called by the manual form (anonymous)
-// and by clicking a character in the connected picker.
+// Run the full analysis for one character. Called by the search form (any
+// character) and by clicking one of your own characters in the picker.
 async function runAnalysis({ name, server, region, serverLabel }) {
   // Keep the address bar in sync so the result is bookmarkable / shareable.
   try { history.replaceState(null, "", location.pathname + shareSearch({ name, region, server })); } catch (e) { /* ignore */ }
@@ -427,7 +452,8 @@ async function runAnalysis({ name, server, region, serverLabel }) {
   }
 }
 
-// Manual form (anonymous mode; hidden when connected in favor of the picker).
+// Search form: analyze ANY character once connected (yours or a friend's).
+// Shown only when connected; the Connect prompt replaces it otherwise.
 form.addEventListener("submit", (e) => {
   e.preventDefault();
   const name = $("name").value.trim();

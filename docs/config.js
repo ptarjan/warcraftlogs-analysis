@@ -1,13 +1,10 @@
-// Browser config. No secret ever lives in the page. Two runtime modes:
-//   anonymous (default) -> the tiny Cloudflare Worker proxy holds the shared app
-//       secret and runs client-credentials, so a visitor can just type a
-//       character with no login.
-//   connected (optional) -> OAuth PKCE "public client" (auth.js): the user clicks
-//       Connect once and the browser holds THEIR own token, calling /api/v2/user
-//       directly (their own rate budget + private logs). Still no secret.
+// Browser config. No secret ever lives in the page. Connect-only:
+//   the user clicks Connect once (OAuth PKCE "public client", auth.js) and the
+//   browser holds THEIR own token, calling /api/v2/user directly -- their own
+//   rate budget + private logs. There is no anonymous/shared path.
 // Node (the CLI) ignores all of this and uses client-credentials from env/.env.
 
-// ---- PKCE public client (the optional "Connect" path) ------------------------
+// ---- PKCE public client (the "Connect" path) ---------------------------------
 // CLIENT_ID is NOT a secret -- public clients have none, and the id is meant to
 // ship in client code. From https://www.warcraftlogs.com/api/clients/ ("Public
 // Client" checked).
@@ -23,7 +20,7 @@ export const WOWHEAD_URL = "https://nether.wowhead.com/tooltip/item/";
 const hasLoc = typeof location !== "undefined";
 export const REDIRECT_URI = hasLoc ? location.origin + location.pathname : "";
 
-// ---- Cloudflare Worker proxy (the anonymous path) ----------------------------
+// ---- Cloudflare Worker (Wowhead tooltip CORS+cache proxy; no secret) ---------
 // The deployed Worker URL (wrangler prints it). Override at runtime with
 // ?worker=https://... in the page URL (persisted to localStorage).
 const FALLBACK = "https://wcl-proxy.curly-unit-b9e0.workers.dev";

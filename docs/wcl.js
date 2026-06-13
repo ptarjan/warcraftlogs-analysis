@@ -1,11 +1,12 @@
-// WCL GraphQL + Wowhead tooltips. Three paths, no secret in the page:
-//   Node/CLI       -> client-credentials (env/.env) -> /api/v2/client, direct.
-//   browser, anon  -> the Cloudflare Worker proxy (holds the shared secret).
-//   browser, conn  -> the user's own PKCE token (auth.js) -> /api/v2/user, direct.
-// "conn" wins when a token is present; otherwise we fall back to the proxy.
+// WCL GraphQL + Wowhead tooltips. Two paths, no secret in the page:
+//   Node/CLI  -> client-credentials (env/.env) -> /api/v2/client, direct.
+//   browser   -> the user's own PKCE token (auth.js) -> /api/v2/user, direct.
+// Connect-only in the browser: there is NO shared/anonymous proxy path, so every
+// run spends the connected user's OWN hourly point budget (a full analysis is
+// many heavy requests; a shared budget can't carry it). No token -> NeedsAuth.
+// (The Cloudflare Worker still proxies Wowhead tooltips below -- no WCL secret.)
 import {
-  IS_NODE, TOKEN_URL, CLIENT_API_URL, USER_API_URL, WOWHEAD_URL,
-  WORKER_URL, WORKER_CONFIGURED,
+  IS_NODE, TOKEN_URL, CLIENT_API_URL, USER_API_URL, WOWHEAD_URL, WORKER_URL,
 } from "./config.js";
 import { getAccessToken, logout } from "./auth.js";
 
@@ -86,32 +87,20 @@ const readRetryAfter = (r) => {
   return Number.isFinite(n) ? n : null;
 };
 
-// ---- Browser path: own PKCE token if connected, else the anonymous proxy ------
+// ---- Browser path: the user's own PKCE token (connect-only) -------------------
 async function browserWcl(query) {
   const token = getAccessToken();
-  if (token) {
-    const r = await fetch(USER_API_URL, withTimeout({
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ query }),
-    }));
-    // A connected user whose token died must reconnect (or disconnect to use the
-    // shared proxy). Clear the dead token so the UI/next load reflect it; we don't
-    // silently fall back, so the active identity stays honest.
-    if (r.status === 401) {
-      logout();
-      throw new NeedsAuth("Your Warcraft Logs session expired -- reconnect, or disconnect to use the shared proxy.");
-    }
-    return { status: r.status, j: await r.json().catch(() => ({})), retryAfter: readRetryAfter(r) };
-  }
-  // Anonymous: route through the Worker, which holds the shared app secret.
-  if (!WORKER_CONFIGURED)
-    throw new NeedsAuth("Connect your Warcraft Logs account to run the analysis (no proxy is configured).");
-  const r = await fetch(`${WORKER_URL}/wcl`, withTimeout({
+  if (!token) throw new NeedsAuth("Connect your Warcraft Logs account to run the analysis.");
+  const r = await fetch(USER_API_URL, withTimeout({
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ query }),
   }));
+  // A dead/expired token must reconnect; clear it so the UI reflects the change.
+  if (r.status === 401) {
+    logout();
+    throw new NeedsAuth("Your Warcraft Logs session expired -- reconnect to continue.");
+  }
   return { status: r.status, j: await r.json().catch(() => ({})), retryAfter: readRetryAfter(r) };
 }
 
@@ -347,14 +336,9 @@ async function _gqlRun(query, retries = 6) {
       // primed by primeRateReset(). Whichever we learn, remember it.
       if (retryAfter) _resetAt = Math.max(_resetAt, Date.now() + retryAfter * 1000);
       const eff = retryAfter || (_resetAt > Date.now() ? Math.ceil((_resetAt - Date.now()) / 1000) : null);
-      const connected = !IS_NODE && !!getAccessToken();
       const mins = eff ? Math.max(1, Math.ceil(eff / 60)) : null;
       const when = mins ? `try again in ~${mins} min` : "try again shortly";
-      const whose = connected
-        ? "your WCL hourly point budget is used up"
-        : "the app's shared WCL hourly budget is used up";
-      const tip = connected ? "" : " (connect your Warcraft Logs account to use your own budget)";
-      last = new Error(`WCL rate limit reached — ${whose}. ${when}${tip}.`);
+      last = new Error(`WCL rate limit reached — your WCL hourly point budget is used up. ${when}.`);
       if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("wcl-ratelimit", { detail: { retryAfter: eff } }));
       await sleep(eff ? Math.min(20000, eff * 1000) : Math.min(12000, 2000 * 2 ** attempt));
       continue;
@@ -367,8 +351,8 @@ async function _gqlRun(query, retries = 6) {
 }
 
 // ---- Wowhead lookups (tooltips + item XML) ----------------------------------
-// One path for all of them: direct to Wowhead when trusted (Node) or connected
-// (own token), else through the Worker proxy (which caches a week). Coalesces
+// Node fetches Wowhead directly; the browser goes through the Worker proxy (which
+// CORS-wraps and week-caches them -- Wowhead sends no CORS headers). Coalesces
 // concurrent identical fetches within a session and times out hung sockets.
 const WOWHEAD_SPELL = "https://nether.wowhead.com/tooltip/spell/";
 const WOWHEAD_ZONE = "https://nether.wowhead.com/tooltip/zone/";
@@ -376,7 +360,10 @@ const WOWHEAD_NPC = "https://nether.wowhead.com/tooltip/npc/";
 const WOWHEAD_ITEM_XML = "https://www.wowhead.com/item=";
 const _whInflight = new Map();
 async function wowhead(directUrl, workerPath, parse = "json") {
-  const url = (IS_NODE || !!getAccessToken()) ? directUrl : `${WORKER_URL}${workerPath}`;
+  // Node talks straight to Wowhead (no CORS in Node). The browser always goes
+  // through the Worker: Wowhead's tooltip endpoints send no CORS headers, and the
+  // Worker's week-long edge cache makes these lookups nearly free and shared.
+  const url = IS_NODE ? directUrl : `${WORKER_URL}${workerPath}`;
   if (_whInflight.has(url)) return _whInflight.get(url);
   // Node has no default UA Wowhead likes; the browser sends its own (and can't
   // override it anyway), so only set it under Node.

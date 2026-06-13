@@ -119,6 +119,15 @@
     background: rgba(245,196,81,.12); border: 1px solid rgba(245,196,81,.28);
     padding: 2px 8px; border-radius: 6px; letter-spacing: .5px; }
 
+  /* ---------- connect-only prompt (shown until you connect) ---------- */
+  .connect-prompt { background: radial-gradient(600px 200px at 0% 0%, rgba(245,196,81,.10), transparent),
+      linear-gradient(180deg, var(--panel2), var(--panel));
+    border: 1px solid var(--edge2); border-radius: 16px; padding: 22px 22px 24px;
+    box-shadow: 0 14px 40px rgba(0,0,0,.4); }
+  .connect-prompt .cp-t { font-size: 18px; font-weight: 800; color: var(--ink); letter-spacing: -.2px; }
+  .connect-prompt .cp-s { font-size: 13.5px; color: var(--muted); line-height: 1.6; margin: 8px 0 16px; max-width: 620px; }
+  .connect-prompt .cp-s b { color: var(--ink); font-weight: 600; }
+
   /* ---------- connected: click-a-character picker ---------- */
   .picker { margin-top: 8px; }
   .picker-h { font-size: 11px; text-transform: uppercase; letter-spacing: .7px;
@@ -222,8 +231,8 @@
   <div class="eyebrow reveal"><span class="blade">⚔</span> WORLD OF WARCRAFT · DPS ANALYSIS</div>
   <h1 class="reveal d1">Find exactly what's<br>costing you DPS.</h1>
   <p class="tagline reveal d2">One to-do list, <b>ranked by DPS</b> — every gear, enchant, gem, consumable,
-    and rotation fix between you and the top of your item-level bracket. From just a character name —
-    no report links, no sim exports.</p>
+    and rotation fix between you and the top of your item-level bracket. Connect Warcraft Logs and
+    analyze <b>any</b> character — your own in a click, or a friend's by name.</p>
   <div id="auth" class="auth reveal d2"></div>
 </header>
 <main>

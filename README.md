@@ -5,28 +5,28 @@ with the statistical controls that make the conclusions actually hold up — the
 hands back a prioritized to-do list. Built for Brewmaster Monk but parameterized
 for any class/spec, and it auto-detects the current raid tier each season.
 
-It runs as a **static front-end on GitHub Pages** with two ways to reach the WCL
-API — and **no secret in the page** either way. All four analyses run
-client-side, streaming results live as they compute.
+It runs as a **static front-end on GitHub Pages**, **connect-only** and with
+**no secret anywhere in the page**. All four analyses run client-side, streaming
+results live as they compute.
 
-- **Anonymous (default):** a visitor just types a character. Requests go through
-  a tiny **Cloudflare Worker** that holds the shared app secret and proxies WCL /
-  Wowhead (also caching, and absorbing rate limits across everyone).
-- **Connected (optional):** the user clicks **Connect** and authorizes via OAuth
-  **PKCE "public client"** — no secret, no proxy. The browser then uses *their
-  own* token directly against `/api/v2/user`, spending their own rate budget and
-  reaching their private logs.
+- **Connect required:** click **Connect** and authorize via OAuth **PKCE "public
+  client"** (no secret). The browser then uses *your own* token directly against
+  `/api/v2/user` — spending your own hourly rate budget and reaching your private
+  logs. A full analysis is many heavy WCL requests, so a shared/proxied budget
+  couldn't carry it; running on each user's own budget is what makes it scale.
+- **Analyze anyone:** once connected you can analyze **any** character — your own
+  in a click, or a friend's by name (a user token can query any public character).
 
 ```
 GitHub Pages (docs/)
-┌───────────────────────┐  anon ─► Cloudflare Worker ─► WCL /api/v2/client
-│ analysis runs in your  │          (holds shared secret, caches, CORS)
-│ browser, streams live  │  conn ─► WCL /api/v2/user  (user's own PKCE token,
-└───────────────────────┘          direct, no proxy — CORS is open)
+┌───────────────────────┐  WCL  ─► WCL /api/v2/user  (your own PKCE token,
+│ analysis runs in your  │          direct — CORS is open, no secret, no proxy)
+│ browser, streams live  │  Wowhead ─► tiny Cloudflare Worker (CORS + week cache;
+└───────────────────────┘            NO secret — Wowhead just lacks CORS headers)
 ```
 
-> The CLI is a third path: under Node the secret is safe locally, so it uses
-> client-credentials directly (no Worker, no browser).
+> The CLI is a second path: under Node a secret is safe locally, so it uses
+> client-credentials directly against `/api/v2/client` (no Worker, no browser).
 
 ## What it checks (and why)
 
@@ -53,32 +53,13 @@ obvious answers turned out to be wrong; these are the comparisons that survived:
 
 ## Deploy (free)
 
-You need two WCL clients (one of each kind) and, for the anonymous path, a free
-[Cloudflare](https://dash.cloudflare.com/sign-up) account.
+You need one *public* WCL client for the browser, and (optionally) a free
+[Cloudflare](https://dash.cloudflare.com/sign-up) account for the Wowhead proxy.
 
-### 1. Anonymous path — deploy the Worker
+### 1. Create a "public client" (powers Connect)
 
-A *confidential* [WCL client](https://www.warcraftlogs.com/api/clients/) (leave
-"Public Client" unchecked) gives you a client id + secret. The Worker holds them
-so visitors need no login:
-
-```bash
-cd worker
-npm install
-npx wrangler login
-npx wrangler secret put WCL_CLIENT_ID      # paste id
-npx wrangler secret put WCL_CLIENT_SECRET  # paste secret
-npx wrangler deploy                        # prints https://wcl-proxy.<you>.workers.dev
-```
-
-Put that URL in `docs/config.js` (`FALLBACK`). Optionally lock it to your Pages
-origin via `ALLOWED_ORIGIN` in `worker/wrangler.toml`. (Deploys also run from
-GitHub Actions — see `.github/workflows/deploy-worker.yml`.)
-
-### 2. Connected path — create a "public client"
-
-A second, *public* client powers the optional **Connect** button. At
-<https://www.warcraftlogs.com/api/clients/>:
+A *public* [WCL client](https://www.warcraftlogs.com/api/clients/) powers the
+**Connect** button. At <https://www.warcraftlogs.com/api/clients/>:
 
 - **Name:** anything descriptive.
 - **Redirect URLs:** your Pages URL **exactly**, e.g.
@@ -89,12 +70,28 @@ A second, *public* client powers the optional **Connect** button. At
 Copy its **client id** into `docs/config.js` (`CLIENT_ID`). Not sensitive —
 the redirect-URL allow-list is what protects the flow.
 
+### 2. Deploy the Wowhead proxy (no secret)
+
+Wowhead's tooltip endpoints send no CORS headers, so the gear audit reads them
+through a tiny Worker that CORS-wraps + week-caches them. It holds **no secret**
+(the app is connect-only — WCL is hit directly with the user's token):
+
+```bash
+cd worker
+npm install
+npx wrangler login
+npx wrangler deploy   # prints https://wcl-proxy.<you>.workers.dev
+```
+
+Put that URL in `docs/config.js` (`FALLBACK`). (Deploys also run from GitHub
+Actions — see `.github/workflows/deploy-worker.yml`.)
+
 ### 3. Publish on GitHub Pages
 
 Commit, then **Settings → Pages**: the included workflow builds `docs/` (esbuild,
 content-hashed) and deploys `dist/`. Your app appears at
-`https://<you>.github.io/warcraftlogs-analysis/` — type a character to analyze
-anonymously, or click **Connect** to use your own account.
+`https://<you>.github.io/warcraftlogs-analysis/` — click **Connect**, then
+analyze your own characters or any friend by name.
 
 ## Run locally
 
@@ -104,9 +101,9 @@ npm run build        # -> dist/
 cd dist && python3 -m http.server 8000   # open http://localhost:8000/
 ```
 
-Anonymous mode works immediately (it uses the deployed Worker). The redirect URI
-is computed from the page URL, so register `http://localhost:8000/` on the public
-client (step 2) for the local **Connect** to work.
+The redirect URI is computed from the page URL, so register
+`http://localhost:8000/` on the public client (step 1) for the local **Connect**
+to work. (The Wowhead proxy uses the deployed Worker.)
 
 ## Command line (no browser, no OAuth)
 
@@ -126,12 +123,12 @@ Class, spec, difficulty, and gear priority are **auto-detected from your logs**
 (same as the web app) — the flags only override individual fields. `cli.mjs`
 shims the one browser global the analyses use (`localStorage`, for gear.js's item
 cache — persisted to `.cli-cache.json`) and calls the same `run()`
-functions the web UI does. `wcl.js` is multi-mode: **Node** uses
-client-credentials against `/api/v2/client`; the **browser** uses the visitor's
-own PKCE token against `/api/v2/user` when connected, else falls back to the
-Worker proxy. Node and connected sessions hit Wowhead directly. The Node path
-persists GraphQL results to `.gql-cache.json` (6 h TTL) so iterating on one
-character doesn't re-spend points or trip the per-IP 429.
+functions the web UI does. `wcl.js` is two-mode: **Node** uses client-credentials
+against `/api/v2/client`; the **browser** uses the user's own PKCE token against
+`/api/v2/user` (connect-only — no anonymous path). Node hits Wowhead directly;
+the browser reads Wowhead through the Worker (CORS). The Node path persists
+GraphQL results to `.gql-cache.json` (6 h TTL) so iterating on one character
+doesn't re-spend points or trip the per-IP 429.
 
 ## Tests
 
@@ -231,11 +228,11 @@ query coalescing), and a smoke test that the browser modules import under Node.
 
 ## Files
 
-- `worker/src/index.js` — Cloudflare Worker for the anonymous path (holds the
-  shared secret, proxies + caches WCL/Wowhead, absorbs 429s).
+- `worker/src/index.js` — Cloudflare Worker: Wowhead tooltip CORS+cache proxy
+  (no secret; the app hits WCL directly with the user's token).
 - `docs/config.js` — client id, worker URL, endpoints, redirect URI, `IS_NODE`.
 - `docs/auth.js` — OAuth PKCE (connect / token / redirect callback), browser-only.
-- `docs/wcl.js` — WCL GraphQL + Wowhead tooltips (Node creds / browser PKCE / proxy).
+- `docs/wcl.js` — WCL GraphQL (Node creds / browser PKCE) + Wowhead via the Worker.
 - `docs/core.js` — shared constants, formatting, and low-level fetchers.
 - `docs/overview.js` — overview + ilvl/duration-controlled comparison.
 - `docs/timeline.js` — comparative timeline root-cause analysis.

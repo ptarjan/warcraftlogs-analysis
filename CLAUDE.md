@@ -14,16 +14,20 @@ payoff; the list is sorted **biggest-DPS-first by the impact actually shown**.
 ## Architecture
 - `docs/` — static front-end (GitHub Pages), ES modules, runs the analysis in the
   browser and streams output live. `app.js` wires the UI and runs every section.
-- **`wcl.js` picks one of three paths, no secret in the page:**
+- **`wcl.js` has two paths, no secret in the page:**
   - Node (CLI) → client-credentials (env/.env) → `/api/v2/client`, direct.
-  - browser, **connected** → user's own PKCE token (`auth.js`) → `/api/v2/user`,
-    direct (CORS is open). Wins whenever `getAccessToken()` returns a token.
-  - browser, **anonymous** → the `worker/` Cloudflare proxy (holds the shared
-    secret, caches, absorbs 429s). The default — visitors need no login.
-- Auth is **optional**: Connect (PKCE public client, `CLIENT_ID` in `config.js`,
-  not a secret) only switches the browser from the proxy to the user's own token.
-- A connected token that 401s throws `NeedsAuth` (reconnect) — we don't silently
-  fall back to the proxy, so the active identity stays honest.
+  - browser → user's own PKCE token (`auth.js`) → `/api/v2/user`, direct (CORS
+    is open). No token → `NeedsAuth`.
+- **Connect-only (no anonymous path).** A full run is many heavy WCL requests, so
+  every browser run spends the connected user's OWN hourly point budget — a
+  shared/proxied budget can't carry it (this is why the anonymous Worker proxy
+  was removed). Connect = PKCE public client (`CLIENT_ID` in `config.js`, not a
+  secret). Once connected you can analyze ANY character (yours or a friend's) —
+  the user token queries any public character, billed to that user.
+- The `worker/` Cloudflare proxy now holds **no secret**: it only CORS+caches
+  Wowhead tooltips (Wowhead sends no CORS headers). There is no `/wcl` route.
+- A connected token that 401s throws `NeedsAuth` (reconnect); we clear the dead
+  token so the active identity stays honest.
 - Each analysis module exports `run(log, …)` (the card entrypoint — renders) AND
   a `…Findings` data function (`gearFindings`, `rotationFindings`,
   `timelineFindings`, …) that only computes. Keep compute and render separate.
