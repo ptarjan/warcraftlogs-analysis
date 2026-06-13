@@ -123,7 +123,15 @@ let cls = opt.class, spec = opt.spec, priority = opt.priority;
 let difficulty = opt.difficulty != null ? parseInt(opt.difficulty, 10) : undefined;
 if (!cls || !spec || difficulty === undefined || !priority) {
   log("Detecting class, spec, and difficulty…");
-  const ctx = await detectContext(name, server, region);
+  let ctx;
+  try {
+    ctx = await detectContext(name, server, region);
+  } catch (e) {
+    // No usable logs (character/server typo, never uploaded, private logs, …).
+    // Print the one-line reason, not a stack trace, and bail before any section.
+    console.error(`[error] ${e.message || e}`);
+    process.exit(1);
+  }
   cls = cls || ctx.className;
   spec = spec || ctx.specName;
   if (difficulty === undefined) difficulty = ctx.difficulty;
