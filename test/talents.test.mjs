@@ -2,7 +2,19 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 installLocalStorage();
-const { talentDiff, buildTalentIndex, talentLabel } = await import("../docs/talents.js");
+const { talentDiff, buildTalentIndex, talentLabel, looksLikeDpsTalent } = await import("../docs/talents.js");
+
+test("looksLikeDpsTalent keeps damage talents and drops utility/defensive ones", () => {
+  // real tooltip fragments: utility the field takes unanimously must NOT count.
+  assert.equal(looksLikeDpsTalent("Detox. Removes all Poison and Disease effects."), false);
+  assert.equal(looksLikeDpsTalent("Typhoon. Blasts targets, knocking them back."), false);
+  assert.equal(looksLikeDpsTalent("Increases the range of Leg Sweep."), false);
+  assert.equal(looksLikeDpsTalent("Survival Instincts. Reduces all damage taken by 50%."), false); // has "damage" but defensive
+  // genuine throughput
+  assert.equal(looksLikeDpsTalent("Exploding Keg deals 12000 Fire damage."), true);
+  assert.equal(looksLikeDpsTalent("Increases your Critical Strike by 3%."), true);
+  assert.equal(looksLikeDpsTalent(""), false);
+});
 
 test("buildTalentIndex maps Raidbots node/entry ids to names + spell ids", () => {
   // shape mirrors Raidbots talents.json: WCL nodeID === node.id, WCL id === entry.id
