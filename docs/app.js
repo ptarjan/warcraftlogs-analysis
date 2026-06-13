@@ -289,6 +289,31 @@ function setPills(hero, items) {
   }
 }
 
+// A back link at the top of the report returns to the character list (connected)
+// or the search form (anonymous) -- whichever renderMode() shows.
+function addBackBar() {
+  const bar = document.createElement("div");
+  bar.className = "backbar";
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "linkbtn back";
+  b.textContent = isAuthed() ? "← Your characters" : "← New search";
+  b.onclick = goBack;
+  bar.appendChild(b);
+  out.appendChild(bar); // first child of the freshly-cleared #out -> sits on top
+}
+function goBack() {
+  setRunning(false);
+  activeHero = null;
+  out.innerHTML = ""; cur = null;
+  // Drop the deep-link params so a reload doesn't immediately re-run the analysis.
+  try { history.replaceState(null, "", location.pathname); } catch (e) { /* ignore */ }
+  const intro = document.getElementById("intro");
+  if (intro) intro.style.display = "";
+  renderMode();              // re-shows the picker (connected) or the form (anonymous)
+  window.scrollTo(0, 0);
+}
+
 // Run the full analysis for one character. Called by the manual form (anonymous)
 // and by clicking a character in the connected picker.
 async function runAnalysis({ name, server, region, serverLabel }) {
@@ -297,8 +322,13 @@ async function runAnalysis({ name, server, region, serverLabel }) {
   primeRateReset(); // connected: learn the reset clock now, while still under budget
   out.innerHTML = ""; cur = null;
   setRunning(true);
+  // Hide the search form / character list and the intro so the report has the
+  // page to itself; the back link (added next) brings the list back.
+  form.style.display = "none";
+  const picker = $("picker"); if (picker) picker.style.display = "none";
   const intro = document.getElementById("intro");
   if (intro) intro.style.display = "none";
+  addBackBar();
   const hero = buildHero(name, serverLabel || server, region);
   activeHero = hero;
   // Build the whole report up front so every card appears at once, each already
