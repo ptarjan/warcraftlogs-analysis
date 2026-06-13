@@ -19,6 +19,38 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+// The card wiring as PURE DATA so it can be verified without running anything.
+// Each spec names the module + exported method the CLI invokes and how to build
+// its argument list from the resolved params `p`. Order = print order.
+// `cli.test.mjs` walks this list to assert every (module, method) actually
+// resolves -- that's the guard that catches a rename like analyze->overview or
+// gear.audit->gear.run before it ships (the bug this list now prevents).
+export const SECTION_SPECS = [
+  { key: "overview", title: "OVERVIEW & ITEM-LEVEL-MATCHED COMPARISON",
+    module: "./docs/overview.js", method: "run",
+    args: (p) => [p.name, p.server, p.region, p.cls, p.spec, p.difficulty] },
+  { key: "timeline", title: "TIMELINE DIAGNOSIS",
+    module: "./docs/timeline.js", method: "run",
+    args: (p) => [p.name, p.server, p.region, p.cls, p.spec, p.difficulty] },
+  { key: "rotation", title: "ROTATION: OPENER & PRIORITY",
+    module: "./docs/rotation.js", method: "run",
+    args: (p) => [p.name, p.server, p.region, p.cls, p.spec, p.difficulty] },
+  { key: "chasing99", title: "CHASING 99: YOU vs THE TOP PARSES",
+    module: "./docs/topparse.js", method: "run",
+    args: (p) => [p.name, p.server, p.region, p.cls, p.spec, p.difficulty] },
+  { key: "gear", title: "GEAR AUDIT",
+    module: "./docs/gear.js", method: "run",
+    args: (p) => [p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority] },
+  { key: "prescribe", title: "PRESCRIPTION",
+    module: "./docs/prescribe.js", method: "run",
+    args: (p) => [p.name, p.server, p.region, p.cls, p.spec, p.difficulty, p.priority] },
+];
+
+// Import a spec's module, resolved relative to THIS file (so the test can load
+// it from test/ too). Returns the module namespace.
+export const loadSectionModule = (spec) => import(new URL(spec.module, import.meta.url));
 
 // Persist WCL GraphQL results to disk between runs (wcl.js, Node-only) so
 // iterating on one character doesn't re-spend points and trip WCL's per-IP 429
@@ -26,6 +58,7 @@ import path from "node:path";
 // at the SHARED home cache (next to the item cache below) so every git worktree
 // reuses the same GraphQL results -- otherwise each worktree kept its own
 // repo-root cache and re-spent points the others had already paid for.
+async function main() {
 const CACHE_DIR = path.join(os.homedir(), ".cache", "warcraftlogs-analysis");
 process.env.WCL_GQL_CACHE = "1";
 process.env.WCL_GQL_CACHE_FILE = process.env.WCL_GQL_CACHE_FILE || path.join(CACHE_DIR, "gql-cache.json");
@@ -79,12 +112,6 @@ const only = opt.only ? new Set(opt.only.split(",").map((s) => s.trim())) : null
 
 // --- run ---
 const { detectContext, detectPriority, DIFFICULTY } = await import("./docs/core.js");
-const overview = await import("./docs/overview.js");
-const timeline = await import("./docs/timeline.js");
-const rotation = await import("./docs/rotation.js");
-const topparse = await import("./docs/topparse.js");
-const gear = await import("./docs/gear.js");
-const prescribe = await import("./docs/prescribe.js");
 
 const log = (line = "") => console.log(line);
 
@@ -104,26 +131,20 @@ if (!cls || !spec || difficulty === undefined || !priority) {
   log(`Detected: ${spec} ${cls} · ${DIFFICULTY[difficulty] || difficulty} · gear priority ${priority}`);
 }
 const p = { name, server, region, cls, spec, difficulty, priority };
-const SECTIONS = {
-  overview: ["OVERVIEW & ITEM-LEVEL-MATCHED COMPARISON",
-    () => overview.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-  timeline: ["TIMELINE DIAGNOSIS",
-    () => timeline.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-  rotation: ["ROTATION: OPENER & PRIORITY",
-    () => rotation.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-  chasing99: ["CHASING 99: YOU vs THE TOP PARSES",
-    () => topparse.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-  gear: ["GEAR AUDIT",
-    () => gear.run(log, p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority)],
-  prescribe: ["PRESCRIPTION",
-    () => prescribe.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty, p.priority)],
-};
 
 log(`=== ${p.name}-${p.server} (${p.region}) | ${p.spec} ${p.cls} | difficulty ${p.difficulty} ===`);
-for (const key of Object.keys(SECTIONS)) {
-  if (only && !only.has(key)) continue;
-  const [title, fn] = SECTIONS[key];
-  log("\n" + "#".repeat(70) + `\n# ${title}\n` + "#".repeat(70));
-  try { await fn(); }
-  catch (e) { log(`[error] ${title}: ${e.message || e}`); }
+for (const spec of SECTION_SPECS) {
+  if (only && !only.has(spec.key)) continue;
+  log("\n" + "#".repeat(70) + `\n# ${spec.title}\n` + "#".repeat(70));
+  try {
+    const mod = await loadSectionModule(spec);
+    await mod[spec.method](log, ...spec.args(p));
+  } catch (e) { log(`[error] ${spec.title}: ${e.message || e}`); }
+}
+}
+
+// Only run when invoked directly (node cli.mjs ...); stays inert on import so
+// cli.test.mjs can introspect SECTION_SPECS without executing the CLI.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
 }
