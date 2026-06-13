@@ -18,6 +18,7 @@ from wcl import PrivateReport
 from analyze import (character_zone, character_encounter, player_metrics,
                      top_rankings, secondary_stats, buff_uptimes, ENCHANTABLE_SLOTS)
 from diagnose import compare_boss
+from gear import gear_findings
 
 SLOT_NAME = ENCHANTABLE_SLOTS
 
@@ -182,29 +183,24 @@ def main():
         if my_food and my_food != tfo:
             rx.append((-1.0, "~1% DPS", f"FOOD: {my_food} -> {tfo}."))
 
-    # --- Trinkets ---
-    field_trk = [t for t, _ in field["trinkets"].most_common(4)]
-    for mt in my_trinkets:
-        if mt not in field_trk and field_trk:
-            sugg = next((t for t in field_trk if t not in my_trinkets), None)
-            if sugg:
-                rx.append((-4.0, "~3-5% DPS", f"TRINKET: '{mt}' -> '{sugg}' "
-                           f"({field['trinkets'][sugg]}/{field['n']} peers run it)."))
-
-    # --- Enchants (only slots the field actually enchants) ---
-    for slot, nm in SLOT_NAME.items():
-        if nm in my_ench:
-            continue
-        ct = sum(field["ench_by_slot"][nm].values())
-        if ct >= max(2, field["n"] * 0.5):
-            top = field["ench_by_slot"][nm].most_common(1)[0][0]
-            rx.append((-1.0, "~1% DPS", f"ENCHANT {nm}: add '{top}' "
-                       f"({ct}/{field['n']} peers have it; you don't)."))
-
-    # --- Stats ---
+    # --- Stats (allocation gap) ---
+    priority = "crit"
     if my_crit is not None and field["crit_pct"] and field["crit_pct"] - my_crit >= 4:
         rx.append((-3.5, "~3-5% DPS", f"STATS: crit {my_crit:.0f}% -> ~{field['crit_pct']:.0f}% "
-                   f"of secondaries (gem/enchant/target crit)."))
+                   f"of secondaries."))
+
+    # --- Gear: real item-stat audit (reads Wowhead, not a peer heuristic) ---
+    gf = gear_findings(N, S, R, D, CL, SP, priority)
+    if gf:
+        for slot, mine, theirs, amt in gf["swaps"]:
+            rx.append((-2.0, "~1-3% DPS", f"GEAR {slot}: '{mine}' has 0 {priority} -> "
+                       f"field runs '{theirs}' (+{amt} {priority})."))
+        if gf["crafted_slots"] and (field["crit_pct"] or 0) - (my_crit or 0) >= 3:
+            rx.append((-1.5, "~1-2% DPS", f"CRAFTED slots ({', '.join(gf['crafted_slots'])}): "
+                       f"set/recraft their secondary stats to {priority} (you choose them)."))
+        if not gf["swaps"]:
+            rx.append((0.0, "info", "GEAR: your item choices match the field -- no crit "
+                       "drop to swap to; gains are crafted-slot stats + a sim (Droptimizer)."))
 
     print("\nDO THESE IN ORDER (biggest DPS first):")
     if not rx:

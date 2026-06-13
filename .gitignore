@@ -2,6 +2,9 @@
 .env
 .wcl_token.json
 
+# Local caches
+.item_cache.json
+
 # Python
 __pycache__/
 *.pyc

@@ -57,9 +57,13 @@ survived:
 # your kills and normalized vs peers on the same fights (intermissions cancel):
 python3 diagnose.py "Hadryan" proudmoore US
 
-# A prioritized prescription: exact stat/flask/trinket/enchant swaps + the
-# execution habits to fix, each with a rough DPS-impact estimate:
+# A prioritized prescription: stat/flask/gear/execution fixes, each with a
+# rough DPS-impact estimate (this is the one to run):
 python3 prescribe.py "Hadryan" proudmoore US
+
+# Automatic gear audit: reads every item's REAL secondary stats (Wowhead
+# tooltip API, cached) and compares slot-by-slot to what the top-DPS field wears:
+python3 gear.py "Hadryan" proudmoore US --priority crit
 ```
 
 `diagnose.py` reads cast + auto-attack event timelines. The key trick: during a
@@ -85,6 +89,12 @@ peer-normalized execution excess into one ordered to-do list.
   Augmentation Evoker) still inflate top parses and aren't visible per-player.
 - `playerDetails.combatantInfo` is often empty — secondary stats come from
   `events(dataType: CombatantInfo)`, keyed by `sourceID`.
+- "What the highest-CRIT players wear in a slot" is NOT the crit item for that
+  slot -- they may get crit elsewhere (this heuristic once suggested swapping a
+  crit cloak for a versatility one). Read ACTUAL item stats; compare item
+  *choices* against top-DPS players, not stat-sorted ones.
+- WoW only exposes item IDs in logs; real per-item stats come from Wowhead's
+  tooltip API (`nether.wowhead.com/tooltip/item/<id>`), cached locally.
 - Uptime/range stats MUST be compared to peers on the same fight --
   intermissions and forced-downtime phases otherwise look like your mistakes.
 - Verify "enchantable" slots each season — some (wrist, back) were enchanted by
@@ -95,4 +105,5 @@ peer-normalized execution excess into one ordered to-do list.
 - `wcl.py` — OAuth + GraphQL client (token caching, retry, private-report skip).
 - `analyze.py` — overview + ilvl/duration-controlled comparison.
 - `diagnose.py` — comparative timeline root-cause diagnosis.
+- `gear.py` — automatic gear audit (reads real item stats vs the field).
 - `prescribe.py` — the prioritized, actionable prescription.
