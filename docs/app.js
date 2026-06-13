@@ -17,6 +17,11 @@ const $ = (id) => document.getElementById(id);
 const out = $("out"), statusEl = $("status"), goBtn = $("go"), form = $("form");
 const regionSel = $("region"), serverSel = $("server"), authEl = $("auth");
 
+// Escape user-supplied text before it goes into innerHTML (e.g. a character name
+// from a URL param shown in the connect prompt).
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
 // --- server dropdown, populated from the bundled realm list per region --- //
 let REALMS = {};
 const realmsReady = loadRealms();
@@ -64,19 +69,26 @@ function realmLabel(region, slug) {
 //   connected     -> show the search form (analyze ANY character -- yours or a
 //     friend's) AND, below it, a one-click list of YOUR own characters.
 // Best-effort: if your character list can't be built, just the form shows.
+// A character the user asked for before connecting (a shared deep link). Handed
+// to beginLogin() as returnState so it auto-runs the moment they're connected.
+let pendingChar = null;
+
 function renderConnectPrompt(picker) {
   picker.style.display = "";
   picker.innerHTML = "";
   const box = document.createElement("div");
   box.className = "connect-prompt";
+  const resumeNote = pendingChar
+    ? ` You'll see <b>${escapeHtml(pendingChar.name)}</b>'s list right after connecting.` : "";
   box.innerHTML =
     '<div class="cp-t">Connect to get your to-do list</div>' +
     '<div class="cp-s">Each analysis runs on <b>your own</b> account\'s hourly budget — so it stays fast ' +
     'and can read your private logs. Once connected, analyze <b>any</b> character: yours in one click, ' +
-    'or a friend\'s by name.</div>';
+    'or a friend\'s by name.' + resumeNote + '</div>';
   const b = document.createElement("button");
   b.type = "button"; b.className = "linkbtn accent"; b.textContent = "Connect Warcraft Logs";
-  b.onclick = () => beginLogin().catch(showAuthErr);
+  // Pass the pending character as returnState so the redirect resumes it.
+  b.onclick = () => beginLogin(pendingChar || undefined).catch(showAuthErr);
   box.appendChild(b);
   picker.appendChild(box);
 }
@@ -126,25 +138,47 @@ async function deepLink() {
   $("name").value = q.name;
   if (q.region) { regionSel.value = q.region; fillServers(); }
   if (q.server) serverSel.value = q.server;
-  // Connect-only: can only auto-run a shared link once connected. If not, fall
-  // through to the connect prompt -- the values are prefilled for after connect.
-  if (isAuthed() && q.server && q.region) {
+  if (!(q.server && q.region)) return false;       // not enough to run
+  if (isAuthed()) {
     form.style.display = "";
     const picker = $("picker"); if (picker) picker.style.display = "none";
     const serverLabel = serverSel.options[serverSel.selectedIndex]?.text || q.server;
     runAnalysis({ name: q.name, server: q.server, region: q.region, serverLabel });
     return true;
   }
+  // Connect-only: can't run a shared link until connected. Remember it so the
+  // connect prompt resumes it via OAuth returnState the moment they connect.
+  pendingChar = { name: q.name, server: q.server, region: q.region };
   return false;
+}
+
+// Run a character carried back through the OAuth round-trip (returnState) or a
+// deep link, prefilling the form for context behind the result.
+function runResume(c) {
+  form.style.display = "";
+  const picker = $("picker"); if (picker) picker.style.display = "none";
+  $("name").value = c.name;
+  regionSel.value = c.region; fillServers(); serverSel.value = c.server;
+  const serverLabel = serverSel.options[serverSel.selectedIndex]?.text || c.server;
+  runAnalysis({ name: c.name, server: c.server, region: c.region, serverLabel });
 }
 
 // On load: finish any returning OAuth redirect, reflect auth state, then show
 // the right mode (Connect prompt until connected; form + your-characters picker
 // once connected) -- unless a deep link tells us exactly which character to run.
 (async () => {
-  try { await handleRedirectCallback(); }
+  let cb = null;
+  try { cb = await handleRedirectCallback(); }
   catch (e) { showAuthErr(e); }
   renderAuth();
+  // Just connected via a shared/deep link? The character was stashed as
+  // returnState (the OAuth redirect drops the ?char= query), so resume it.
+  const resume = cb && cb.returnState;
+  if (isAuthed() && resume && resume.name && resume.server && resume.region) {
+    await realmsReady;
+    runResume(resume);
+    return;
+  }
   if (!(await deepLink())) renderMode();
 })();
 
