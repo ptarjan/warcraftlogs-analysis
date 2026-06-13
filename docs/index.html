@@ -82,6 +82,14 @@
     vertical-align: -2px; margin-right: 6px; }
   @keyframes s { to { transform: rotate(360deg); } }
 
+  /* per-card thinking indicator: a spinner shows while a section runs and is
+     removed when it finishes; failures show a small "failed" tag instead. */
+  .card-status { margin-left: auto; display: inline-flex; align-items: center; gap: 5px;
+    font-size: 10px; font-weight: 700; letter-spacing: .4px; text-transform: none;
+    color: var(--muted); }
+  .card-status.err { color: var(--warn); }
+  .card-status .spin { width: 11px; height: 11px; margin-right: 0; }
+
   /* ---------- landing intro (hidden once analysis starts) ---------- */
   .intro { margin-top: 34px; }
   .intro-lead { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
@@ -150,18 +158,19 @@
   .card { background: linear-gradient(180deg, var(--panel2), var(--panel));
     border: 1px solid var(--edge); border-radius: 14px; overflow: hidden;
     box-shadow: 0 6px 20px rgba(0,0,0,.25); }
-  .card > h2 { margin: 0; padding: 13px 18px; font-size: 12.5px; font-weight: 700;
-    letter-spacing: .6px; text-transform: uppercase; color: var(--accent);
+  /* one uniform header for every card -- title on the left, status on the
+     right -- so the primary list and the supporting analyses look alike. */
+  .card-head { margin: 0; padding: 13px 18px; display: flex; align-items: center; gap: 8px;
     border-bottom: 1px solid var(--edge); background: rgba(255,255,255,.02); }
+  .card-title { font-size: 12.5px; font-weight: 700; letter-spacing: .6px;
+    text-transform: uppercase; color: var(--accent); }
   .card .body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
-  details.card > summary { padding: 13px 18px; font-size: 12.5px; font-weight: 700;
-    letter-spacing: .6px; text-transform: uppercase; color: var(--muted); cursor: pointer;
-    list-style: none; display: flex; align-items: center; gap: 8px; }
-  details.card > summary::-webkit-details-marker { display: none; }
-  details.card > summary::before { content: "▸"; color: var(--accent); font-size: 11px; }
-  details.card[open] > summary { color: var(--accent); border-bottom: 1px solid var(--edge);
-    background: rgba(255,255,255,.02); }
-  details.card[open] > summary::before { content: "▾"; }
+  /* collapsible supporting cards: same header, plus a disclosure marker. */
+  details.card > summary.card-head { cursor: pointer; list-style: none; }
+  details.card > summary.card-head::-webkit-details-marker { display: none; }
+  details.card > summary.card-head::before { content: "▸"; color: var(--accent); font-size: 11px; }
+  details.card[open] > summary.card-head::before { content: "▾"; }
+  details.card:not([open]) > .card-head { border-bottom: none; }
   .card.primary { border-color: rgba(245,196,81,.4); box-shadow: 0 10px 34px rgba(245,196,81,.12); }
   .sub-h { font-size: 15px; font-weight: 700; color: var(--ink); }
   .sub-h2 { font-size: 13px; font-weight: 600; color: var(--info); }
