@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Warcraft Logs Analysis — what to change to do more DPS</title>
-<meta name="description" content="Enter your WoW character and get a prioritized, do-this-first list of the gear, enchants, consumables, and rotation fixes between you and the top of your item-level bracket.">
+<title>Warcraft Logs Analysis — one ranked list of what to change for more DPS</title>
+<meta name="description" content="Type your WoW character and get one prioritized, DPS-scored to-do list — the gear, enchants, gems, consumables, and rotation fixes between you and the top of your item-level bracket. What you'd normally piece together from a sim, a log analyzer, and a meta site.">
 <link rel="icon" type="image/svg+xml" href="./favicon.svg">
 <link rel="apple-touch-icon" href="./favicon.svg">
 <style>
@@ -36,7 +36,7 @@
     background: linear-gradient(92deg, #fff 8%, #ffe7a6 42%, var(--accent) 88%);
     -webkit-background-clip: text; background-clip: text; color: transparent; }
   .tagline { color: var(--muted); font-size: clamp(15px, 2.3vw, 17.5px); line-height: 1.55;
-    margin: 16px 0 0; max-width: 660px; }
+    margin: 16px 0 0; max-width: 680px; }
   .tagline b { color: var(--ink); font-weight: 600; }
 
   .auth { margin-top: 18px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -87,9 +87,20 @@
   .intro-lead { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
     color: var(--accent); }
   .intro-body { color: var(--muted); font-size: 15px; line-height: 1.65;
-    margin: 10px 0 22px; max-width: 720px; }
+    margin: 10px 0 20px; max-width: 720px; }
   .intro-body b { color: var(--ink); font-weight: 600; }
-  .feature-row { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+
+  /* "one list instead of five tools" */
+  .combines { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); }
+  .combine { padding: 13px 14px; background: rgba(255,255,255,.02);
+    border: 1px solid var(--edge); border-radius: 11px; }
+  .combine .t { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+  .combine .s { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+  .unify { margin-top: 12px; font-size: 15px; color: var(--ink); display: flex; gap: 8px; align-items: baseline; }
+  .unify .arw { color: var(--accent); font-weight: 800; }
+  .unify b { color: var(--accent); }
+
+  .feature-row { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-top: 26px; }
   .feature { padding: 18px; background: linear-gradient(180deg, var(--panel2), var(--panel));
     border: 1px solid var(--edge); border-radius: 14px; transition: transform .15s, border-color .15s; }
   .feature:hover { transform: translateY(-3px); border-color: var(--edge2); }
@@ -99,9 +110,7 @@
   .feature b { display: block; font-size: 14.5px; color: var(--ink); }
   .feature span { display: block; font-size: 13px; color: var(--muted); margin-top: 5px; line-height: 1.5; }
 
-  /* how it works */
-  .steps { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    margin-top: 16px; }
+  .steps { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-top: 16px; }
   .step { display: flex; gap: 12px; align-items: flex-start; }
   .step .n { flex: none; width: 26px; height: 26px; display: grid; place-items: center;
     border-radius: 999px; background: rgba(143,184,255,.12); border: 1px solid rgba(143,184,255,.3);
@@ -115,6 +124,8 @@
   .example-tag { font-size: 10.5px; font-weight: 700; color: var(--accent);
     background: rgba(245,196,81,.12); border: 1px solid rgba(245,196,81,.28);
     padding: 2px 8px; border-radius: 6px; letter-spacing: .5px; }
+  .pairs { margin-top: 20px; font-size: 12.5px; color: var(--muted); line-height: 1.65; }
+  .pairs b { color: var(--ink); font-weight: 600; }
 
   /* ---------- connected: click-a-character picker ---------- */
   .picker { margin-top: 8px; }
@@ -200,9 +211,9 @@
 <header>
   <div class="eyebrow reveal"><span class="blade">⚔</span> WORLD OF WARCRAFT · DPS ANALYSIS</div>
   <h1 class="reveal d1">Find exactly what's<br>costing you DPS.</h1>
-  <p class="tagline reveal d2">Enter your character and get a <b>ranked, do-this-first list</b> — the gear
-    swaps, enchants, gems, consumables, and rotation fixes standing between you and the top of your
-    item-level bracket. Each one scored by estimated DPS.</p>
+  <p class="tagline reveal d2">One ranked to-do list — <b>gear, enchants, gems, consumables, and rotation,
+    every fix scored by DPS</b> — from just your character name. The shortlist you'd otherwise piece
+    together across a sim, a log analyzer, and a meta site.</p>
   <div id="auth" class="auth reveal d2"></div>
 </header>
 <main>
@@ -224,25 +235,33 @@
   <section id="picker" class="picker reveal d2" style="display:none"></section>
 
   <section class="intro reveal d3" id="intro">
-    <div class="intro-lead">Stop guessing — get the list</div>
-    <p class="intro-body">Percentiles tell you <b>that</b> you're behind, not <b>why</b>. This pulls your
-      Warcraft Logs kills, compares them against the players at your exact item level, and turns the gaps
-      into concrete actions — biggest DPS gain first. Class, spec, difficulty, and stat priority are all
-      detected automatically. It runs entirely in your browser.</p>
+    <div class="intro-lead">One list — not five browser tabs</div>
+    <p class="intro-body">Improving your DPS usually means bouncing between a sim, a log analyzer, a meta
+      site, and your own logs — then guessing which change matters most. This does the cross-referencing
+      for you and returns <b>one list, ranked by impact</b>, comparing you to the players at your exact
+      item level. Class, spec, difficulty, and stat priority are detected automatically.</p>
+
+    <div class="combines">
+      <div class="combine"><div class="t">🧪 Gear &amp; stats</div><div class="s">what a sim like Raidbots tells you</div></div>
+      <div class="combine"><div class="t">🎮 Rotation</div><div class="s">what WoWAnalyzer tells you</div></div>
+      <div class="combine"><div class="t">📈 The meta</div><div class="s">what Archon shows the field running</div></div>
+      <div class="combine"><div class="t">📜 Your logs</div><div class="s">what Warcraft Logs records</div></div>
+    </div>
+    <div class="unify"><span class="arw">→</span><span><b>one ranked, DPS-scored to-do list</b>, from a character name.</span></div>
 
     <div class="feature-row">
       <div class="feature"><div class="f-ic">🎯</div>
-        <b>Prioritized fixes</b><span>One ranked to-do list, biggest DPS gain at the top — not a wall of numbers.</span></div>
+        <b>Ranked by impact</b><span>Biggest DPS gain at the top — gear, consumables, and play in one ordered list, not four dashboards.</span></div>
+      <div class="feature"><div class="f-ic">⚡</div>
+        <b>Just a character name</b><span>No report links, no addon exports. Type a name; everything else is detected and fetched.</span></div>
       <div class="feature"><div class="f-ic">📊</div>
-        <b>Measured vs your bracket</b><span>Compared only to players at your item level, so gear isn't a confound.</span></div>
-      <div class="feature"><div class="f-ic">⚙️</div>
-        <b>Gear &amp; rotation</b><span>Real per-item stats from Wowhead, plus your cast timeline for uptime and priority.</span></div>
+        <b>Your bracket, empirically</b><span>Measured against players at your exact item level — what they actually wear and press.</span></div>
     </div>
 
     <div class="steps">
-      <div class="step"><div class="n">1</div><div><b>Pick your character</b><span>Region, realm, name. That's all we need.</span></div></div>
-      <div class="step"><div class="n">2</div><div><b>We pull the data</b><span>Your logs and the ilvl-matched field, in parallel.</span></div></div>
-      <div class="step"><div class="n">3</div><div><b>Get your to-do list</b><span>Ranked changes, each with a DPS estimate.</span></div></div>
+      <div class="step"><div class="n">1</div><div><b>Pick your character</b><span>Region, realm, name. Connect Warcraft Logs to prefill your own.</span></div></div>
+      <div class="step"><div class="n">2</div><div><b>We pull the data</b><span>Your logs and the ilvl-matched field, fetched in parallel.</span></div></div>
+      <div class="step"><div class="n">3</div><div><b>Get your to-do list</b><span>Ranked changes, each with a DPS estimate and the evidence behind it.</span></div></div>
     </div>
 
     <div class="section-label">A sample report <span class="example-tag">EXAMPLE</span></div>
@@ -259,6 +278,10 @@
           <b>Embellishments:</b> your combo matches the #1 the field runs — no change needed.</div></div>
       </div>
     </section>
+
+    <p class="pairs">Built to get you the <b>ranked shortlist first</b>, then hand off to the specialists:
+      sim the gear candidates in Raidbots for exact numbers, or open WoWAnalyzer for deep per-spec rotation rules.
+      One pass here usually tells you which of those is even worth your time.</p>
   </section>
 
   <div id="out"></div>
