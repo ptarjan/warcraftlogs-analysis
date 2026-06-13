@@ -8,6 +8,7 @@ import { paramsFromSearch, shareSearch } from "./share.js";
 import * as analyze from "./analyze.js";
 import * as diagnose from "./diagnose.js";
 import * as rotation from "./rotation.js";
+import * as profile from "./profile.js";
 import * as gear from "./gear.js";
 import * as prescribe from "./prescribe.js";
 
@@ -236,6 +237,7 @@ const SUPPORTING = [
   ["Overview & item-level comparison", (p) => analyze.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Timeline diagnosis", (p) => diagnose.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Rotation: opener & priority", (p) => rotation.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  ["Damage profile vs the field", (p) => profile.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Gear audit", (p) => gear.audit(log, p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority)],
 ];
 
