@@ -12,6 +12,7 @@ test("dimensionOf groups each finding under the analysis it came from", () => {
   assert.equal(dimensionOf("UPTIME on specific fights: ..."), "Execution");
   assert.equal(dimensionOf("ROTATION: press Ravage ..."), "Rotation");
   assert.equal(dimensionOf("PROC: you land ..."), "Rotation");
+  assert.equal(dimensionOf("TALENTS/BUILD: you never press Ravage ..."), "Rotation");
   assert.equal(dimensionOf("FLASK: you ran none ..."), "Setup");
   assert.equal(dimensionOf("COMBAT POTION: you used none ..."), "Setup");
   assert.equal(dimensionOf("AUGMENT RUNE: you ran none ..."), "Setup");

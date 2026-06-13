@@ -23,7 +23,7 @@ export function impactScore(label) {
 // synthesis "where your DPS leaks" line. Keyed off the finding's leading label.
 export function dimensionOf(text) {
   if (/^(PRESS FASTER|UPTIME)/.test(text)) return "Execution";
-  if (/^(ROTATION|PROC)/.test(text)) return "Rotation";
+  if (/^(ROTATION|PROC|TALENTS|BUILD)/.test(text)) return "Rotation";
   if (/^(FLASK|FOOD|COMBAT POTION|POTIONS|AUGMENT RUNE|WEAPON OIL|ENCHANTS)/.test(text)) return "Setup";
   if (/^(BUFF|ROUTING|COMP)/.test(text)) return "Comp";
   return "Gear";   // "<STAT> via ...", EMBELLISHMENTS, GEAR/STATS, re-stat
@@ -323,14 +323,31 @@ export async function run(log, name, server, region, className = "Monk", specNam
     // sim it), sized by whether it's a wrong-button swap vs just under-use.
     const u = rot && rot.usage;
     if (u && u.under.length) {
-      const under = u.under.slice(0, 2).map((a) => `${a.name} (peers ${f(a.field, 1)}/min vs your ${f(a.you, 1)})`);
-      const wrongButton = u.over.length > 0;
-      const over = wrongButton
-        ? `; you over-press ${u.over.slice(0, 1).map((a) => `${a.name} (your ${f(a.you, 1)}/min vs peers ${f(a.field, 1)})`).join("")}`
-        : "";
-      rx.push([wrongButton ? -7.5 : -4.5, wrongButton ? "~5-10% DPS" : "~3-6% DPS",
-        `ROTATION: press ${under.join(" and ")} more${over} -- match your peers' ability priority ` +
-        `(likely your biggest lever; verify in a log/sim).`]);
+      const top = u.under[0];
+      const overTop = u.over[0];
+      // If you NEVER cast an ability the field leans on, it's almost certainly a
+      // missing talent, not a priority slip -- you can't press what you don't
+      // have. That's a build/respec fix (a real change to your character), so we
+      // say so instead of "press it more". (We can name the ability reliably; we
+      // can't name the talent NODE -- talentTree ids aren't spell ids -- but the
+      // ability tells you which build to copy.)
+      const neverPress = top.you < 0.2 && top.field >= 1.5;
+      if (neverPress) {
+        rx.push([-8, "~5-10% DPS",
+          `TALENTS/BUILD: you never press ${top.name}, but the field casts it ${f(top.field, 1)}/min -- ` +
+          `you're almost certainly missing the talent that grants it. Respec to the field's build ` +
+          `(the one with ${top.name}); your rotation can't include it until you do.` +
+          (overTop ? ` Right now you spend those globals on ${overTop.name}.` : "")]);
+      } else {
+        const under = u.under.slice(0, 2).map((a) => `${a.name} (peers ${f(a.field, 1)}/min vs your ${f(a.you, 1)})`);
+        const wrongButton = u.over.length > 0;
+        const over = wrongButton
+          ? `; you over-press ${u.over.slice(0, 1).map((a) => `${a.name} (your ${f(a.you, 1)}/min vs peers ${f(a.field, 1)})`).join("")}`
+          : "";
+        rx.push([wrongButton ? -7.5 : -4.5, wrongButton ? "~5-10% DPS" : "~3-6% DPS",
+          `ROTATION: press ${under.join(" and ")} more${over} -- match your peers' ability priority ` +
+          `(likely your biggest lever; verify in a log/sim).`]);
+      }
     }
     if (rot && rot.proc.isReal && rot.proc.fieldPerMin != null &&
         rot.proc.youPerMin < rot.proc.fieldPerMin - 0.4) {
