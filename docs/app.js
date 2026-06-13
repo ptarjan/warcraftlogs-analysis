@@ -45,10 +45,9 @@ function renderAuth() {
       '<button type="button" id="disconnect" class="linkbtn">Disconnect</button>';
     $("disconnect").onclick = () => { logout(); renderAuth(); renderMode(); };
   } else {
-    authEl.innerHTML =
-      '<button type="button" id="connect" class="linkbtn accent">Connect Warcraft Logs</button>' +
-      '<span class="conn muted">runs on your own rate budget · reads your private logs</span>';
-    $("connect").onclick = () => beginLogin().catch(showAuthErr);
+    // The prominent Connect call-to-action lives in the connect-prompt card
+    // (renderConnectPrompt); don't duplicate a second button in the header.
+    authEl.innerHTML = '<span class="conn muted">not connected</span>';
   }
 }
 function showAuthErr(e) { cur = makeCard("Connection error"); note(e.message || String(e), "err"); }
@@ -71,7 +70,7 @@ function renderConnectPrompt(picker) {
   const box = document.createElement("div");
   box.className = "connect-prompt";
   box.innerHTML =
-    '<div class="cp-t">Connect Warcraft Logs to start</div>' +
+    '<div class="cp-t">Connect to get your to-do list</div>' +
     '<div class="cp-s">Each analysis runs on <b>your own</b> account\'s hourly budget — so it stays fast ' +
     'and can read your private logs. Once connected, analyze <b>any</b> character: yours in one click, ' +
     'or a friend\'s by name.</div>';
