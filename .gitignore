@@ -8,6 +8,9 @@ node_modules/
 worker/.wrangler/
 .wrangler/
 
+# Build output (GitHub Pages is built by the deploy-pages workflow)
+dist/
+
 # Local caches
 .item_cache.json
 .cli-cache.json

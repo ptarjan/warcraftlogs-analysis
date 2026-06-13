@@ -1,8 +1,8 @@
 // Comparative timeline root-cause diagnosis. Ported from diagnose.py.
-import { gql, PrivateReport } from "./wcl.js?v=2";
+import { gql, PrivateReport } from "./wcl.js";
 import {
   characterZone, characterEncounter, playerMetrics, topRankings, median, f,
-} from "./core.js?v=2";
+} from "./core.js";
 
 const AUTO_ATTACK = 1; // abilityGameID for melee auto-attacks
 

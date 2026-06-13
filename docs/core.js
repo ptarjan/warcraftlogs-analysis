@@ -1,6 +1,6 @@
 // Shared constants, formatting helpers, and low-level WCL fetchers.
 // Ported from analyze.py's fetcher layer; imported by the analysis modules.
-import { gql } from "./wcl.js?v=2";
+import { gql } from "./wcl.js";
 
 export const DIFFICULTY = { 2: "LFR", 3: "Normal", 4: "Heroic", 5: "Mythic" };
 
