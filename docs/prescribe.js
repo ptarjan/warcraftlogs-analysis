@@ -215,7 +215,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
     for (const [slot, mine, theirs, amt, cnt, tot, src, chance, instance, theirsId, mineId] of gf.swaps) {
       howToStat = true;
       const from = sourceText(src, instance, chance);
-      rx.push([-2.0, "~1-3% DPS", `${PRI} via ${slot}: replace ${wowheadItem(mineId, mine)} with ${wowheadItem(theirsId, theirs)} (+${amt} ${priority}; ${cnt}/${tot} of field${from} -- sim to confirm).`]);
+      rx.push([-2.0, "~1-3% DPS", `${PRI} via ${slot}: replace ${wowheadItem(mineId, mine)} with ${wowheadItem(theirsId, theirs)} (+${amt} ${priority}; ${cnt}/${tot} of peers${from} -- sim to confirm).`]);
     }
     for (const [slot, name2, mine, best, itemId] of gf.restats) {
       howToStat = true;
@@ -225,7 +225,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
     if (embRx) rx.push(embRx);
   }
   if (statGap >= 4 && !howToStat) {
-    rx.push([0.0, "info", `${PRI}: yours (${f(my.statPct, 0)}%) is below the field (${f(field.stat_pct, 0)}%), but NOT actionable now -- every item you own is already ${priority}-maxed and no ${priority}-itemized upgrade exists to swap to. It only rises when ${priority}-itemized drops come.`]);
+    rx.push([0.0, "info", `${PRI}: yours (${f(my.statPct, 0)}%) is below your peers (${f(field.stat_pct, 0)}%), but NOT actionable now -- every item you own is already ${priority}-maxed and no ${priority}-itemized upgrade exists to swap to. It only rises when ${priority}-itemized drops come.`]);
   } else if (gf && !gf.swaps.length && !gf.restats.length && statGap < 4) {
     rx.push([0.0, "info", "GEAR/STATS: optimal for what you own -- no lever; gains are future drops + a sim (Droptimizer)."]);
   }
@@ -241,26 +241,26 @@ export async function run(log, name, server, region, className = "Monk", specNam
     // sim it), sized by whether it's a wrong-button swap vs just under-use.
     const u = rot && rot.usage;
     if (u && u.under.length) {
-      const under = u.under.slice(0, 2).map((a) => `${a.name} (field ${f(a.field, 1)}/min vs your ${f(a.you, 1)})`);
+      const under = u.under.slice(0, 2).map((a) => `${a.name} (peers ${f(a.field, 1)}/min vs your ${f(a.you, 1)})`);
       const wrongButton = u.over.length > 0;
       const over = wrongButton
-        ? `; you over-press ${u.over.slice(0, 1).map((a) => `${a.name} (your ${f(a.you, 1)}/min vs field ${f(a.field, 1)})`).join("")}`
+        ? `; you over-press ${u.over.slice(0, 1).map((a) => `${a.name} (your ${f(a.you, 1)}/min vs peers ${f(a.field, 1)})`).join("")}`
         : "";
       rx.push([wrongButton ? -7.5 : -4.5, wrongButton ? "~5-10% DPS" : "~3-6% DPS",
-        `ROTATION: press ${under.join(" and ")} more${over} -- match the field's ability priority ` +
+        `ROTATION: press ${under.join(" and ")} more${over} -- match your peers' ability priority ` +
         `(likely your biggest lever; verify in a log/sim).`]);
     }
     if (rot && rot.proc.isReal && rot.proc.fieldPerMin != null &&
         rot.proc.youPerMin < rot.proc.fieldPerMin - 0.4) {
       rx.push([-1.0, "~1-2% DPS", `PROC: you land ${f(rot.proc.youPerMin, 1)} ${rot.proc.name} ` +
-        `procs/min vs the field's ${f(rot.proc.fieldPerMin, 1)} -- generate/use it more.`]);
+        `procs/min vs your peers' ${f(rot.proc.fieldPerMin, 1)} -- generate/use it more.`]);
     }
   } catch (e) { /* rotation data unavailable -- skip */ }
 
   log("");
   log("DO THESE IN ORDER (biggest DPS first):");
   if (!rx.length) {
-    log("  You match the field on gear, consumables, stats, and execution. Remaining gains are farm kills + raid comp.");
+    log("  You match your peers on gear, consumables, stats, and execution. Remaining gains are farm kills + raid comp.");
   }
   // Sort by the actual displayed DPS impact, biggest first -- the order MUST
   // match the "% DPS" the user sees (the bug was an unrelated sort key).

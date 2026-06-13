@@ -73,14 +73,14 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // Only call out gaps of >= 3 percentage points; show the biggest handful.
   const big = rows.filter((r) => Math.abs(r.delta) >= 3).slice(0, 7);
   if (!big.length) {
-    log("Your damage breakdown closely matches the field -- no standout source gaps.");
+    log("Your damage breakdown closely matches your peers -- no standout source gaps.");
     return;
   }
-  log("Where your damage comes from differs most from the field:");
+  log("Where your damage comes from differs most from your peers:");
   for (const r of big) {
     if (r.delta < 0)
-      log(`  - ${r.ability}: field ${f(r.field, 0)}% vs you ${f(r.you, 0)}%  -- under-using (a talent or rotation gap)`);
+      log(`  - ${r.ability}: peers ${f(r.field, 0)}% vs you ${f(r.you, 0)}%  -- under-using (a talent or rotation gap)`);
     else
-      log(`  - ${r.ability}: you ${f(r.you, 0)}% vs field ${f(r.field, 0)}%  -- over-relying`);
+      log(`  - ${r.ability}: you ${f(r.you, 0)}% vs peers ${f(r.field, 0)}%  -- over-relying`);
   }
 }

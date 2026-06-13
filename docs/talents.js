@@ -101,7 +101,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   if (!you) { log("(couldn't read your talent loadout)"); return; }
 
   const peers = await fieldLoadouts(best.encounter.id, difficulty, className, specName);
-  if (!peers.length) { log("(no field talent data found)"); return; }
+  if (!peers.length) { log("(no peer talent data found)"); return; }
 
   const fieldCount = new Map(); // nodeID -> {count, id}
   for (const lo of peers) for (const [node, info] of lo) {
@@ -112,24 +112,24 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const d = talentDiff(you, fieldCount, peers.length);
   log("");
   log(`=== Talents vs ${peers.length} ilvl-matched ${specName}s ===`);
-  log(`Your build matches ${d.matched}/${d.metaTotal} of the field's commonly-taken talents.`);
+  log(`Your build matches ${d.matched}/${d.metaTotal} of your peers' commonly-taken talents.`);
 
   if (d.missing.length) {
     log("");
-    log("Meta talents you're MISSING (the field takes, you don't):");
+    log("Meta talents you're MISSING (peers take, you don't):");
     for (const t of d.missing.slice(0, 8)) {
-      log(`  - ${link(t.id, await spellName(t.id))} — ${f(100 * t.adopt, 0)}% of the field`);
+      log(`  - ${link(t.id, await spellName(t.id))} — ${f(100 * t.adopt, 0)}% of peers`);
     }
   }
   if (d.offMeta.length) {
     log("");
-    log("Off-meta picks (few of the field run these — worth re-checking):");
+    log("Off-meta picks (few peers run these — worth re-checking):");
     for (const t of d.offMeta.slice(0, 6)) {
-      log(`  - ${link(t.id, await spellName(t.id))} — only ${f(100 * t.adopt, 0)}% of the field`);
+      log(`  - ${link(t.id, await spellName(t.id))} — only ${f(100 * t.adopt, 0)}% of peers`);
     }
   }
   if (!d.missing.length && !d.offMeta.length) {
     log("");
-    log("Your talent build lines up with the field — no obvious swaps.");
+    log("Your talent build lines up with your peers — no obvious swaps.");
   }
 }

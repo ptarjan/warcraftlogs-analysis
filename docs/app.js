@@ -266,7 +266,7 @@ const SUPPORTING = [
   ["Overview & item-level comparison", (p, log) => analyze.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Timeline diagnosis", (p, log) => diagnose.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Rotation: opener & priority", (p, log) => rotation.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-  ["Damage profile vs the field", (p, log) => profile.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  ["Damage profile vs peers", (p, log) => profile.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Gear audit", (p, log) => gear.audit(log, p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority)],
 ];
 
@@ -337,7 +337,7 @@ async function runAnalysis({ name, server, region, serverLabel }) {
   // the warm cache); the supporting analyses are created right after it.
   const rxCard = makeCard("What to change", { primary: true });
   setCardState(rxCard, "busy");
-  cur = rxCard; note("Crunching your kills and the field…", "muted");
+  cur = rxCard; note("Crunching your kills and your peers…", "muted");
   const supCards = SUPPORTING.map(([title]) => {
     const card = makeCard(title, { collapsed: true });
     setCardState(card, "busy");

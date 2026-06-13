@@ -228,26 +228,26 @@ export async function run(log, name, server, region, className = "Monk",
   } else {
     const p = fnd.proc;
     log(`=== EMPOWERMENT PROC (${p.name}, non-crit big hits) ===`);
-    log(`  proc hits/min:  you ${p.youPerMin.toFixed(1)}   field ${p.fieldPerMin == null ? "?" : p.fieldPerMin.toFixed(1)}`);
+    log(`  proc hits/min:  you ${p.youPerMin.toFixed(1)}   peers ${p.fieldPerMin == null ? "?" : p.fieldPerMin.toFixed(1)}`);
     if (p.fieldPerMin != null)
       log(p.youPerMin >= p.fieldPerMin - 0.4
-        ? "  -> About the same as the field. Good."
-        : "  -> Fewer than the field -- you're under-generating/using the proc.");
+        ? "  -> About the same as peers. Good."
+        : "  -> Fewer than peers -- you're under-generating/using the proc.");
   }
 
   log("");
   log("=== OPENER ===");
   log(`  your opener:  ${fnd.opener.join(" > ")}`);
-  if (fnd.fieldOpener) log(`  field opener: ${fnd.fieldOpener.join(" > ")}`);
+  if (fnd.fieldOpener) log(`  peers' opener: ${fnd.fieldOpener.join(" > ")}`);
 
   const u = fnd.usage || { under: [], over: [] };
   if (u.under.length || u.over.length) {
     log("");
-    log(`=== ABILITY USAGE vs FIELD (casts/min, ${fnd.fieldPeers} peers) ===`);
+    log(`=== ABILITY USAGE vs PEERS (casts/min, ${fnd.fieldPeers} peers) ===`);
     for (const a of u.under.slice(0, 4))
-      log(`  UNDER-USE  ${a.name.padEnd(20)} you ${a.you.toFixed(1)}/min  field ${a.field.toFixed(1)}/min  <-- press it more`);
+      log(`  UNDER-USE  ${a.name.padEnd(20)} you ${a.you.toFixed(1)}/min  peers ${a.field.toFixed(1)}/min  <-- press it more`);
     for (const a of u.over.slice(0, 4))
-      log(`  OVER-USE   ${a.name.padEnd(20)} you ${a.you.toFixed(1)}/min  field ${a.field.toFixed(1)}/min  <-- field barely presses this`);
-    if (u.under.length) log("  -> Shift presses toward what the field actually casts (likely your biggest lever).");
+      log(`  OVER-USE   ${a.name.padEnd(20)} you ${a.you.toFixed(1)}/min  peers ${a.field.toFixed(1)}/min  <-- peers barely press this`);
+    if (u.under.length) log("  -> Shift presses toward what peers actually cast (likely your biggest lever).");
   }
 }

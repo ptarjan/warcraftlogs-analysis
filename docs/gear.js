@@ -224,8 +224,8 @@ export async function gearFindings(name, server, region, difficulty, className, 
     const ist = await itemStats(g.id, g.bonusIDs);
     const topId = topItem(perSlot[s]);
     let match;
-    if (topId === g.id) match = "== field";
-    else if (topId) match = `field: ${(await itemStats(topId, bonusSample[topId])).name.slice(0, 22)}`;
+    if (topId === g.id) match = "== peers";
+    else if (topId) match = `peers: ${(await itemStats(topId, bonusSample[topId])).name.slice(0, 22)}`;
     else match = "?";
     rows.push([SLOT[s], ist, match, ist.embellished]);
     if (ist.embellished) { embellishedSlots.push(SLOT[s]); yourEmbItems.push(ist.name); }
@@ -314,7 +314,7 @@ export async function audit(log, name, server, region, difficulty, className, sp
   if (!ff) throw new Error("No gear found.");
   log("");
   log(`=== Gear audit for ${name} (priority: ${priority}) | vs ${ff.n} top-DPS ${specName}s ===`);
-  log(`${"SLOT".padEnd(9)} ${"YOUR ITEM".padEnd(30)} ${"crit/hst/mas/ver".padEnd(17)} matches field?`);
+  log(`${"SLOT".padEnd(9)} ${"YOUR ITEM".padEnd(30)} ${"crit/hst/mas/ver".padEnd(17)} matches peers?`);
   for (const [slot, ist, match, embellished] of ff.rows) {
     const secs = `${String(ist.crit).padStart(3)}/${String(ist.haste).padStart(3)}/${String(ist.mastery).padStart(3)}/${String(ist.vers).padStart(3)}`;
     log(`${slot.padEnd(9)} ${ist.name.slice(0, 30).padEnd(30)} ${secs.padEnd(17)} ${match}${embellished ? " [EMBELLISHED]" : ""}`);
@@ -331,9 +331,9 @@ export async function audit(log, name, server, region, difficulty, className, sp
   if (ec) {
     const rank = ec.your_rank ? `#${ec.your_rank[0]} most common (${ec.your_rank[1]}/${ec.field_n})` : "NOT seen in the field";
     log("");
-    log(`Embellishment combo vs field: yours = ${ec.your_combo.join(" + ") || "none"} -> ${rank}.`);
-    log(`  top field combos: ${ec.top_combos.map(([c, n]) => `${c.join("+")} (${n})`).join(", ")}`);
-    log(`  your embellishment items' field popularity: ${ec.your_items_pop.map(([nm, pop]) => `${nm} (${pop})`).join(", ")}`);
+    log(`Embellishment combo vs peers: yours = ${ec.your_combo.join(" + ") || "none"} -> ${rank}.`);
+    log(`  top peer combos: ${ec.top_combos.map(([c, n]) => `${c.join("+")} (${n})`).join(", ")}`);
+    log(`  your embellishment items' popularity among peers: ${ec.your_items_pop.map(([nm, pop]) => `${nm} (${pop})`).join(", ")}`);
     if (ec.recommended && ec.recommended.length)
       log(`  -> craft the #1 combo's items: ${ec.recommended.map(([sl, nm, cnt]) => `${nm} on ${sl} (${cnt}/${ec.field_n})`).join(", ")}`);
     else if (!ec.your_rank) log("  -> Consider matching a top combo above (yours isn't one top performers run).");
@@ -342,19 +342,19 @@ export async function audit(log, name, server, region, difficulty, className, sp
   const gi = ff.gems;
   const totalGems = [...gi.your_gems.values()].reduce((s, v) => s + v, 0);
   log("");
-  log(`Gems: you run ${totalGems} gem(s), ${gi.your_variety} distinct color(s); field median ${gi.field_variety_med} distinct.`);
-  log(`  field's most-used gems (id x count): ${JSON.stringify(gi.field_top)}`);
+  log(`Gems: you run ${totalGems} gem(s), ${gi.your_variety} distinct color(s); peer median ${gi.field_variety_med} distinct.`);
+  log(`  peers' most-used gems (id x count): ${JSON.stringify(gi.field_top)}`);
   log(`  your gems (id x count): ${JSON.stringify(Object.fromEntries(gi.your_gems))}`);
 
   if (ff.swaps.length) {
     log("");
-    log(`${priority[0].toUpperCase() + priority.slice(1)} drop CANDIDATES (a crit-itemized item the field runs in a non-tier/non-embellished slot of yours -- sim to confirm net gain):`);
+    log(`${priority[0].toUpperCase() + priority.slice(1)} drop CANDIDATES (a crit-itemized item peers run in a non-tier/non-embellished slot of yours -- sim to confirm net gain):`);
     for (const [slot, mine, theirs, amt, cnt, tot, src, chance, instance, theirsId, mineId] of ff.swaps) {
-      log(`  ${slot}: ${wowheadItem(mineId, mine)} -> ${wowheadItem(theirsId, theirs)} (+${amt} ${priority}; ${cnt}/${tot} of field)${sourceText(src, instance, chance)}`);
+      log(`  ${slot}: ${wowheadItem(mineId, mine)} -> ${wowheadItem(theirsId, theirs)} (+${amt} ${priority}; ${cnt}/${tot} of peers)${sourceText(src, instance, chance)}`);
     }
   } else {
     log("");
-    log(`No ${priority} drop-swap available -- no field item in any slot beats your ${priority} by enough to matter.`);
+    log(`No ${priority} drop-swap available -- no item peers run in any slot beats your ${priority} by enough to matter.`);
   }
   if (ff.restats.length) {
     log("");
@@ -362,6 +362,6 @@ export async function audit(log, name, server, region, difficulty, className, sp
     for (const [slot, name2, mine, best, itemId] of ff.restats) log(`  ${slot} ${wowheadItem(itemId, name2)}: you ${mine} ${priority} -> achievable ${best}`);
   } else {
     log("");
-    log(`No re-stat gains: on every item you own, nobody in the field runs more ${priority} than you -- your stats are maxed/fixed for the gear you have.`);
+    log(`No re-stat gains: on every item you own, no peer runs more ${priority} than you -- your stats are maxed/fixed for the gear you have.`);
   }
 }
