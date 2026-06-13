@@ -1,0 +1,9 @@
+# Secrets — never commit
+.env
+.wcl_token.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
