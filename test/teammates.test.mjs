@@ -1,8 +1,7 @@
 // raidTeammates(): from your own kills' report rosters, surface the players you
 // most often raid with -- counting shared kills, excluding yourself and pets,
-// sorted most-frequent-first. WCL renders an actor's "server" as either a bare
-// string or a {name,region} object depending on the schema, so the query tries
-// both selections; these tests pin both shapes.
+// sorted most-frequent-first. Per the WCL v2 schema, ReportActor.server is a
+// String (realm name); region isn't on the actor, so it's yours.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { installLocalStorage, mockFetch } from "./helpers.mjs";
@@ -13,14 +12,13 @@ process.env.WCL_CLIENT_SECRET = "test-secret";
 
 const TOKEN = ["oauth/token", { json: { access_token: "tok", expires_in: 3600 } }];
 
-// Route /api/v2/client by inspecting the GraphQL query text. `shape` controls how
-// the mocked WCL renders actor.server: as a string, or as a {name,region} object
-// (in which case the scalar `server` selection errors, forcing the fallback).
-function wclRoute(rosters, shape = "string") {
+// Route /api/v2/client by inspecting the GraphQL query text: your killed bosses,
+// your kills' report codes, then each report's player roster (masterData.actors).
+function wclRoute(rosters) {
   return ["/api/v2/client", (_u, opts) => {
     const q = JSON.parse(opts.body).query;
     if (/zoneRankings/.test(q)) {
-      const has5 = /difficulty:5/.test(q);
+      const has5 = /difficulty:5/.test(q); // only Mythic has kills here
       return { json: { data: { characterData: { character: {
         zoneRankings: { rankings: has5 ? [{ encounter: { id: 1, name: "B1" }, totalKills: 2 }] : [] } } } } } };
     }
@@ -29,14 +27,8 @@ function wclRoute(rosters, shape = "string") {
         ranks: [{ report: { code: "R1" } }, { report: { code: "R2" } }] } } } } } };
     }
     if (/masterData/.test(q)) {
-      const objSel = /server\s*\{/.test(q);
-      if (shape === "object" && !objSel)            // scalar selection on an object field -> error
-        return { json: { errors: [{ message: "Field 'server' must have a selection of subfields" }] } };
       const code = (q.match(/code:"(\w+)"/) || [])[1];
-      const actors = (rosters[code] || []).map((a) => shape === "object"
-        ? { name: a.name, type: a.type, server: a.server ? { name: a.server, region: "US" } : null }
-        : a);
-      return { json: { data: { reportData: { report: { masterData: { actors } } } } } };
+      return { json: { data: { reportData: { report: { masterData: { actors: rosters[code] || [] } } } } } };
     }
     return { json: { data: {} } };
   }];
@@ -63,23 +55,14 @@ async function load() {
   return raidTeammates;
 }
 
-test("raidTeammates: tally / exclude self+pets / sort (server as string)", async () => {
+test("raidTeammates: tally / exclude self+pets / sort", async () => {
   const raidTeammates = await load();
-  globalThis.fetch = mockFetch([TOKEN, wclRoute(ROSTERS, "string")]);
+  globalThis.fetch = mockFetch([TOKEN, wclRoute(ROSTERS)]);
   const mates = await raidTeammates("Me", "proudmoore", "US");
   assert.equal(mates.find((m) => m.name === "Me"), undefined, "excludes yourself");
   assert.equal(mates.find((m) => m.name === "Critter"), undefined, "excludes pets");
   assert.deepEqual(mates[0], { name: "Tank", server: "Proudmoore", region: "US", shared: 2 });
   assert.equal(mates.length, 3); // Tank, Healer, Mage
-});
-
-test("raidTeammates: falls back to the object server selection", async () => {
-  const raidTeammates = await load();
-  globalThis.fetch = mockFetch([TOKEN, wclRoute(ROSTERS, "object")]);
-  const mates = await raidTeammates("Me", "proudmoore", "US");
-  // Same result whether WCL gives server as a string or an object.
-  assert.deepEqual(mates[0], { name: "Tank", server: "Proudmoore", region: "US", shared: 2 });
-  assert.equal(mates.length, 3);
 });
 
 test("raidTeammates: no kills -> empty (never throws)", async () => {
