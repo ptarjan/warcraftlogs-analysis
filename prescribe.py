@@ -186,10 +186,10 @@ def run(name, server, region, class_name="Monk", spec_name="Brewmaster",
     how_to_crit = False
     if gf:
         # Concrete ways to gain crit (these ARE the "how"):
-        for slot, mine, theirs, amt in gf["swaps"]:
+        for slot, mine, theirs, amt, cnt, tot in gf["swaps"]:
             how_to_crit = True
-            rx.append((-2.0, "~1-3% DPS", f"CRIT via {slot}: replace '{mine}' (0 {priority}) "
-                       f"with '{theirs}' (+{amt} {priority})."))
+            rx.append((-2.0, "~1-3% DPS", f"CRIT via {slot}: replace '{mine}' with "
+                       f"'{theirs}' (+{amt} {priority}; {cnt}/{tot} of the field runs it)."))
         for slot, name, mine, best in gf["restats"]:
             how_to_crit = True
             rx.append((-1.5, "~1-2% DPS", f"CRIT via {slot}: '{name}' is selectable -- recraft "
@@ -198,6 +198,13 @@ def run(name, server, region, class_name="Monk", spec_name="Brewmaster",
         if len(emb) < 2:
             rx.append((-2.5, "~2-4% DPS", f"EMBELLISHMENTS: you run {len(emb)}/2 -- fill the "
                        f"free slot (throughput you can't get from drops)."))
+        tf = gf.get("tier_flex")
+        if tf:
+            how_to_crit = True
+            rx.append((-1.5, "~1-2% DPS", f"TIER FLEX: your {tf['slot']} ('{tf['item']}', ilvl "
+                       f"{tf['ilvl']}) is a crafted non-embellished flex piece -- wear TIER "
+                       f"{tf['slot']} and flex a different tier slot to a crit drop (keeps 4pc, "
+                       f"+ilvl, +crit). Sim the combo."))
     # Only mention the crit gap if we can't act on it -- and say WHY, not "raise crit".
     if crit_gap >= 4 and not how_to_crit:
         rx.append((0.0, "info", f"CRIT: yours ({my_crit:.0f}%) is below the field "

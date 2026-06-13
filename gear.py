@@ -26,6 +26,9 @@ CACHE = os.path.join(os.path.dirname(__file__), ".item_cache.json")
 SLOT = {0: "Head", 1: "Neck", 2: "Shoulder", 4: "Chest", 5: "Belt", 6: "Legs",
         7: "Feet", 8: "Wrist", 9: "Hands", 10: "Ring1", 11: "Ring2",
         12: "Trinket1", 13: "Trinket2", 14: "Back", 15: "Weapon"}
+# Tier-set token slots: you only need 4 of these 5 for the 4pc bonus, so one is
+# a "flex" slot you can fill with a non-tier piece without losing the set.
+TIER_SLOTS = {0, 2, 4, 6, 9}  # Head, Shoulder, Chest, Legs, Hands
 STATS = ("Critical Strike", "Haste", "Mastery", "Versatility")
 SHORT = {"Critical Strike": "crit", "Haste": "haste", "Mastery": "mastery",
          "Versatility": "vers"}
@@ -191,13 +194,48 @@ def gear_findings(name, server, region, difficulty, class_name, spec_name, prior
                 best = v
         if best > ist.get(priority, 0) + 15:
             restats.append((SLOT[s], ist["name"], ist.get(priority, 0), best))
-        # Drop swap: YOUR piece lacks the priority stat AND the field's item has
-        # it AND it isn't a Unique you already wear elsewhere.
-        if ist.get(priority, 0) == 0 and top_id and top_id != g["id"]:
-            alt = item_stats(top_id, bonus_sample.get(top_id))
-            already = alt.get("unique") and top_id in my_item_ids
-            if alt.get(priority, 0) > 0 and not already:
-                swaps.append((SLOT[s], ist["name"], alt["name"], alt[priority]))
+        # Drop swap: scan EVERY item the field runs in this slot (not just the
+        # most common) for one with meaningfully more of the priority stat.
+        # ONLY for slots where a swap costs nothing structural: not a trinket
+        # (effect-based), not one of YOUR embellished slots (lose the
+        # embellishment), and not a tier-eligible slot (those interact with the
+        # set bonus -- handled separately by the tier-flex analysis below).
+        structural = (s in (12, 13)) or ist.get("embellished") or (s in TIER_SLOTS)
+        yours_pri = ist.get(priority, 0)
+        slot_total = sum(per_slot.get(s, Counter()).values()) or 1
+        best_alt = None
+        if not structural:
+            for cand_id, cnt in per_slot.get(s, Counter()).items():
+                if cand_id == g["id"]:
+                    continue
+                cst = item_stats(cand_id, bonus_sample.get(cand_id))
+                if cst.get("unique") and cand_id in my_item_ids:
+                    continue
+                # require real adoption (>=3 of the field) to skip off-meta noise
+                if cst.get(priority, 0) - yours_pri >= 30 and cnt >= 3:
+                    if not best_alt or cst[priority] > best_alt[1]:
+                        best_alt = (cst["name"], cst[priority], cnt)
+        if best_alt:
+            swaps.append((SLOT[s], ist["name"], best_alt[0], best_alt[1],
+                          best_alt[2], slot_total))
+    # Tier-set flex analysis: you need only 4 of 5 tier slots. If your non-tier
+    # ("flex") tier slot is a crafted, NON-embellished, lower-ilvl piece, that's
+    # wasted -- you'd do better with tier there and flexing a different slot to a
+    # crit non-tier drop. The exact combination is a sim (Droptimizer) decision.
+    tier_have = [g for g in you["gear"] if g.get("slot") in TIER_SLOTS and g.get("setID")]
+    flex = [g for g in you["gear"] if g.get("slot") in TIER_SLOTS and not g.get("setID")]
+    tier_flex = None
+    if len(tier_have) >= 4 and flex:
+        tier_ilvls = sorted(t.get("itemLevel") or 0 for t in tier_have)
+        tier_med = tier_ilvls[len(tier_ilvls) // 2] if tier_ilvls else None
+        for g in flex:
+            fst = item_stats(g["id"], g.get("bonusIDs"))
+            if not fst.get("embellished"):
+                tier_flex = {"slot": SLOT[g["slot"]], "item": fst["name"],
+                             "ilvl": g.get("itemLevel") or fst.get("ilvl"),
+                             "tier_ilvl": tier_med}
+                break
+
     # Gem analysis: your usage + variety vs the field.
     my_gems = [gm.get("id") for g in you["gear"] for gm in g.get("gems", [])]
     gem_info = {
@@ -207,7 +245,8 @@ def gear_findings(name, server, region, difficulty, class_name, spec_name, prior
                               if fc["gem_variety"] else None),
     }
     return {"rows": rows, "swaps": swaps, "embellished_slots": embellished_slots,
-            "restats": restats, "n": npl, "priority": priority, "gems": gem_info}
+            "restats": restats, "tier_flex": tier_flex, "n": npl,
+            "priority": priority, "gems": gem_info}
 
 
 def audit(name, server, region, difficulty, class_name, spec_name, priority):
@@ -230,6 +269,13 @@ def audit(name, server, region, difficulty, class_name, spec_name, priority):
     if len(emb) < 2:
         print(f"  -> You have a free embellishment slot -- a big throughput gain you're "
               f"not using.")
+    tf = f.get("tier_flex")
+    if tf:
+        print(f"\nTier flex: your {tf['slot']} ('{tf['item']}', ilvl {tf['ilvl']}) is your "
+              f"non-tier 'flex' slot but it's crafted & NOT embellished"
+              + (f" (tier med ilvl {tf['tier_ilvl']})" if tf['tier_ilvl'] else "") + ".")
+        print(f"  -> Wear TIER {tf['slot']} instead, and flex a DIFFERENT tier slot to a crit "
+              f"non-tier drop. Keeps 4pc, raises ilvl, adds crit. Sim to pick the combo.")
     # Gems
     gi = f["gems"]
     print(f"\nGems: you run {sum(gi['your_gems'].values())} gem(s), {gi['your_variety']} "
@@ -238,12 +284,13 @@ def audit(name, server, region, difficulty, class_name, spec_name, priority):
     print(f"  your gems (id x count): {dict(gi['your_gems'])}")
 
     if f["swaps"]:
-        print(f"\nReal {priority} drop-swaps (your piece lacks it, field's has it, not a "
-              f"Unique you already wear):")
-        for slot, mine, theirs, amt in f["swaps"]:
-            print(f"  {slot}: '{mine}' -> '{theirs}' (+{amt} {priority})")
+        print(f"\n{priority.title()} drop CANDIDATES (a crit-itemized item the field runs in a "
+              f"non-tier/non-embellished slot of yours -- sim to confirm net gain):")
+        for slot, mine, theirs, amt, cnt, tot in f["swaps"]:
+            print(f"  {slot}: '{mine}' -> '{theirs}' (+{amt} {priority}; {cnt}/{tot} of field)")
     else:
-        print(f"\nNo {priority} drop-swap available -- your item choices match the field.")
+        print(f"\nNo {priority} drop-swap available -- no field item in any slot beats your "
+              f"{priority} by enough to matter.")
     if f["restats"]:
         print(f"\nRe-stat opportunities (others run MORE {priority} on your SAME item, so "
               f"the stats are selectable):")
