@@ -27,7 +27,7 @@ async function collectIlvlPeers(encounterId, difficulty, className, specName,
     limit: n + 4, pages, ilvl: targetIlvl, window: ilvlWindow });
   const metrics = await mapLimit(cands, 5, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
-    if (m) m.rank_dur = (r.duration || 0) / 1000;
+    if (m) m.rankDur = (r.duration || 0) / 1000;
     return m;
   });
   return metrics.filter(Boolean).slice(0, n);
@@ -53,8 +53,8 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
 
   log(`  vs ${peers.length} ilvl-matched peers:`);
   log(`    DPS:          you ${padL(f(you.dps, 0), 9)}   peer med ${padL(f(pmed("dps"), 0), 9)}`);
-  log(`    casts/min:    you ${padL(f(you.casts_per_min, 1), 9)}   peer med ${padL(f(pmed("casts_per_min"), 1), 9)}`);
-  log(`    active %:     you ${padL(f(you.active_pct, 1), 9)}   peer med ${padL(f(pmed("active_pct"), 1), 9)}`);
+  log(`    casts/min:    you ${padL(f(you.castsPerMin, 1), 9)}   peer med ${padL(f(pmed("castsPerMin"), 1), 9)}`);
+  log(`    active %:     you ${padL(f(you.activePct, 1), 9)}   peer med ${padL(f(pmed("activePct"), 1), 9)}`);
   log(`    targets hit:  you ${padL(you.targets, 9)}   peer med ${padL(f(pmed("targets"), 1), 9)}`);
 
   const near = peers.filter((p) => Math.abs(p.dur - you.dur) <= 40).map((p) => p.dps);

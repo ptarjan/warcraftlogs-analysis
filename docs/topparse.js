@@ -102,10 +102,10 @@ export async function topParseFindings(name, server, region, difficulty, classNa
     return m ? { m } : null;
   })).filter(Boolean);
 
-  const youRoute = nonBossShare(you.dmg_targets, mine.encounter.name);
+  const youRoute = nonBossShare(you.dmgTargets, mine.encounter.name);
   let routing = null, potions = null;
   if (tops.length) {
-    const topRoutes = tops.map((t) => nonBossShare(t.m.dmg_targets, mine.encounter.name));
+    const topRoutes = tops.map((t) => nonBossShare(t.m.dmgTargets, mine.encounter.name));
     const addAgg = new Map();
     for (const r of topRoutes) for (const [nm, tot] of r.byAdd) addAgg.set(nm, (addAgg.get(nm) || 0) + tot);
     const youHits = new Set([...youRoute.byAdd.keys()]);

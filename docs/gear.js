@@ -273,8 +273,8 @@ export async function gearFindings(name, server, region, difficulty, className, 
     .map((sl) => { const it = topItemInSlot(sl); return it ? [sl, it[0], it[1]] : null; })
     .filter(Boolean); // [[slot, itemName, count], ...]
   const embCompare = {
-    your_combo: yourCombo, your_rank: yourRank, top_combos: comboList.slice(0, 4),
-    field_n: fe.n, your_items_pop: yourItemsPop, top_items: topItems, recommended,
+    yourCombo: yourCombo, yourRank: yourRank, topCombos: comboList.slice(0, 4),
+    fieldN: fe.n, yourItemsPop: yourItemsPop, topItems: topItems, recommended,
   };
 
   // Holistic per-slot reconciliation: a slot earmarked for an embellishment
@@ -290,11 +290,11 @@ export async function gearFindings(name, server, region, difficulty, className, 
   const fieldTop = [...fc.gems.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
   const variety = fc.gemVariety.slice().sort((a, b) => a - b);
   const gemInfo = {
-    your_gems: gemCount, your_variety: new Set(myGems).size,
-    field_top: fieldTop,
-    field_variety_med: variety.length ? variety[Math.floor(variety.length / 2)] : null,
+    yourGems: gemCount, yourVariety: new Set(myGems).size,
+    fieldTop: fieldTop,
+    fieldVarietyMed: variety.length ? variety[Math.floor(variety.length / 2)] : null,
   };
-  return { rows, swaps: reconciledSwaps, embellishedSlots, restats, emb_compare: embCompare, n: fc.n, priority, gems: gemInfo };
+  return { rows, swaps: reconciledSwaps, embellishedSlots, restats, embCompare: embCompare, n: fc.n, priority, gems: gemInfo };
 }
 
 export async function run(log, name, server, region, difficulty, className, specName, priority) {
@@ -315,24 +315,24 @@ export async function run(log, name, server, region, difficulty, className, spec
   log(`Embellishments: ${emb.length ? emb.join(", ") : "none detected"} (${emb.length}/2 used).`);
   if (emb.length < 2) log("  -> You have a free embellishment slot -- a big throughput gain you're not using.");
 
-  const ec = ff.emb_compare;
+  const ec = ff.embCompare;
   if (ec) {
-    const rank = ec.your_rank ? `#${ec.your_rank[0]} most common (${ec.your_rank[1]}/${ec.field_n})` : "NOT seen in the field";
+    const rank = ec.yourRank ? `#${ec.yourRank[0]} most common (${ec.yourRank[1]}/${ec.fieldN})` : "NOT seen in the field";
     log("");
-    log(`Embellishment combo vs peers: yours = ${ec.your_combo.join(" + ") || "none"} -> ${rank}.`);
-    log(`  top peer combos: ${ec.top_combos.map(([c, n]) => `${c.join("+")} (${n})`).join(", ")}`);
-    log(`  your embellishment items' popularity among peers: ${ec.your_items_pop.map(([nm, pop]) => `${nm} (${pop})`).join(", ")}`);
+    log(`Embellishment combo vs peers: yours = ${ec.yourCombo.join(" + ") || "none"} -> ${rank}.`);
+    log(`  top peer combos: ${ec.topCombos.map(([c, n]) => `${c.join("+")} (${n})`).join(", ")}`);
+    log(`  your embellishment items' popularity among peers: ${ec.yourItemsPop.map(([nm, pop]) => `${nm} (${pop})`).join(", ")}`);
     if (ec.recommended && ec.recommended.length)
-      log(`  -> craft the #1 combo's items: ${ec.recommended.map(([sl, nm, cnt]) => `${nm} on ${sl} (${cnt}/${ec.field_n})`).join(", ")}`);
-    else if (!ec.your_rank) log("  -> Consider matching a top combo above (yours isn't one top performers run).");
+      log(`  -> craft the #1 combo's items: ${ec.recommended.map(([sl, nm, cnt]) => `${nm} on ${sl} (${cnt}/${ec.fieldN})`).join(", ")}`);
+    else if (!ec.yourRank) log("  -> Consider matching a top combo above (yours isn't one top performers run).");
   }
 
   const gi = ff.gems;
-  const totalGems = [...gi.your_gems.values()].reduce((s, v) => s + v, 0);
+  const totalGems = [...gi.yourGems.values()].reduce((s, v) => s + v, 0);
   log("");
-  log(`Gems: you run ${totalGems} gem(s), ${gi.your_variety} distinct color(s); peer median ${gi.field_variety_med} distinct.`);
-  log(`  peers' most-used gems (id x count): ${JSON.stringify(gi.field_top)}`);
-  log(`  your gems (id x count): ${JSON.stringify(Object.fromEntries(gi.your_gems))}`);
+  log(`Gems: you run ${totalGems} gem(s), ${gi.yourVariety} distinct color(s); peer median ${gi.fieldVarietyMed} distinct.`);
+  log(`  peers' most-used gems (id x count): ${JSON.stringify(gi.fieldTop)}`);
+  log(`  your gems (id x count): ${JSON.stringify(Object.fromEntries(gi.yourGems))}`);
 
   if (ff.swaps.length) {
     log("");

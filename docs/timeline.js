@@ -62,15 +62,15 @@ async function fightMetrics(code, fight, sourceId, className = "Monk") {
   }
   const totalLost = lostNotPressing + lostRangeMove;
   return {
-    dur, gcd, swing, n_gcds: merged.length,
-    lost_not_pressing_s: lostNotPressing / 1000,
-    lost_range_move_s: lostRangeMove / 1000,
-    total_lost_s: totalLost / 1000,
-    lost_per_min: (totalLost / 1000) / (dur / 60),
-    range_lost_per_min: (lostRangeMove / 1000) / (dur / 60),
-    press_lost_per_min: (lostNotPressing / 1000) / (dur / 60),
-    auto_down_pct: 100 * autoDown / (dur * 1000),
-    overshoot_ms: overshoot || 0,
+    dur, gcd, swing, nGcds: merged.length,
+    lostNotPressingS: lostNotPressing / 1000,
+    lostRangeMoveS: lostRangeMove / 1000,
+    totalLostS: totalLost / 1000,
+    lostPerMin: (totalLost / 1000) / (dur / 60),
+    rangeLostPerMin: (lostRangeMove / 1000) / (dur / 60),
+    pressLostPerMin: (lostNotPressing / 1000) / (dur / 60),
+    autoDownPct: 100 * autoDown / (dur * 1000),
+    overshootMs: overshoot || 0,
     stalls,
   };
 }
@@ -108,27 +108,27 @@ export async function timelineFindings(name, server, region, encounter, difficul
     ilvls.length ? Math.max(...ilvls) : 0);
   const ymed = (k) => median(yourFms.map((x) => x[k]));
   const pmed = (k) => (peers.length ? median(peers.map((x) => x[k])) : NaN);
-  const keys = ["lost_per_min", "range_lost_per_min", "press_lost_per_min", "auto_down_pct", "overshoot_ms"];
+  const keys = ["lostPerMin", "rangeLostPerMin", "pressLostPerMin", "autoDownPct", "overshootMs"];
   const you = {}, peer = {};
   for (const k of keys) { you[k] = ymed(k); peer[k] = pmed(k); }
-  return { boss: encounter.name, your_kills: yourFms.length, peers: peers.length, you, peer };
+  return { boss: encounter.name, yourKills: yourFms.length, peers: peers.length, you, peer };
 }
 
 function printBossComparison(log, c) {
   log("");
-  log(`  ${c.boss}  (your ${c.your_kills} kills vs ${c.peers} peers)`);
+  log(`  ${c.boss}  (your ${c.yourKills} kills vs ${c.peers} peers)`);
   const rows = [
-    ["lost GCD time /min", "lost_per_min", "s"],
-    ["  - out of range/moving /min", "range_lost_per_min", "s"],
-    ["  - in range, not pressing /min", "press_lost_per_min", "s"],
-    ["out-of-melee % of fight", "auto_down_pct", "%"],
-    ["GCD overshoot (latency)", "overshoot_ms", "ms"],
+    ["lost GCD time /min", "lostPerMin", "s"],
+    ["  - out of range/moving /min", "rangeLostPerMin", "s"],
+    ["  - in range, not pressing /min", "pressLostPerMin", "s"],
+    ["out-of-melee % of fight", "autoDownPct", "%"],
+    ["GCD overshoot (latency)", "overshootMs", "ms"],
   ];
   for (const [label, key, unit] of rows) {
     const y = c.you[key], p = c.peer[key];
     const delta = y - p;
     let flag = "";
-    if (key !== "overshoot_ms" && delta > 1.0) flag = "  <-- WORSE than peers";
+    if (key !== "overshootMs" && delta > 1.0) flag = "  <-- WORSE than peers";
     const sign = delta >= 0 ? "+" : "";
     log(`    ${label.padEnd(34)} you ${String(f(y, 1)).padStart(6)}${unit}  peer ${String(f(p, 1)).padStart(6)}${unit}  (${sign}${f(delta, 1)})${flag}`);
   }
@@ -142,7 +142,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   if (boss) ranks = ranks.filter((r) => r.encounter.name.toLowerCase().includes(boss.toLowerCase()));
   log("");
   log(`=== Comparative timeline diagnosis: ${name} (vs ilvl-matched peers, intermissions cancel out) ===`);
-  const agg = { lost_per_min: [], range_lost_per_min: [], press_lost_per_min: [], auto_down_pct: [] };
+  const agg = { lostPerMin: [], rangeLostPerMin: [], pressLostPerMin: [], autoDownPct: [] };
   for (const r of ranks) {
     let comp;
     try {
@@ -156,13 +156,13 @@ export async function run(log, name, server, region, className = "Monk", specNam
       for (const k of Object.keys(agg)) agg[k].push(comp.you[k] - comp.peer[k]);
     }
   }
-  if (agg.lost_per_min.length) {
+  if (agg.lostPerMin.length) {
     log("");
-    log(`  === AGGREGATE excess vs peers (median across ${agg.lost_per_min.length} bosses) ===`);
+    log(`  === AGGREGATE excess vs peers (median across ${agg.lostPerMin.length} bosses) ===`);
     const sgn = (x) => (x >= 0 ? "+" : "") + f(x, 1);
-    log(`    total lost GCD /min over peers: ${sgn(median(agg.lost_per_min))}s`);
-    log(`      from out-of-range/moving:     ${sgn(median(agg.range_lost_per_min))}s`);
-    log(`      from not pressing in range:   ${sgn(median(agg.press_lost_per_min))}s`);
-    log(`    out-of-melee % over peers:      ${sgn(median(agg.auto_down_pct))} pts`);
+    log(`    total lost GCD /min over peers: ${sgn(median(agg.lostPerMin))}s`);
+    log(`      from out-of-range/moving:     ${sgn(median(agg.rangeLostPerMin))}s`);
+    log(`      from not pressing in range:   ${sgn(median(agg.pressLostPerMin))}s`);
+    log(`    out-of-melee % over peers:      ${sgn(median(agg.autoDownPct))} pts`);
   }
 }

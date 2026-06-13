@@ -37,11 +37,11 @@ export function rxHeadline(text) {
 export function embellishmentRx(gf) {
   if (!gf) return null;
   const emb = gf.embellishedSlots || [];
-  const ec = gf.emb_compare;
-  const matchesTop = ec && ec.your_rank;            // you already run a top combo
-  if (!(emb.length < 2 || (ec && !matchesTop && ec.top_combos && ec.top_combos.length))) return null;
-  const top = ec && ec.top_combos && ec.top_combos[0];
-  const pop = top ? ` (#1 field combo, ${top[1]}/${ec.field_n})` : "";
+  const ec = gf.embCompare;
+  const matchesTop = ec && ec.yourRank;            // you already run a top combo
+  if (!(emb.length < 2 || (ec && !matchesTop && ec.topCombos && ec.topCombos.length))) return null;
+  const top = ec && ec.topCombos && ec.topCombos[0];
+  const pop = top ? ` (#1 field combo, ${top[1]}/${ec.fieldN})` : "";
   const yourSlots = new Set(emb);
   // Short a slot -> name only the slot(s) you're missing; full-but-suboptimal
   // pair -> name the whole target combo to switch to.
@@ -52,12 +52,12 @@ export function embellishmentRx(gf) {
   if (recText) {
     const lead = emb.length < 2
       ? `you run ${emb.length}/2 -- craft ${recText}`
-      : `yours (${ec.your_combo.join("+") || "none"}) isn't one top performers run -- switch to ${recText}`;
+      : `yours (${ec.yourCombo.join("+") || "none"}) isn't one top performers run -- switch to ${recText}`;
     msg = `EMBELLISHMENTS: ${lead}${pop}. Throughput drops can't give.`;
   } else {
     msg = emb.length < 2
       ? `EMBELLISHMENTS: you run ${emb.length}/2 -- fill the free slot${pop}. Throughput drops can't give.`
-      : `EMBELLISHMENTS: yours (${ec.your_combo.join("+") || "none"}) isn't one top performers run${top ? `; the #1 combo is ${top[0].join("+")} (${top[1]}/${ec.field_n})` : ""}. Match it.`;
+      : `EMBELLISHMENTS: yours (${ec.yourCombo.join("+") || "none"}) isn't one top performers run${top ? `; the #1 combo is ${top[0].join("+")} (${top[1]}/${ec.fieldN})` : ""}. Match it.`;
   }
   return { dim: "Gear", ...DPS(2, 4), text: msg };
 }
@@ -158,14 +158,14 @@ async function aggregateExecution(name, server, region, difficulty, className, s
   if (!perBoss.length) return null;
   const med = (key) => median(perBoss.map((c) => c.you[key] - c.peer[key]));
   const rangeBosses = perBoss
-    .map((c) => [c.you.range_lost_per_min - c.peer.range_lost_per_min, c.boss])
+    .map((c) => [c.you.rangeLostPerMin - c.peer.rangeLostPerMin, c.boss])
     .sort((a, b) => b[0] - a[0]);
   return {
     nBosses: perBoss.length,
-    pressExcess: med("press_lost_per_min"),
-    rangeExcess: med("range_lost_per_min"),
-    totalExcess: med("lost_per_min"),
-    overshootExcess: med("overshoot_ms"),
+    pressExcess: med("pressLostPerMin"),
+    rangeExcess: med("rangeLostPerMin"),
+    totalExcess: med("lostPerMin"),
+    overshootExcess: med("overshootMs"),
     worstRange: rangeBosses.filter(([d]) => d > 1.5).map(([, b]) => b),
   };
 }
