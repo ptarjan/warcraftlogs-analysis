@@ -2,7 +2,7 @@
 // UI wiring: pick character/region/server, auto-detect the rest, then render
 // the result as a web report -- the prioritized list of changes up top, with
 // the supporting analyses as collapsible cards below.
-import { detectContext, detectPriority, DIFFICULTY } from "./core.js";
+import { detectContext, detectPriority, DIFFICULTY, raidTeammates, slug } from "./core.js";
 import { isAuthed, beginLogin, handleRedirectCallback, logout } from "./auth.js";
 import { NeedsAuth, myCharacters, primeRateReset } from "./wcl.js";
 import { paramsFromSearch, shareSearch } from "./share.js";
@@ -96,6 +96,29 @@ function renderConnectPrompt(picker) {
   box.appendChild(b);
   picker.appendChild(box);
 }
+// Reverse of realmLabel: a realm display name (as it comes off a report roster)
+// -> the slug the analysis needs. Prefer the canonical slug from servers.json;
+// fall back to slugifying the name.
+function realmSlug(region, realmName) {
+  const r = (REALMS[region] || []).find((s) => s.name.toLowerCase() === String(realmName).toLowerCase());
+  return r ? r.slug : slug(String(realmName));
+}
+
+// One clickable character button (your own or a teammate). `extra` is the right-
+// hand subline detail; `cls` lets teammates render differently.
+function charButton({ name, server, region, label, extra, cls = "charbtn" }) {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = cls;
+  const cn = document.createElement("span"); cn.className = "cn"; cn.textContent = name;
+  const cs = document.createElement("span"); cs.className = "cs";
+  cs.textContent = `${label} · ${region}` + (extra ? ` · ${extra}` : "");
+  b.append(cn, cs);
+  b.onclick = () => runAnalysis({ name, server, region, serverLabel: label });
+  return b;
+}
+
+let pickerRun = 0; // guards against a stale async teammates append after a re-render
+
 async function renderMode() {
   const picker = $("picker");
   if (!isAuthed()) {
@@ -106,9 +129,11 @@ async function renderMode() {
   // Connected: the form analyzes any character; the picker is a shortcut to yours.
   form.style.display = "";
   if (!picker) return;
+  const run = ++pickerRun;
   let chars = [];
   try { chars = await myCharacters(); } catch { chars = []; }
   await realmsReady;
+  if (run !== pickerRun) return;
   if (!chars.length) { picker.style.display = "none"; picker.innerHTML = ""; return; }
   picker.style.display = "";
   picker.innerHTML = "";
@@ -119,15 +144,37 @@ async function renderMode() {
   const grid = document.createElement("div");
   grid.className = "picker-grid";
   for (const c of chars) {
-    const label = realmLabel(c.region, c.server);
-    const b = document.createElement("button");
-    b.type = "button"; b.className = "charbtn";
-    const cn = document.createElement("span"); cn.className = "cn"; cn.textContent = c.name;
-    const cs = document.createElement("span"); cs.className = "cs";
-    cs.textContent = `${label} · ${c.region}` + (c.kills ? ` · ${c.kills} kill${c.kills === 1 ? "" : "s"}` : "");
-    b.append(cn, cs);
-    b.onclick = () => runAnalysis({ name: c.name, server: c.server, region: c.region, serverLabel: label });
-    grid.appendChild(b);
+    const extra = c.kills ? `${c.kills} kill${c.kills === 1 ? "" : "s"}` : "";
+    grid.appendChild(charButton({ name: c.name, server: c.server, region: c.region, label: realmLabel(c.region, c.server), extra }));
+  }
+  picker.appendChild(grid);
+  appendTeammates(picker, chars, run); // best-effort, async -- doesn't block the picker
+}
+
+// People you commonly raid with (from your kills' rosters), shown as a separate,
+// visually-distinct group below your own characters. Best-effort + lazy.
+async function appendTeammates(picker, chars, run) {
+  const primary = chars[0];
+  if (!primary) return;
+  let mates = [];
+  try { mates = await raidTeammates(primary.name, primary.server, primary.region); } catch { mates = []; }
+  if (run !== pickerRun || !mates.length) return;     // re-rendered, or none found
+  const ownKeys = new Set(chars.map((c) => `${c.name}|${c.server}`.toLowerCase()));
+  const rows = mates
+    .map((m) => ({ ...m, slug: realmSlug(m.region, m.server) }))
+    .filter((m) => !ownKeys.has(`${m.name}|${m.slug}`.toLowerCase())); // not your own alts
+  if (!rows.length) return;
+  const h = document.createElement("div");
+  h.className = "picker-h mates-h";
+  h.textContent = "Raid teammates — people you commonly raid with";
+  picker.appendChild(h);
+  const grid = document.createElement("div");
+  grid.className = "picker-grid";
+  for (const m of rows) {
+    grid.appendChild(charButton({
+      name: m.name, server: m.slug, region: m.region, label: realmLabel(m.region, m.slug),
+      extra: `${m.shared} raid${m.shared === 1 ? "" : "s"} together`, cls: "charbtn mate",
+    }));
   }
   picker.appendChild(grid);
 }

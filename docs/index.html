@@ -145,6 +145,12 @@
   .charbtn .cn { font-size: 15.5px; font-weight: 700; letter-spacing: .2px; }
   .charbtn .cs { font-size: 12px; color: var(--muted); }
   .picker .muted { font-size: 13px; color: var(--muted); }
+  /* Raid teammates: same tile, but an info-blue accent so they read as a
+     distinct group from your own (gold-accented) characters. */
+  .picker-h.mates-h { margin-top: 20px; color: var(--info); }
+  .charbtn.mate { border-left: 3px solid rgba(143,184,255,.45); }
+  .charbtn.mate:hover { border-color: var(--info); box-shadow: 0 6px 18px rgba(143,184,255,.16); }
+  .charbtn.mate .cn { color: var(--info); }
 
   /* ---------- results (cards) ---------- */
   #out { margin-top: 24px; display: flex; flex-direction: column; gap: 16px; }

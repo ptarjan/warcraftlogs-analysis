@@ -365,6 +365,61 @@ export async function detectContext(name, server, region) {
   return { ...found, className: cs.className, specName: cs.specName };
 }
 
+// Players you most often appear ALONGSIDE in your own kills -- your raid team.
+// Bounded + best-effort: scan a few of your recent kill reports' rosters, tally
+// who recurs, return the most frequent (with the realm NAME from the report; the
+// caller resolves the slug). Excludes you. Returns [] on any hiccup (private
+// reports, rate limit, schema gap) so the picker degrades gracefully.
+// Same region as you -- retail raids are within-region.
+export async function raidTeammates(name, server, region, { maxReports = 4, top = 6 } = {}) {
+  try {
+    // Find the highest difficulty you have kills in, and its killed encounters.
+    let difficulty = null, killed = [];
+    for (const d of DIFF_ORDER) {
+      const c = await characterZone(name, server, region, d);
+      killed = (c.zoneRankings.rankings || []).filter((r) => (r.totalKills || 0) > 0);
+      if (killed.length) { difficulty = d; break; }
+    }
+    if (!difficulty) return [];
+    // Collect a few distinct recent report codes from your kills.
+    const codes = [];
+    for (const r of killed) {
+      if (codes.length >= maxReports) break;
+      const er = await characterEncounter(name, server, region, r.encounter.id, difficulty);
+      for (const rk of ((er && er.ranks) || [])) {
+        const code = rk.report && rk.report.code;
+        if (code && !codes.includes(code)) { codes.push(code); if (codes.length >= maxReports) break; }
+      }
+    }
+    if (!codes.length) return [];
+    // Read each report's player roster (one light masterData query per report).
+    const rosters = await mapLimit(codes, 4, async (code) => {
+      try {
+        const q = `query { reportData { report(code:"${code}") { masterData { actors { name server type } } } } }`;
+        const actors = (await gql(q)).reportData.report.masterData.actors || [];
+        const seen = new Set(), out = [];
+        for (const a of actors) {
+          if (a.type !== "Player" || !a.name || !a.server) continue;
+          const k = `${a.name}|${a.server}`.toLowerCase();
+          if (seen.has(k)) continue;
+          seen.add(k); out.push({ name: a.name, server: a.server });
+        }
+        return out;
+      } catch { return []; }
+    });
+    // Tally appearances across reports, excluding yourself.
+    const self = name.toLowerCase();
+    const tally = new Map();
+    for (const roster of rosters) for (const p of roster) {
+      if (p.name.toLowerCase() === self) continue;
+      const k = `${p.name}|${p.server}`.toLowerCase();
+      const e = tally.get(k) || { name: p.name, server: p.server, region, shared: 0 };
+      e.shared++; tally.set(k, e);
+    }
+    return [...tally.values()].sort((a, b) => b.shared - a.shared).slice(0, top);
+  } catch { return []; }
+}
+
 // The gear stat to optimize toward = the one the top field stacks most.
 export async function detectPriority(className, specName, difficulty, encounterId, sample = 6) {
   const cands = await collectPeers({ encounters: encounterId, difficulty, className, specName, limit: sample + 3, pages: 4 });
