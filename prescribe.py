@@ -195,12 +195,16 @@ def main():
         for slot, mine, theirs, amt in gf["swaps"]:
             rx.append((-2.0, "~1-3% DPS", f"GEAR {slot}: '{mine}' has 0 {priority} -> "
                        f"field runs '{theirs}' (+{amt} {priority})."))
-        if gf["crafted_slots"] and (field["crit_pct"] or 0) - (my_crit or 0) >= 3:
-            rx.append((-1.5, "~1-2% DPS", f"CRAFTED slots ({', '.join(gf['crafted_slots'])}): "
-                       f"set/recraft their secondary stats to {priority} (you choose them)."))
+        emb = gf["embellished_slots"]
+        if emb and (field["crit_pct"] or 0) - (my_crit or 0) >= 3:
+            rx.append((-1.5, "~1-2% DPS", f"EMBELLISHED slots ({', '.join(emb)}): re-stat "
+                       f"these crafted pieces to {priority} (you choose the stats)."))
+        if len(emb) < 2:
+            rx.append((-2.5, "~2-4% DPS", f"EMBELLISHMENTS: you run {len(emb)}/2 -- fill the "
+                       f"free embellishment slot (throughput you can't get from drops)."))
         if not gf["swaps"]:
-            rx.append((0.0, "info", "GEAR: your item choices match the field -- no crit "
-                       "drop to swap to; gains are crafted-slot stats + a sim (Droptimizer)."))
+            rx.append((0.0, "info", "GEAR: item choices match the field -- no crit drop to "
+                       "swap to; gains are embellished-slot stats + a sim (Droptimizer)."))
 
     print("\nDO THESE IN ORDER (biggest DPS first):")
     if not rx:

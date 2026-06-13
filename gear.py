@@ -49,17 +49,22 @@ def _save_cache():
         pass
 
 
-def item_stats(item_id):
-    """Return {name, ilvl, crit, haste, mastery, vers, crafted} for an item id.
+def item_stats(item_id, bonus_ids=None):
+    """Return {name, ilvl, crit, haste, mastery, vers, embellished, unique}.
 
-    Cached on disk so repeat runs are instant and we're polite to Wowhead.
+    Passing the item's `bonus_ids` is essential: it makes Wowhead render the
+    item's ACTUAL per-instance stats (crafted gear shows 0/0/0/0 without them)
+    and reveals the Embellishment, which lives only in the bonus IDs -- not in
+    the base item or anywhere in the Warcraft Logs gear data. Cached per
+    (item_id, bonus_ids) so repeat runs are instant.
     """
-    key = str(item_id)
+    bonus_ids = [str(b) for b in (bonus_ids or [])]
+    key = str(item_id) + (":" + ":".join(bonus_ids) if bonus_ids else "")
     if key in _cache:
         return _cache[key]
+    url = TOOLTIP % item_id + ("?bonus=" + ":".join(bonus_ids) if bonus_ids else "")
     try:
-        req = urllib.request.Request(TOOLTIP % item_id,
-                                     headers={"User-Agent": "Mozilla/5.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         d = json.load(urllib.request.urlopen(req, timeout=30))
         html = d.get("tooltip", "")
         out = {"name": d.get("name", str(item_id)), "crit": 0, "haste": 0,
@@ -68,11 +73,12 @@ def item_stats(item_id):
         out["ilvl"] = int(m.group(1)) if m else None
         for amt, stat in re.findall(r"(\d+)\s+(Critical Strike|Haste|Mastery|Versatility)", html):
             out[SHORT[stat]] += int(amt)
-        out["crafted"] = ("Random" in html or "crafted" in html.lower())
+        out["embellished"] = "Embellished" in html
+        out["unique"] = "Unique-Equipped" in html
         time.sleep(0.1)
     except Exception:
         out = {"name": str(item_id), "crit": 0, "haste": 0, "mastery": 0,
-               "vers": 0, "ilvl": None, "crafted": False}
+               "vers": 0, "ilvl": None, "embellished": False, "unique": False}
     _cache[key] = out
     _save_cache()
     return out
@@ -98,8 +104,14 @@ def your_gear(name, server, region, difficulty):
 
 
 def field_consensus(class_name, spec_name, difficulty, encounters, n=40):
-    """Most-worn item per slot among top-DPS players, across several bosses."""
-    per_slot = {}
+    """What top-DPS players wear: per-slot item counts, a representative set of
+    bonus IDs per item (so we can read its real stats), field gem usage, and
+    each player's gem-color variety (matters for color-scaling embellishments).
+    """
+    per_slot = {}            # slot -> Counter(item_id)
+    bonus_sample = {}        # item_id -> bonusIDs (first seen, to read true stats)
+    gems = Counter()         # gem_id -> times used
+    gem_variety = []         # per player: count of distinct gem ids
     seen = set()
     got = 0
     for eid in encounters:
@@ -119,14 +131,23 @@ def field_consensus(class_name, spec_name, difficulty, encounters, n=40):
                 if not m:
                     continue
                 got += 1
+                pgems = []
                 for g in m["gear"]:
                     if g.get("slot") in SLOT and g.get("name"):
                         per_slot.setdefault(g["slot"], Counter())[g["id"]] += 1
+                        bonus_sample.setdefault(g["id"], g.get("bonusIDs"))
+                    for gm in g.get("gems", []):
+                        if gm.get("id"):
+                            gems[gm["id"]] += 1
+                            pgems.append(gm["id"])
+                if pgems:
+                    gem_variety.append(len(set(pgems)))
                 if got >= n:
                     break
             if got >= n:
                 break
-    return per_slot, got
+    return {"per_slot": per_slot, "bonus_sample": bonus_sample, "gems": gems,
+            "gem_variety": gem_variety, "n": got}
 
 
 def gear_findings(name, server, region, difficulty, class_name, spec_name, priority):
@@ -141,26 +162,40 @@ def gear_findings(name, server, region, difficulty, class_name, spec_name, prior
         return None
     ymap = {g["slot"]: g for g in you["gear"]}
     enc = [3176, 3177, 3179, 3181, 3306]
-    consensus, npl = field_consensus(class_name, spec_name, difficulty, enc)
-    rows, swaps, crafted_slots = [], [], []
+    fc = field_consensus(class_name, spec_name, difficulty, enc)
+    per_slot, bonus_sample, npl = fc["per_slot"], fc["bonus_sample"], fc["n"]
+    my_item_ids = {g["id"] for g in you["gear"]}
+    rows, swaps, embellished_slots = [], [], []
     for s in sorted(SLOT):
         if s not in ymap:
             continue
         g = ymap[s]
-        ist = item_stats(g["id"])
-        top_id = consensus.get(s, Counter()).most_common(1)
+        ist = item_stats(g["id"], g.get("bonusIDs"))  # bonus IDs -> real stats + embellishment
+        top_id = per_slot.get(s, Counter()).most_common(1)
         top_id = top_id[0][0] if top_id else None
         match = ("== field" if top_id == g["id"]
-                 else (f"field: {item_stats(top_id)['name'][:22]}" if top_id else "?"))
-        rows.append((SLOT[s], ist, match, ist.get("crafted")))
-        if ist.get("crafted"):
-            crafted_slots.append(SLOT[s])
+                 else (f"field: {item_stats(top_id, bonus_sample.get(top_id))['name'][:22]}"
+                       if top_id else "?"))
+        rows.append((SLOT[s], ist, match, ist.get("embellished")))
+        if ist.get("embellished"):
+            embellished_slots.append(SLOT[s])
+        # Suggest a swap only if YOUR piece lacks the priority stat AND the
+        # field's item has it AND it isn't a Unique you already wear elsewhere.
         if ist.get(priority, 0) == 0 and top_id and top_id != g["id"]:
-            alt = item_stats(top_id)
-            if alt.get(priority, 0) > 0:
+            alt = item_stats(top_id, bonus_sample.get(top_id))
+            already = alt.get("unique") and top_id in my_item_ids
+            if alt.get(priority, 0) > 0 and not already:
                 swaps.append((SLOT[s], ist["name"], alt["name"], alt[priority]))
-    return {"rows": rows, "swaps": swaps, "crafted_slots": crafted_slots,
-            "n": npl, "priority": priority}
+    # Gem analysis: your usage + variety vs the field.
+    my_gems = [gm.get("id") for g in you["gear"] for gm in g.get("gems", [])]
+    gem_info = {
+        "your_gems": Counter(my_gems), "your_variety": len(set(my_gems)),
+        "field_top": fc["gems"].most_common(3),
+        "field_variety_med": (sorted(fc["gem_variety"])[len(fc["gem_variety"]) // 2]
+                              if fc["gem_variety"] else None),
+    }
+    return {"rows": rows, "swaps": swaps, "embellished_slots": embellished_slots,
+            "n": npl, "priority": priority, "gems": gem_info}
 
 
 def audit(name, server, region, difficulty, class_name, spec_name, priority):
@@ -170,20 +205,36 @@ def audit(name, server, region, difficulty, class_name, spec_name, priority):
     print(f"\n=== Gear audit for {name} (priority: {priority}) | vs {f['n']} top-DPS "
           f"{spec_name}s ===")
     print(f"{'SLOT':9} {'YOUR ITEM':30} {'crit/hst/mas/ver':17} {'matches field?'}")
-    for slot, ist, match, crafted in f["rows"]:
+    for slot, ist, match, embellished in f["rows"]:
         secs = f"{ist['crit']:>3}/{ist['haste']:>3}/{ist['mastery']:>3}/{ist['vers']:>3}"
         print(f"{slot:9} {ist['name'][:30]:30} {secs:17} {match}"
-              f"{' [crafted]' if crafted else ''}")
-    print(f"\nLegend: crit/haste/mastery/vers. '[crafted]' = you choose the stats "
-          f"-> set to {priority}.")
+              f"{' [EMBELLISHED]' if embellished else ''}")
+    print(f"\nLegend: crit/haste/mastery/vers. [EMBELLISHED] = crafted slot carrying "
+          f"an embellishment (you can re-stat it to {priority}).")
+
+    emb = f["embellished_slots"]
+    print(f"\nEmbellishments: {', '.join(emb) if emb else 'none detected'} "
+          f"({len(emb)}/2 used).")
+    if len(emb) < 2:
+        print(f"  -> You have a free embellishment slot -- a big throughput gain you're "
+              f"not using.")
+    # Gems
+    gi = f["gems"]
+    print(f"\nGems: you run {sum(gi['your_gems'].values())} gem(s), {gi['your_variety']} "
+          f"distinct color(s); field median {gi['field_variety_med']} distinct.")
+    print(f"  field's most-used gems (id x count): {gi['field_top']}")
+    print(f"  your gems (id x count): {dict(gi['your_gems'])}")
+
     if f["swaps"]:
-        print(f"\nPieces with ZERO {priority} where the field's item has it:")
+        print(f"\nReal {priority} upgrades (your piece lacks it, field's has it, not a "
+              f"Unique you already wear):")
         for slot, mine, theirs, amt in f["swaps"]:
             print(f"  {slot}: '{mine}' -> '{theirs}' (+{amt} {priority})")
     else:
-        print(f"\nNo clear {priority} upgrade from drops -- your items match the field. "
-              f"Gains: set crafted slots ({', '.join(f['crafted_slots']) or 'none'}) to "
-              f"{priority}; sim the rest (Droptimizer).")
+        restat = [s for s in emb]
+        print(f"\nNo {priority} drop-swap available -- your item choices match the field. "
+              f"Gains: re-stat your embellished slots ({', '.join(restat) or 'none'}) to "
+              f"{priority}; non-embellished crafted slots should be drops; sim the rest.")
 
 
 def main():
