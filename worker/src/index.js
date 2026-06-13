@@ -31,7 +31,7 @@ async function sha256hex(str) {
 // Retry-After, capped backoff) so a rate-limit spike doesn't surface to the
 // browser. Bounded so we never hold a request open too long.
 async function wclFetch(env, query, tries = 3) {
-  let lastText = "", lastStatus = 500;
+  let lastText = "", lastStatus = 500, lastRetryAfter = null;
   for (let i = 0; i < tries; i++) {
     const token = await getToken(env);
     const r = await fetch(API_URL, {
@@ -41,11 +41,12 @@ async function wclFetch(env, query, tries = 3) {
     });
     lastStatus = r.status;
     lastText = await r.text();
-    if (r.status !== 429) return { text: lastText, status: r.status };
+    if (r.status !== 429) return { text: lastText, status: r.status, retryAfter: null };
     const ra = parseInt(r.headers.get("Retry-After") || "", 10);
+    if (Number.isFinite(ra)) lastRetryAfter = ra;
     await sleep(Number.isFinite(ra) ? Math.min(10000, ra * 1000) : Math.min(8000, 1000 * 2 ** i));
   }
-  return { text: lastText, status: lastStatus };
+  return { text: lastText, status: lastStatus, retryAfter: lastRetryAfter };
 }
 
 async function getToken(env) {
@@ -75,6 +76,7 @@ function corsHeaders(req, env) {
     "Access-Control-Allow-Origin": value,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Expose-Headers": "Retry-After, X-Cache",
     "Vary": "Origin",
   };
 }
@@ -104,7 +106,7 @@ export default {
           });
         }
 
-        const { text, status } = await wclFetch(env, query);
+        const { text, status, retryAfter } = await wclFetch(env, query);
         // Only cache clean, successful data responses (never errors / 429).
         let cacheable = false;
         if (status === 200) {
@@ -117,10 +119,9 @@ export default {
             headers: { "Content-Type": "application/json", "Cache-Control": "max-age=21600" },
           })));
         }
-        return new Response(text, {
-          status,
-          headers: { ...ch, "Content-Type": "application/json", "X-Cache": "MISS" },
-        });
+        const wh = { ...ch, "Content-Type": "application/json", "X-Cache": "MISS" };
+        if (retryAfter != null) wh["Retry-After"] = String(retryAfter); // surface reset hint
+        return new Response(text, { status, headers: wh });
       }
 
       if (url.pathname.startsWith("/item/") && req.method === "GET") {

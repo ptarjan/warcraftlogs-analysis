@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Warcraft Logs Analysis</title>
+<title>Warcraft Logs Analysis — what to change to do more DPS</title>
+<meta name="description" content="Enter your WoW character and get a prioritized, do-this-first list of the gear, enchants, consumables, and rotation fixes between you and the top of your item-level bracket.">
 <link rel="icon" type="image/svg+xml" href="./favicon.svg">
 <link rel="apple-touch-icon" href="./favicon.svg">
 <style>
@@ -14,72 +15,109 @@
     --info: #8fb8ff;
   }
   * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
   body { margin: 0; color: var(--ink); min-height: 100vh;
-         background: radial-gradient(1100px 600px at 50% -10%, var(--bg2), var(--bg)) fixed;
-         font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-         -webkit-font-smoothing: antialiased; }
-  header { padding: 30px 20px 10px; max-width: 980px; margin: 0 auto; }
-  h1 { margin: 0; font-size: 25px; font-weight: 700; letter-spacing: .2px;
-       background: linear-gradient(90deg, #ffe08a, var(--accent));
-       -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .sub { color: var(--muted); font-size: 13.5px; margin-top: 6px; max-width: 640px; }
-  .auth { margin-top: 14px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    background:
+      radial-gradient(900px 460px at 88% -8%, rgba(245,196,81,.10), transparent 60%),
+      radial-gradient(1100px 600px at 10% -10%, rgba(143,184,255,.08), transparent 55%),
+      linear-gradient(180deg, var(--bg2), var(--bg)) fixed;
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+
+  /* ---------- hero / header ---------- */
+  header { max-width: 980px; margin: 0 auto; padding: 56px 20px 8px; }
+  .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 12px;
+    font-weight: 600; letter-spacing: .4px; color: var(--accent);
+    background: rgba(245,196,81,.10); border: 1px solid rgba(245,196,81,.28);
+    padding: 5px 12px; border-radius: 999px; }
+  .eyebrow .blade { font-size: 13px; }
+  h1 { margin: 18px 0 0; font-size: clamp(30px, 5.4vw, 46px); font-weight: 800;
+    line-height: 1.08; letter-spacing: -.4px;
+    background: linear-gradient(92deg, #fff 8%, #ffe7a6 42%, var(--accent) 88%);
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .tagline { color: var(--muted); font-size: clamp(15px, 2.3vw, 17.5px); line-height: 1.55;
+    margin: 16px 0 0; max-width: 660px; }
+  .tagline b { color: var(--ink); font-weight: 600; }
+
+  .auth { margin-top: 18px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .auth .conn { font-size: 12.5px; }
   .auth .conn.ok { color: var(--ok); font-weight: 600; }
   .auth .conn.muted { color: var(--muted); }
   .linkbtn { background: none; border: 0; padding: 0; box-shadow: none; cursor: pointer;
-             font: inherit; font-size: 12.5px; color: var(--muted);
-             text-decoration: underline; text-underline-offset: 2px; }
+    font: inherit; font-size: 12.5px; color: var(--muted);
+    text-decoration: underline; text-underline-offset: 2px; }
   .linkbtn:hover:not(:disabled) { filter: none; color: var(--ink); }
   .linkbtn.accent { color: #20180a; text-decoration: none; font-weight: 700;
-             background: linear-gradient(180deg, var(--accent), var(--accent-d));
-             border-radius: 9px; padding: 9px 18px; font-size: 14px;
-             box-shadow: 0 4px 14px rgba(245,196,81,.22); }
+    background: linear-gradient(180deg, var(--accent), var(--accent-d));
+    border-radius: 9px; padding: 9px 18px; font-size: 14px;
+    box-shadow: 0 4px 14px rgba(245,196,81,.22); }
   .linkbtn.accent:hover { filter: brightness(1.07); color: #20180a; }
-  main { max-width: 980px; margin: 0 auto; padding: 14px 20px 80px; }
+
+  main { max-width: 980px; margin: 0 auto; padding: 22px 20px 40px; }
+
+  /* ---------- form ---------- */
   form { background: linear-gradient(180deg, var(--panel2), var(--panel));
-         border: 1px solid var(--edge); border-radius: 14px; padding: 20px;
-         display: grid; gap: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.35);
-         grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); align-items: end; }
+    border: 1px solid var(--edge); border-radius: 16px; padding: 20px;
+    display: grid; gap: 16px; box-shadow: 0 14px 40px rgba(0,0,0,.4);
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); align-items: end; }
   label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 5px;
-          text-transform: uppercase; letter-spacing: .7px; font-weight: 600; }
-  input, select { width: 100%; padding: 9px 11px; background: #0f131c; color: var(--ink);
-                  border: 1px solid var(--edge); border-radius: 8px; font-size: 14px;
-                  transition: border-color .15s, box-shadow .15s; }
+    text-transform: uppercase; letter-spacing: .7px; font-weight: 600; }
+  input, select { width: 100%; padding: 10px 11px; background: #0f131c; color: var(--ink);
+    border: 1px solid var(--edge); border-radius: 9px; font-size: 14px;
+    transition: border-color .15s, box-shadow .15s; }
   input::placeholder { color: #5e6b82; }
   input:focus, select:focus { outline: none; border-color: var(--accent);
-                              box-shadow: 0 0 0 3px rgba(245,196,81,.16); }
-  .wide { grid-column: 1 / -1; }
-  .checks { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px 16px; }
-  .checks label { text-transform: none; letter-spacing: 0; color: var(--ink); font-size: 13px;
-                  font-weight: 400; display: flex; align-items: center; gap: 7px; margin: 0;
-                  cursor: pointer; padding: 4px 0; }
-  .checks input { width: auto; accent-color: var(--accent); }
-  .actions { grid-column: 1 / -1; display: flex; gap: 14px; align-items: center; }
+    box-shadow: 0 0 0 3px rgba(245,196,81,.16); }
+  .actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   button { background: linear-gradient(180deg, var(--accent), var(--accent-d)); color: #20180a;
-           border: 0; border-radius: 9px; padding: 11px 26px; font-size: 15px; font-weight: 700;
-           cursor: pointer; transition: filter .15s, transform .05s;
-           box-shadow: 0 4px 14px rgba(245,196,81,.22); }
-  button:hover:not(:disabled) { filter: brightness(1.07); }
+    border: 0; border-radius: 10px; padding: 11px 28px; font-size: 15px; font-weight: 700;
+    cursor: pointer; transition: filter .15s, transform .05s, box-shadow .2s;
+    box-shadow: 0 6px 18px rgba(245,196,81,.26); }
+  button:hover:not(:disabled) { filter: brightness(1.07); box-shadow: 0 8px 24px rgba(245,196,81,.34); }
   button:active:not(:disabled) { transform: translateY(1px); }
   button:disabled { opacity: .55; cursor: default; box-shadow: none; }
   .status { color: var(--muted); font-size: 13px; }
   .spin { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--edge2);
-          border-top-color: var(--accent); border-radius: 50%; animation: s .8s linear infinite;
-          vertical-align: -2px; margin-right: 6px; }
+    border-top-color: var(--accent); border-radius: 50%; animation: s .8s linear infinite;
+    vertical-align: -2px; margin-right: 6px; }
   @keyframes s { to { transform: rotate(360deg); } }
-  details { grid-column: 1 / -1; }
-  summary { color: var(--muted); font-size: 11px; cursor: pointer; text-transform: uppercase;
-            letter-spacing: .7px; font-weight: 600; }
-  details[open] summary { margin-bottom: 10px; }
-  a { color: var(--accent); }
 
-  /* ---- results: a column of cards instead of a terminal ---- */
+  /* ---------- landing intro (hidden once analysis starts) ---------- */
+  .intro { margin-top: 34px; }
+  .intro-lead { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--accent); }
+  .intro-body { color: var(--muted); font-size: 15px; line-height: 1.65;
+    margin: 10px 0 22px; max-width: 720px; }
+  .intro-body b { color: var(--ink); font-weight: 600; }
+  .feature-row { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .feature { padding: 18px; background: linear-gradient(180deg, var(--panel2), var(--panel));
+    border: 1px solid var(--edge); border-radius: 14px; transition: transform .15s, border-color .15s; }
+  .feature:hover { transform: translateY(-3px); border-color: var(--edge2); }
+  .feature .f-ic { width: 38px; height: 38px; display: grid; place-items: center; font-size: 19px;
+    border-radius: 10px; background: rgba(245,196,81,.12); border: 1px solid rgba(245,196,81,.25);
+    margin-bottom: 12px; }
+  .feature b { display: block; font-size: 14.5px; color: var(--ink); }
+  .feature span { display: block; font-size: 13px; color: var(--muted); margin-top: 5px; line-height: 1.5; }
+
+  /* how it works */
+  .steps { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    margin-top: 16px; }
+  .step { display: flex; gap: 12px; align-items: flex-start; }
+  .step .n { flex: none; width: 26px; height: 26px; display: grid; place-items: center;
+    border-radius: 999px; background: rgba(143,184,255,.12); border: 1px solid rgba(143,184,255,.3);
+    color: var(--info); font-weight: 700; font-size: 13px; }
+  .step b { display: block; font-size: 14px; color: var(--ink); }
+  .step span { display: block; font-size: 12.5px; color: var(--muted); margin-top: 3px; line-height: 1.5; }
+
+  .section-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--muted); margin: 34px 0 14px; display: flex; align-items: center; gap: 10px; }
+  .section-label::after { content: ""; flex: 1; height: 1px; background: var(--edge); }
+  .example-tag { font-size: 10.5px; font-weight: 700; color: var(--accent);
+    background: rgba(245,196,81,.12); border: 1px solid rgba(245,196,81,.28);
+    padding: 2px 8px; border-radius: 6px; letter-spacing: .5px; }
+
+  /* ---------- results (cards) ---------- */
   #out { margin-top: 24px; display: flex; flex-direction: column; gap: 16px; }
-  #out:empty::before { content: "Your report will appear here."; color: var(--muted);
-    display: block; padding: 28px; text-align: center; font-size: 14px;
-    border: 1px dashed var(--edge); border-radius: 14px; }
-
   .card { background: linear-gradient(180deg, var(--panel2), var(--panel));
     border: 1px solid var(--edge); border-radius: 14px; overflow: hidden;
     box-shadow: 0 6px 20px rgba(0,0,0,.25); }
@@ -87,7 +125,6 @@
     letter-spacing: .6px; text-transform: uppercase; color: var(--accent);
     border-bottom: 1px solid var(--edge); background: rgba(255,255,255,.02); }
   .card .body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
-  /* collapsible supporting cards */
   details.card > summary { padding: 13px 18px; font-size: 12.5px; font-weight: 700;
     letter-spacing: .6px; text-transform: uppercase; color: var(--muted); cursor: pointer;
     list-style: none; display: flex; align-items: center; gap: 8px; }
@@ -96,18 +133,16 @@
   details.card[open] > summary { color: var(--accent); border-bottom: 1px solid var(--edge);
     background: rgba(255,255,255,.02); }
   details.card[open] > summary::before { content: "▾"; }
-  .card.primary { border-color: rgba(245,196,81,.4); box-shadow: 0 8px 28px rgba(245,196,81,.10); }
+  .card.primary { border-color: rgba(245,196,81,.4); box-shadow: 0 10px 34px rgba(245,196,81,.12); }
   .sub-h { font-size: 15px; font-weight: 700; color: var(--ink); }
   .sub-h2 { font-size: 13px; font-weight: 600; color: var(--info); }
-
   .mono { margin: 0; background: #0b0e15; border: 1px solid var(--edge); border-radius: 10px;
     padding: 12px 14px; overflow-x: auto; white-space: pre; color: #aeb8cc;
     font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
   .mono .worse { color: var(--warn); }
 
-  /* hero / character header */
   .hero { background: radial-gradient(600px 200px at 0% 0%, rgba(245,196,81,.08), transparent),
-          linear-gradient(180deg, var(--panel2), var(--panel));
+      linear-gradient(180deg, var(--panel2), var(--panel));
     border: 1px solid var(--edge); border-radius: 14px; padding: 20px 22px;
     box-shadow: 0 6px 20px rgba(0,0,0,.25); }
   .hero .who { font-size: 24px; font-weight: 800; letter-spacing: .2px; }
@@ -119,7 +154,6 @@
   .detecting { color: var(--muted); font-size: 13px; margin-top: 12px; display: flex;
     align-items: center; gap: 8px; }
 
-  /* prescription action cards */
   .rx { display: flex; gap: 12px; align-items: flex-start; padding: 13px 14px;
     background: rgba(88,214,160,.06); border: 1px solid rgba(88,214,160,.22); border-radius: 11px; }
   .rx .num { font-weight: 800; color: var(--ok); min-width: 16px; font-size: 14px; }
@@ -130,19 +164,31 @@
   .rx.info .num { color: var(--info); }
   .rx.info .badge { background: var(--info); color: #06111f; }
   .note { font-size: 13.5px; line-height: 1.5; color: var(--ink); }
+  .note.muted { color: var(--muted); }
   .note.err { color: var(--warn); font-weight: 600; }
+  a { color: var(--accent); }
+
+  footer { max-width: 980px; margin: 26px auto 0; padding: 18px 20px 48px;
+    color: var(--muted); font-size: 12.5px; line-height: 1.6; border-top: 1px solid var(--edge); }
+  footer a { color: var(--muted); }
+
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+  .reveal { animation: fadeUp .5s cubic-bezier(.2,.7,.3,1) both; }
+  .d1 { animation-delay: .05s; } .d2 { animation-delay: .12s; } .d3 { animation-delay: .2s; }
+  @media (prefers-reduced-motion: reduce) { .reveal { animation: none; } html { scroll-behavior: auto; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>⚔ Warcraft Logs Analysis</h1>
-  <div class="sub">Compare a character's DPS against the ilvl-matched field, then get a
-    prioritized to-do list. Class, spec, difficulty, and stat priority are detected
-    automatically. Runs entirely in your browser (30s–2&nbsp;min).</div>
-  <div id="auth" class="auth"></div>
+  <div class="eyebrow reveal"><span class="blade">⚔</span> WORLD OF WARCRAFT · DPS ANALYSIS</div>
+  <h1 class="reveal d1">Find exactly what's<br>costing you DPS.</h1>
+  <p class="tagline reveal d2">Enter your character and get a <b>ranked, do-this-first list</b> — the gear
+    swaps, enchants, gems, consumables, and rotation fixes standing between you and the top of your
+    item-level bracket. Each one scored by estimated DPS.</p>
+  <div id="auth" class="auth reveal d2"></div>
 </header>
 <main>
-  <form id="form">
+  <form id="form" class="reveal d2">
     <div><label for="name">Character</label>
       <input id="name" placeholder="Hadryan" required autofocus></div>
     <div><label for="region">Region</label>
@@ -156,8 +202,53 @@
       <span class="status" id="status"></span>
     </div>
   </form>
+
+  <section class="intro reveal d3" id="intro">
+    <div class="intro-lead">Stop guessing — get the list</div>
+    <p class="intro-body">Percentiles tell you <b>that</b> you're behind, not <b>why</b>. This pulls your
+      Warcraft Logs kills, compares them against the players at your exact item level, and turns the gaps
+      into concrete actions — biggest DPS gain first. Class, spec, difficulty, and stat priority are all
+      detected automatically. It runs entirely in your browser.</p>
+
+    <div class="feature-row">
+      <div class="feature"><div class="f-ic">🎯</div>
+        <b>Prioritized fixes</b><span>One ranked to-do list, biggest DPS gain at the top — not a wall of numbers.</span></div>
+      <div class="feature"><div class="f-ic">📊</div>
+        <b>Measured vs your bracket</b><span>Compared only to players at your item level, so gear isn't a confound.</span></div>
+      <div class="feature"><div class="f-ic">⚙️</div>
+        <b>Gear &amp; rotation</b><span>Real per-item stats from Wowhead, plus your cast timeline for uptime and priority.</span></div>
+    </div>
+
+    <div class="steps">
+      <div class="step"><div class="n">1</div><div><b>Pick your character</b><span>Region, realm, name. That's all we need.</span></div></div>
+      <div class="step"><div class="n">2</div><div><b>We pull the data</b><span>Your logs and the ilvl-matched field, in parallel.</span></div></div>
+      <div class="step"><div class="n">3</div><div><b>Get your to-do list</b><span>Ranked changes, each with a DPS estimate.</span></div></div>
+    </div>
+
+    <div class="section-label">A sample report <span class="example-tag">EXAMPLE</span></div>
+    <section class="card primary">
+      <h2>What to change</h2>
+      <div class="body">
+        <div class="rx"><div class="num">1</div><div class="badge">~3% DPS</div><div class="txt">
+          <b>Press faster.</b> You idle ~2.1s/min more than peers while in melee range — not latency, just gaps between GCDs. Queue your next ability so a global never sits empty.</div></div>
+        <div class="rx"><div class="num">2</div><div class="badge">~2% DPS</div><div class="txt">
+          <b>Flask:</b> swap to the throughput flask 8 of 10 top peers run.</div></div>
+        <div class="rx"><div class="num">3</div><div class="badge">~1–3% DPS</div><div class="txt">
+          <b>Crit via belt:</b> a crit-itemized drop the field wears in that slot — sim to confirm the net gain.</div></div>
+        <div class="rx info"><div class="num">4</div><div class="badge">info</div><div class="txt">
+          <b>Embellishments:</b> your combo matches the #1 the field runs — no change needed.</div></div>
+      </div>
+    </section>
+  </section>
+
   <div id="out"></div>
 </main>
+<footer>
+  Runs entirely in your browser · data from <a href="https://www.warcraftlogs.com/" target="_blank" rel="noopener">Warcraft Logs</a>
+  &amp; <a href="https://www.wowhead.com/" target="_blank" rel="noopener">Wowhead</a> ·
+  <a href="https://github.com/ptarjan/warcraftlogs-analysis" target="_blank" rel="noopener">source on GitHub</a>.
+  Not affiliated with Blizzard Entertainment.
+</footer>
 <script type="module" src="./app.js"></script>
 </body>
 </html>

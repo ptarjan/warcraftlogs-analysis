@@ -127,13 +127,18 @@ function setRunning(on) {
   statusEl.innerHTML = on ? '<span class="spin"></span>analyzing…' : "";
 }
 
-// Surface WCL rate-limit waits so the page never just looks frozen.
+// Surface WCL rate-limit waits so the page never just looks frozen -- with a
+// reset ETA when WCL provides one (Retry-After).
 let activeHero = null;
-window.addEventListener("wcl-ratelimit", () => {
+window.addEventListener("wcl-ratelimit", (e) => {
+  const s = e && e.detail && e.detail.retryAfter;
+  const when = (typeof s === "number" && s > 0)
+    ? ` — retry in ~${s >= 60 ? Math.ceil(s / 60) + " min" : Math.ceil(s) + "s"}`
+    : " — waiting a moment";
   if (activeHero && activeHero.det && activeHero.det.isConnected) {
-    activeHero.det.textContent = "WCL rate limit reached — waiting a moment…";
+    activeHero.det.textContent = `WCL rate limit reached${when}…`;
   }
-  statusEl.innerHTML = '<span class="spin"></span>rate limited — waiting…';
+  statusEl.innerHTML = `<span class="spin"></span>rate limited${when}…`;
 });
 
 // Supporting analyses (collapsed by default -- evidence behind the list).
@@ -176,6 +181,8 @@ form.addEventListener("submit", async (e) => {
   if (!server) { cur = makeCard("Error"); note("Pick a server.", "err"); return; }
 
   setRunning(true);
+  const intro = document.getElementById("intro");
+  if (intro) intro.style.display = "none";
   const hero = buildHero(name, serverLabel, region);
   activeHero = hero;
   // Pin the action list at the top (filled last, once analyses warm the cache).

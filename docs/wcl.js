@@ -73,6 +73,12 @@ async function nodeWcl(query) {
   return { status: r.status, j: await r.json().catch(() => ({})) };
 }
 
+// Reset hint (seconds) WCL / the Worker may send on a 429, for the UI countdown.
+const readRetryAfter = (r) => {
+  const n = parseInt(r.headers.get("Retry-After") || "", 10);
+  return Number.isFinite(n) ? n : null;
+};
+
 // ---- Browser path: own PKCE token if connected, else the anonymous proxy ------
 async function browserWcl(query) {
   const token = getAccessToken();
@@ -86,7 +92,7 @@ async function browserWcl(query) {
     // shared proxy) -- we don't silently fall back, so their identity is honest.
     if (r.status === 401)
       throw new NeedsAuth("Your Warcraft Logs session expired -- reconnect, or disconnect to use the shared proxy.");
-    return { status: r.status, j: await r.json().catch(() => ({})) };
+    return { status: r.status, j: await r.json().catch(() => ({})), retryAfter: readRetryAfter(r) };
   }
   // Anonymous: route through the Worker, which holds the shared app secret.
   if (!WORKER_CONFIGURED)
@@ -96,7 +102,7 @@ async function browserWcl(query) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query }),
   });
-  return { status: r.status, j: await r.json().catch(() => ({})) };
+  return { status: r.status, j: await r.json().catch(() => ({})), retryAfter: readRetryAfter(r) };
 }
 
 // Session-level dedupe: identical queries fired concurrently share one request
@@ -127,9 +133,9 @@ export async function gql(query, retries = 6) {
 async function _gqlRun(query, retries = 6) {
   let last;
   for (let attempt = 0; attempt < retries; attempt++) {
-    let status, j;
+    let status, j, retryAfter = null;
     try {
-      ({ status, j } = IS_NODE ? await nodeWcl(query) : await browserWcl(query));
+      ({ status, j, retryAfter } = IS_NODE ? await nodeWcl(query) : await browserWcl(query));
     } catch (e) {
       if (e instanceof NeedsAuth) throw e; // don't retry -- the user must reconnect
       // Network/transport failure -- worth retrying with backoff.
@@ -148,8 +154,8 @@ async function _gqlRun(query, retries = 6) {
     // rather than hanging silently for minutes.
     if (status === 429 || (j.error && /too many requests/i.test(j.error))) {
       last = new Error("WCL is rate-limiting the app right now (one hourly budget is shared by everyone). Try again in a few minutes.");
-      if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("wcl-ratelimit"));
-      await sleep(Math.min(12000, 2000 * 2 ** attempt));
+      if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("wcl-ratelimit", { detail: { retryAfter } }));
+      await sleep(retryAfter ? Math.min(20000, retryAfter * 1000) : Math.min(12000, 2000 * 2 ** attempt));
       continue;
     }
     if (j.error) throw new Error(j.error); // other non-GraphQL error
