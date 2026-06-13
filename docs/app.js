@@ -1,4 +1,6 @@
-// UI wiring: pick character/region/server, auto-detect the rest, stream live.
+// UI wiring: pick character/region/server, auto-detect the rest, then render
+// the result as a web report -- the prioritized list of changes up top, with
+// the supporting analyses as collapsible cards below.
 import { detectContext, detectPriority, DIFFICULTY } from "./core.js";
 import * as analyze from "./analyze.js";
 import * as diagnose from "./diagnose.js";
@@ -25,73 +27,144 @@ function fillServers() {
 regionSel.addEventListener("change", fillServers);
 loadRealms();
 
-// --- live output --- //
-function classify(line) {
-  if (/^\[error]/.test(line)) return "ln-err";
-  if (/<-- WORSE/.test(line)) return "ln-worse";
-  if (/^#{3,}|^===|^# |^Detected:/.test(line)) return "ln-head";
-  if (/^\s+\d+\.\s+\[/.test(line)) return "ln-rx";
-  if (/^---|^\s+- |^\s{2,}\S/.test(line)) return "ln-sub";
-  return "";
+// --------------------------------------------------------------------------- //
+// Rendering: cards instead of a terminal. Modules still emit text via log();
+// here we turn that stream into headings, prose, data blocks, and action cards.
+// --------------------------------------------------------------------------- //
+const scroll = () => window.scrollTo(0, document.body.scrollHeight);
+let cur = null; // { body } -- where log() lines currently go
+
+function makeCard(title, { primary = false, collapsed = false } = {}) {
+  let el, body;
+  if (collapsed) {
+    el = document.createElement("details");
+    el.className = "card";
+    const s = document.createElement("summary");
+    s.textContent = title;
+    el.appendChild(s);
+    body = document.createElement("div");
+    body.className = "body";
+    el.appendChild(body);
+  } else {
+    el = document.createElement("section");
+    el.className = "card" + (primary ? " primary" : "");
+    const h = document.createElement("h2");
+    h.textContent = title;
+    el.appendChild(h);
+    body = document.createElement("div");
+    body.className = "body";
+    el.appendChild(body);
+  }
+  out.appendChild(el);
+  const handle = { el, body, mono: null };
+  return handle;
 }
-function log(line) {
+
+function append(el) { cur.body.appendChild(el); cur.mono = null; scroll(); }
+function appendMono(line) {
+  if (!cur.mono) { cur.mono = document.createElement("pre"); cur.mono.className = "mono"; cur.body.appendChild(cur.mono); }
   const span = document.createElement("span");
-  const cls = classify(line);
-  if (cls) span.className = cls;
+  if (/<-- WORSE/.test(line)) span.className = "worse";
   span.textContent = line + "\n";
-  out.appendChild(span);
-  window.scrollTo(0, document.body.scrollHeight);
+  cur.mono.appendChild(span);
+  scroll();
 }
+function note(text, cls = "") { const d = document.createElement("div"); d.className = "note " + cls; d.textContent = text; append(d); }
+
+function log(line) {
+  if (!cur) cur = makeCard("Results");
+  let m;
+  if (/^[=#-]{3,}$/.test(line.trim())) return;                 // separator bars
+  if ((m = line.match(/^={3,}\s*(.+?)\s*={3,}$/))) { const d = document.createElement("div"); d.className = "sub-h"; d.textContent = m[1]; return append(d); }
+  if ((m = line.match(/^---\s*(.+?)\s*---$/))) { const d = document.createElement("div"); d.className = "sub-h2"; d.textContent = m[1]; return append(d); }
+  if ((m = line.match(/^\s*(\d+)\.\s*\[\s*(.+?)\s*\]\s*(.+)$/))) {
+    const info = /info/i.test(m[2]);
+    const d = document.createElement("div"); d.className = "rx" + (info ? " info" : "");
+    const n = document.createElement("div"); n.className = "num"; n.textContent = m[1];
+    const b = document.createElement("div"); b.className = "badge"; b.textContent = m[2];
+    const t = document.createElement("div"); t.className = "txt"; t.textContent = m[3];
+    d.append(n, b, t); return append(d);
+  }
+  if (/^\[error]/.test(line)) return note(line.replace(/^\[error]\s*/, ""), "err");
+  if (line.trim() === "") { cur.mono = null; return; }          // blank ends a data block
+  // aligned (has a run of 2+ spaces between non-space chars) -> data; else prose
+  if (/\S\s{2,}\S/.test(line)) return appendMono(line);
+  note(line);
+}
+
 function setRunning(on) {
   goBtn.disabled = on;
   goBtn.textContent = on ? "Analyzing…" : "Analyze";
-  statusEl.innerHTML = on ? '<span class="spin"></span>running…' : "";
+  statusEl.innerHTML = on ? '<span class="spin"></span>analyzing…' : "";
 }
 
-const SECTIONS = {
-  overview: ["OVERVIEW & ITEM-LEVEL-MATCHED COMPARISON",
-    (log, p) => analyze.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-  diagnose: ["TIMELINE DIAGNOSIS",
-    (log, p) => diagnose.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-  rotation: ["ROTATION: OPENER & PRIORITY",
-    (log, p) => rotation.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-  gear: ["GEAR AUDIT",
-    (log, p) => gear.audit(log, p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority)],
-  prescribe: ["PRESCRIPTION",
-    (log, p) => prescribe.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-};
+// Supporting analyses (collapsed by default -- evidence behind the list).
+const SUPPORTING = [
+  ["Overview & item-level comparison", (p) => analyze.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  ["Timeline diagnosis", (p) => diagnose.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  ["Rotation: opener & priority", (p) => rotation.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  ["Gear audit", (p) => gear.audit(log, p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority)],
+];
+
+function buildHero(name, server, region) {
+  const h = document.createElement("section"); h.className = "hero";
+  const who = document.createElement("div"); who.className = "who";
+  who.textContent = name + " ";
+  const small = document.createElement("small"); small.textContent = `${server} · ${region}`;
+  who.appendChild(small);
+  const det = document.createElement("div"); det.className = "detecting";
+  det.innerHTML = '<span class="spin"></span>Detecting class, spec, and difficulty…';
+  const pills = document.createElement("div"); pills.className = "pills";
+  h.append(who, det, pills); out.appendChild(h);
+  return { det, pills };
+}
+function setPills(hero, items) {
+  hero.det.remove();
+  for (const [text, muted] of items) {
+    const s = document.createElement("span"); s.className = "pill" + (muted ? " muted" : "");
+    s.textContent = text; hero.pills.appendChild(s);
+  }
+}
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const name = $("name").value.trim();
   const region = regionSel.value;
-  const server = serverSel.value; // realm slug
+  const server = serverSel.value;
   const serverLabel = serverSel.options[serverSel.selectedIndex]?.text || server;
-  out.textContent = "";
-  if (!name) { log("[error] enter a character name"); return; }
-  if (!server) { log("[error] pick a server"); return; }
+
+  out.innerHTML = ""; cur = null;
+  if (!name) { cur = makeCard("Error"); note("Enter a character name.", "err"); return; }
+  if (!server) { cur = makeCard("Error"); note("Pick a server.", "err"); return; }
 
   setRunning(true);
-  log(`=== ${name} — ${serverLabel} (${region}) ===`);
+  const hero = buildHero(name, serverLabel, region);
+  // Pin the action list at the top (filled last, once analyses warm the cache).
+  const rxCard = makeCard("What to change", { primary: true });
+  cur = rxCard; note("Crunching your kills and the field…", "muted");
+
   try {
-    log("");
-    log("Detecting class, spec, and difficulty…");
     const ctx = await detectContext(name, server, region);
     const priority = await detectPriority(ctx.className, ctx.specName, ctx.difficulty, ctx.killed[0].encounter.id);
-    log(`Detected: ${ctx.specName} ${ctx.className} · ${DIFFICULTY[ctx.difficulty]} · gear priority ${priority}`);
-    const p = {
-      name, server, region, cls: ctx.className, spec: ctx.specName,
-      difficulty: ctx.difficulty, priority,
-    };
-    for (const key of Object.keys(SECTIONS)) {
-      const [title, fn] = SECTIONS[key];
-      log(""); log("#".repeat(70)); log("# " + title); log("#".repeat(70));
-      try { await fn(log, p); }
-      catch (err) { log(`[error] ${title}: ${err.message || err}`); }
+    setPills(hero, [
+      [`${ctx.specName} ${ctx.className}`, false],
+      [DIFFICULTY[ctx.difficulty], true],
+      [`${priority} priority`, true],
+    ]);
+    const p = { name, server, region, cls: ctx.className, spec: ctx.specName, difficulty: ctx.difficulty, priority };
+
+    for (const [title, runFn] of SUPPORTING) {
+      cur = makeCard(title, { collapsed: true });
+      try { await runFn(p); } catch (err) { note(`${err.message || err}`, "err"); }
     }
+
+    rxCard.body.innerHTML = ""; cur = rxCard; // clear placeholder, fill the list
+    try { await prescribe.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty); }
+    catch (err) { note(`${err.message || err}`, "err"); }
+
     statusEl.textContent = "Done.";
   } catch (err) {
-    log(`[error] ${err.message || err}`);
+    rxCard.body.innerHTML = ""; cur = rxCard; note(err.message || String(err), "err");
   } finally {
     setRunning(false);
   }

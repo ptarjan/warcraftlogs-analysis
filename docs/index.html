@@ -59,17 +59,65 @@
   summary { color: var(--muted); font-size: 11px; cursor: pointer; text-transform: uppercase;
             letter-spacing: .7px; font-weight: 600; }
   details[open] summary { margin-bottom: 10px; }
-  pre { margin-top: 22px; background: #0a0d14; border: 1px solid var(--edge); border-radius: 14px;
-        padding: 18px 20px; overflow-x: auto; white-space: pre; color: #c7cedd;
-        font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; min-height: 60px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,.03); }
-  pre:empty::before { content: "Results will stream here…"; color: var(--muted); }
-  .ln-head { color: var(--accent); font-weight: 700; }
-  .ln-sub { color: var(--info); }
-  .ln-worse { color: var(--warn); font-weight: 600; }
-  .ln-rx { color: var(--ok); }
-  .ln-err { color: var(--warn); font-weight: 700; }
   a { color: var(--accent); }
+
+  /* ---- results: a column of cards instead of a terminal ---- */
+  #out { margin-top: 24px; display: flex; flex-direction: column; gap: 16px; }
+  #out:empty::before { content: "Your report will appear here."; color: var(--muted);
+    display: block; padding: 28px; text-align: center; font-size: 14px;
+    border: 1px dashed var(--edge); border-radius: 14px; }
+
+  .card { background: linear-gradient(180deg, var(--panel2), var(--panel));
+    border: 1px solid var(--edge); border-radius: 14px; overflow: hidden;
+    box-shadow: 0 6px 20px rgba(0,0,0,.25); }
+  .card > h2 { margin: 0; padding: 13px 18px; font-size: 12.5px; font-weight: 700;
+    letter-spacing: .6px; text-transform: uppercase; color: var(--accent);
+    border-bottom: 1px solid var(--edge); background: rgba(255,255,255,.02); }
+  .card .body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+  /* collapsible supporting cards */
+  details.card > summary { padding: 13px 18px; font-size: 12.5px; font-weight: 700;
+    letter-spacing: .6px; text-transform: uppercase; color: var(--muted); cursor: pointer;
+    list-style: none; display: flex; align-items: center; gap: 8px; }
+  details.card > summary::-webkit-details-marker { display: none; }
+  details.card > summary::before { content: "▸"; color: var(--accent); font-size: 11px; }
+  details.card[open] > summary { color: var(--accent); border-bottom: 1px solid var(--edge);
+    background: rgba(255,255,255,.02); }
+  details.card[open] > summary::before { content: "▾"; }
+  .card.primary { border-color: rgba(245,196,81,.4); box-shadow: 0 8px 28px rgba(245,196,81,.10); }
+  .sub-h { font-size: 15px; font-weight: 700; color: var(--ink); }
+  .sub-h2 { font-size: 13px; font-weight: 600; color: var(--info); }
+
+  .mono { margin: 0; background: #0b0e15; border: 1px solid var(--edge); border-radius: 10px;
+    padding: 12px 14px; overflow-x: auto; white-space: pre; color: #aeb8cc;
+    font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .mono .worse { color: var(--warn); }
+
+  /* hero / character header */
+  .hero { background: radial-gradient(600px 200px at 0% 0%, rgba(245,196,81,.08), transparent),
+          linear-gradient(180deg, var(--panel2), var(--panel));
+    border: 1px solid var(--edge); border-radius: 14px; padding: 20px 22px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.25); }
+  .hero .who { font-size: 24px; font-weight: 800; letter-spacing: .2px; }
+  .hero .who small { color: var(--muted); font-weight: 500; font-size: 14px; margin-left: 6px; }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .pill { font-size: 12px; padding: 5px 11px; border-radius: 999px; font-weight: 600;
+    background: rgba(245,196,81,.12); color: var(--accent); border: 1px solid rgba(245,196,81,.3); }
+  .pill.muted { background: rgba(255,255,255,.04); color: var(--muted); border-color: var(--edge); }
+  .detecting { color: var(--muted); font-size: 13px; margin-top: 12px; display: flex;
+    align-items: center; gap: 8px; }
+
+  /* prescription action cards */
+  .rx { display: flex; gap: 12px; align-items: flex-start; padding: 13px 14px;
+    background: rgba(88,214,160,.06); border: 1px solid rgba(88,214,160,.22); border-radius: 11px; }
+  .rx .num { font-weight: 800; color: var(--ok); min-width: 16px; font-size: 14px; }
+  .rx .badge { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px;
+    background: var(--ok); color: #06110b; white-space: nowrap; }
+  .rx .txt { flex: 1; font-size: 13.5px; line-height: 1.5; }
+  .rx.info { background: rgba(143,184,255,.06); border-color: rgba(143,184,255,.22); }
+  .rx.info .num { color: var(--info); }
+  .rx.info .badge { background: var(--info); color: #06111f; }
+  .note { font-size: 13.5px; line-height: 1.5; color: var(--ink); }
+  .note.err { color: var(--warn); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -94,7 +142,7 @@
       <span class="status" id="status"></span>
     </div>
   </form>
-  <pre id="out"></pre>
+  <div id="out"></div>
 </main>
 <script type="module" src="./app.js"></script>
 </body>
