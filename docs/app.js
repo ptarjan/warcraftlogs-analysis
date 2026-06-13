@@ -2,6 +2,8 @@
 // the result as a web report -- the prioritized list of changes up top, with
 // the supporting analyses as collapsible cards below.
 import { detectContext, detectPriority, DIFFICULTY } from "./core.js";
+import { isAuthed, beginLogin, handleRedirectCallback, logout } from "./auth.js";
+import { NeedsAuth } from "./wcl.js";
 import * as analyze from "./analyze.js";
 import * as diagnose from "./diagnose.js";
 import * as rotation from "./rotation.js";
@@ -10,10 +12,11 @@ import * as prescribe from "./prescribe.js";
 
 const $ = (id) => document.getElementById(id);
 const out = $("out"), statusEl = $("status"), goBtn = $("go"), form = $("form");
-const regionSel = $("region"), serverSel = $("server");
+const regionSel = $("region"), serverSel = $("server"), authEl = $("auth");
 
 // --- server dropdown, populated from the bundled realm list per region --- //
 let REALMS = {};
+loadRealms();
 async function loadRealms() {
   try { REALMS = await (await fetch("./servers.json")).json(); }
   catch (e) { REALMS = {}; }
@@ -25,7 +28,33 @@ function fillServers() {
     || '<option value="">(realm list unavailable)</option>';
 }
 regionSel.addEventListener("change", fillServers);
-loadRealms();
+
+// --------------------------------------------------------------------------- //
+// Auth (optional): anyone can analyze anonymously via the proxy. Connecting with
+// OAuth PKCE makes the browser use the user's OWN Warcraft Logs token instead --
+// their own rate budget and access to their private logs. No secret either way.
+// --------------------------------------------------------------------------- //
+function renderAuth() {
+  if (isAuthed()) {
+    authEl.innerHTML =
+      '<span class="conn ok">✓ Connected · using your Warcraft Logs account</span>' +
+      '<button type="button" id="disconnect" class="linkbtn">Disconnect</button>';
+    $("disconnect").onclick = () => { logout(); renderAuth(); };
+  } else {
+    authEl.innerHTML =
+      '<button type="button" id="connect" class="linkbtn accent">Connect Warcraft Logs</button>' +
+      '<span class="conn muted">optional · use your own rate limit &amp; private logs (or just analyze below)</span>';
+    $("connect").onclick = () => beginLogin().catch(showAuthErr);
+  }
+}
+function showAuthErr(e) { cur = makeCard("Connection error"); note(e.message || String(e), "err"); }
+
+// On load: finish any returning OAuth redirect, then reflect auth state.
+(async () => {
+  try { await handleRedirectCallback(); }
+  catch (e) { showAuthErr(e); }
+  renderAuth();
+})();
 
 // --------------------------------------------------------------------------- //
 // Rendering: cards instead of a terminal. Modules still emit text via log();
@@ -165,16 +194,23 @@ form.addEventListener("submit", async (e) => {
 
     for (const [title, runFn] of SUPPORTING) {
       cur = makeCard(title, { collapsed: true });
-      try { await runFn(p); } catch (err) { note(`${err.message || err}`, "err"); }
+      try { await runFn(p); }
+      catch (err) { if (err instanceof NeedsAuth) throw err; note(`${err.message || err}`, "err"); }
     }
 
     rxCard.body.innerHTML = ""; cur = rxCard; // clear placeholder, fill the list
     try { await prescribe.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty); }
-    catch (err) { note(`${err.message || err}`, "err"); }
+    catch (err) { if (err instanceof NeedsAuth) throw err; note(`${err.message || err}`, "err"); }
 
     statusEl.textContent = "Done.";
   } catch (err) {
-    rxCard.body.innerHTML = ""; cur = rxCard; note(err.message || String(err), "err");
+    rxCard.body.innerHTML = ""; cur = rxCard;
+    if (err instanceof NeedsAuth) {
+      logout(); renderAuth();
+      note(err.message || "Reconnect to Warcraft Logs to continue.", "err");
+    } else {
+      note(err.message || String(err), "err");
+    }
   } finally {
     setRunning(false);
   }

@@ -14,11 +14,16 @@ payoff; the list is sorted **biggest-DPS-first by the impact actually shown**.
 ## Architecture
 - `docs/` — static front-end (GitHub Pages), ES modules, runs the analysis in the
   browser and streams output live. `app.js` wires the UI and runs every section.
-- `worker/` — Cloudflare Worker holding the WCL secret; proxies WCL GraphQL +
-  Wowhead tooltips, adds CORS, caches, absorbs 429s. The browser needs it
-  (secret + CORS); **Node does not**.
-- `cli.mjs` — command-line runner. `wcl.js` is **dual-mode**: browser → Worker,
-  Node → straight to WCL (OAuth) + Wowhead. CLI needs only credentials.
+- **`wcl.js` picks one of three paths, no secret in the page:**
+  - Node (CLI) → client-credentials (env/.env) → `/api/v2/client`, direct.
+  - browser, **connected** → user's own PKCE token (`auth.js`) → `/api/v2/user`,
+    direct (CORS is open). Wins whenever `getAccessToken()` returns a token.
+  - browser, **anonymous** → the `worker/` Cloudflare proxy (holds the shared
+    secret, caches, absorbs 429s). The default — visitors need no login.
+- Auth is **optional**: Connect (PKCE public client, `CLIENT_ID` in `config.js`,
+  not a secret) only switches the browser from the proxy to the user's own token.
+- A connected token that 401s throws `NeedsAuth` (reconnect) — we don't silently
+  fall back to the proxy, so the active identity stays honest.
 - Each analysis module exports `run(log, …)` (gear: `audit`) AND a data function
   (`gearFindings`, `rotationFindings`, …) so `prescribe.js` can fold findings
   into the list.

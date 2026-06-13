@@ -1,17 +1,26 @@
-// WCL GraphQL + Wowhead tooltips. Dual-mode:
-//   browser -> the Cloudflare Worker proxy (hides the secret, adds CORS)
-//   Node/CLI -> straight to WCL/Wowhead (the secret is safe locally and there's
-//               no CORS), so the CLI needs NO Worker -- just credentials.
-import { WORKER_URL, IS_NODE } from "./config.js";
+// WCL GraphQL + Wowhead tooltips. Three paths, no secret in the page:
+//   Node/CLI       -> client-credentials (env/.env) -> /api/v2/client, direct.
+//   browser, anon  -> the Cloudflare Worker proxy (holds the shared secret).
+//   browser, conn  -> the user's own PKCE token (auth.js) -> /api/v2/user, direct.
+// "conn" wins when a token is present; otherwise we fall back to the proxy.
+import {
+  IS_NODE, TOKEN_URL, CLIENT_API_URL, USER_API_URL, WOWHEAD_URL,
+  WORKER_URL, WORKER_CONFIGURED,
+} from "./config.js";
+import { getAccessToken } from "./auth.js";
 
 export class PrivateReport extends Error {}
 
+// Raised when the browser has no valid token (or it expired). Callers catch this
+// to send the user through the connect flow instead of showing a network error.
+export class NeedsAuth extends Error {}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ---- Node direct-to-WCL path (no Worker) -------------------------------------
-const WCL_TOKEN_URL = "https://www.warcraftlogs.com/oauth/token";
-const WCL_API_URL = "https://www.warcraftlogs.com/api/v2/client";
-const WOWHEAD = "https://nether.wowhead.com/tooltip/item/";
+// ---- Node direct-to-WCL path (client-credentials) ----------------------------
+const WCL_TOKEN_URL = TOKEN_URL;
+const WCL_API_URL = CLIENT_API_URL;
+const WOWHEAD = WOWHEAD_URL;
 let _nodeToken = null;
 
 async function nodeCreds() {
@@ -64,10 +73,36 @@ async function nodeWcl(query) {
   return { status: r.status, j: await r.json().catch(() => ({})) };
 }
 
+// ---- Browser path: own PKCE token if connected, else the anonymous proxy ------
+async function browserWcl(query) {
+  const token = getAccessToken();
+  if (token) {
+    const r = await fetch(USER_API_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
+    // A connected user whose token died must reconnect (or disconnect to use the
+    // shared proxy) -- we don't silently fall back, so their identity is honest.
+    if (r.status === 401)
+      throw new NeedsAuth("Your Warcraft Logs session expired -- reconnect, or disconnect to use the shared proxy.");
+    return { status: r.status, j: await r.json().catch(() => ({})) };
+  }
+  // Anonymous: route through the Worker, which holds the shared app secret.
+  if (!WORKER_CONFIGURED)
+    throw new NeedsAuth("Connect your Warcraft Logs account to run the analysis (no proxy is configured).");
+  const r = await fetch(`${WORKER_URL}/wcl`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  return { status: r.status, j: await r.json().catch(() => ({})) };
+}
+
 // Session-level dedupe: identical queries fired concurrently share one request
 // (coalescing), and a resolved query is reused for the rest of the session.
 // The analyses re-derive the same rankings/reports from several functions, so
-// this cuts a large fraction of calls before they ever reach the Worker.
+// this cuts a large fraction of calls before they ever leave the browser.
 const _gqlInflight = new Map();
 const _gqlCache = new Map();
 
@@ -94,18 +129,9 @@ async function _gqlRun(query, retries = 6) {
   for (let attempt = 0; attempt < retries; attempt++) {
     let status, j;
     try {
-      if (IS_NODE) {
-        ({ status, j } = await nodeWcl(query));
-      } else {
-        const r = await fetch(`${WORKER_URL}/wcl`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query }),
-        });
-        status = r.status;
-        j = await r.json();
-      }
+      ({ status, j } = IS_NODE ? await nodeWcl(query) : await browserWcl(query));
     } catch (e) {
+      if (e instanceof NeedsAuth) throw e; // don't retry -- the user must reconnect
       // Network/transport failure -- worth retrying with backoff.
       last = e;
       await sleep(1000 * (2 + attempt));
@@ -134,16 +160,20 @@ async function _gqlRun(query, retries = 6) {
 }
 
 // Wowhead tooltip JSON for an item (real per-instance stats need the bonus IDs).
-// Coalesces concurrent identical fetches; the Worker also caches these for a
-// week, so repeat lookups are effectively free.
+// Direct to Wowhead when trusted (Node) or connected (own token); anonymous
+// browser sessions go through the Worker (which also caches these for a week).
+// Coalesces concurrent identical fetches within a session.
 const _itemInflight = new Map();
 export async function itemTooltip(id, bonusIds) {
   const bonus = (bonusIds || []).map(String);
   const q = bonus.length ? `?bonus=${bonus.join(":")}` : "";
-  const url = IS_NODE
+  const direct = IS_NODE || !!getAccessToken();
+  const url = direct
     ? `${WOWHEAD}${encodeURIComponent(id)}${q}`
     : `${WORKER_URL}/item/${id}${q}`;
   if (_itemInflight.has(url)) return _itemInflight.get(url);
+  // Node has no default UA Wowhead likes; the browser sends its own (and can't
+  // override it anyway), so only set it under Node.
   const opts = IS_NODE ? { headers: { "User-Agent": "Mozilla/5.0" } } : undefined;
   const p = fetch(url, opts).then((r) => r.json());
   _itemInflight.set(url, p);

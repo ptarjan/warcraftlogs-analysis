@@ -17,6 +17,13 @@ test("modules import under Node and expose their entry points", async () => {
   assert.equal(typeof wcl.itemTooltip, "function");
   assert.equal(typeof wcl.clearGqlCache, "function");
 
+  // auth.js is browser-only at runtime but must import cleanly under Node
+  // (no unguarded browser globals at import time -- the CLI loads wcl.js -> auth.js).
+  const auth = await import("../docs/auth.js");
+  assert.equal(typeof auth.beginLogin, "function");
+  assert.equal(typeof auth.handleRedirectCallback, "function");
+  assert.equal(typeof auth.getAccessToken, "function");
+
   const analyze = await import("../docs/analyze.js");
   assert.equal(typeof analyze.run, "function");
 
