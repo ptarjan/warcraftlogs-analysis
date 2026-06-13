@@ -7,7 +7,7 @@
 //     how often you land them vs the field
 //   - your opener sequence vs the field's
 import { gql } from "./wcl.js";
-import { characterZone, characterEncounter, playerMetrics, topRankings, median } from "./core.js";
+import { characterZone, characterEncounter, playerMetrics, collectPeers, mapLimit, median } from "./core.js";
 
 // --- pure, unit-tested helpers ----------------------------------------------
 
@@ -178,20 +178,15 @@ export async function rotationFindings(name, server, region, className, specName
   // Pull the ilvl-matched field once: it feeds the proc rate, the opener, AND the
   // ability-usage comparison (the field comparison is the whole point, so we
   // fetch peers regardless of whether the proc turned out real).
-  const peers = [];
   const myIlvl = (er.ranks[0] || {}).bracketData || 0;
-  outer:
-  for (let page = 1; page <= 4; page++) {
-    for (const r of await topRankings(boss.id, difficulty, className, specName, page)) {
-      if (peers.length >= 5) break outer;
-      if (Math.abs((r.bracketData || 0) - myIlvl) > 4) continue;
-      try {
-        const a = await analyzeKill(r.name, r.report.code, r.report.fightID, specName, className,
-                                    { onlyAbility: top.name });
-        if (a) peers.push(a);
-      } catch (e) { /* skip */ }
-    }
-  }
+  const cands = await collectPeers({ encounters: boss.id, difficulty, className, specName,
+    limit: 8, pages: 4, ilvl: myIlvl, window: 4 });
+  const peers = (await mapLimit(cands, 4, async (r) => {
+    try {
+      return await analyzeKill(r.name, r.report.code, r.report.fightID, specName, className,
+                               { onlyAbility: top.name });
+    } catch (e) { return null; }
+  })).filter(Boolean).slice(0, 5);
   const fieldProc = (isReal && peers.length) ? median(peers.map((a) => a.procPerMin)) : null;
   const fieldOpener = peers.length ? peers[0].opener : null;
   const fieldRate = fieldCastRates(peers.map((p) => p.castRate || {}));

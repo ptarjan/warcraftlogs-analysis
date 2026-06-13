@@ -1,7 +1,7 @@
 // Generate a concrete, prioritized prescription. Ported from prescribe.py.
 import {
   ENCHANTABLE_SLOTS, characterZone, characterEncounter, playerMetrics,
-  topRankings, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry, bestRank,
+  collectPeers, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry, bestRank,
 } from "./core.js";
 import { compareBoss } from "./diagnose.js";
 import { gearFindings, sourceText } from "./gear.js";
@@ -83,14 +83,8 @@ async function fieldGearConsumables(encounterId, difficulty, className, specName
   const statPcts = [];
   // Collect ilvl-matched candidates, then fetch each peer's gear/buffs/stats
   // concurrently (bounded) instead of one slow peer at a time.
-  const cands = [];
-  for (let page = 1; page <= 7 && cands.length < n + 3; page++) {
-    for (const r of await topRankings(encounterId, difficulty, className, specName, page)) {
-      const il = r.bracketData;
-      if (il && Math.abs(il - targetIlvl) <= 2) cands.push(r);
-      if (cands.length >= n + 3) break;
-    }
-  }
+  const cands = await collectPeers({ encounters: encounterId, difficulty, className, specName,
+    limit: n + 3, pages: 7, ilvl: targetIlvl, window: 2 });
   const peers = (await mapLimit(cands, 5, async (r) => {
     const code = r.report.code, fight = r.report.fightID;
     const m = await playerMetrics(code, fight, r.name, specName, className);

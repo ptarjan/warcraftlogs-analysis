@@ -1,7 +1,7 @@
 // Overview + item-level / duration-controlled comparison. Ported from analyze.py.
 import {
   DIFFICULTY, characterZone, characterEncounter, topRankings, playerMetrics,
-  secondaryStats, gearSummary, median, f, padL, padR, mapLimit, bestRank,
+  secondaryStats, gearSummary, median, f, padL, padR, mapLimit, bestRank, collectPeers,
 } from "./core.js";
 
 export async function overview(log, name, server, region, difficulty) {
@@ -23,14 +23,8 @@ export async function overview(log, name, server, region, difficulty) {
 // Peers within +/- ilvlWindow of targetIlvl, with full metrics.
 async function collectIlvlPeers(encounterId, difficulty, className, specName,
   targetIlvl, n = 12, ilvlWindow = 2, pages = 6) {
-  const cands = [];
-  for (let page = 1; page <= pages && cands.length < n + 4; page++) {
-    for (const r of await topRankings(encounterId, difficulty, className, specName, page)) {
-      const il = r.bracketData;
-      if (il && Math.abs(il - targetIlvl) <= ilvlWindow) cands.push(r);
-      if (cands.length >= n + 4) break;
-    }
-  }
+  const cands = await collectPeers({ encounters: encounterId, difficulty, className, specName,
+    limit: n + 4, pages, ilvl: targetIlvl, window: ilvlWindow });
   const metrics = await mapLimit(cands, 5, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
     if (m) m.rank_dur = (r.duration || 0) / 1000;

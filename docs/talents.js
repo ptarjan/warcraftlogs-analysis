@@ -13,7 +13,7 @@
 import { gql } from "./wcl.js";
 import { spellTooltip } from "./wcl.js";
 import {
-  playerMetrics, topRankings, mapLimit, f, bestKill,
+  playerMetrics, collectPeers, mapLimit, f, bestKill,
 } from "./core.js";
 
 // Your taken talent nodes on one fight: Map(nodeID -> {id, rank}).
@@ -54,13 +54,7 @@ export function talentDiff(youSet, fieldCount, fieldN, missThresh = 0.6, offThre
 
 
 async function fieldLoadouts(encounterId, difficulty, className, specName, n = 10) {
-  const cands = [];
-  for (let page = 1; page <= 4 && cands.length < n + 3; page++) {
-    for (const r of await topRankings(encounterId, difficulty, className, specName, page)) {
-      cands.push(r);
-      if (cands.length >= n + 3) break;
-    }
-  }
+  const cands = await collectPeers({ encounters: encounterId, difficulty, className, specName, limit: n + 3, pages: 4 });
   const outs = await mapLimit(cands, 5, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
     return m ? loadout(r.report.code, r.report.fightID, m.sourceID) : null;

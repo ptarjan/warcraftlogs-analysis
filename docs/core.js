@@ -193,6 +193,42 @@ export async function bestKill(name, server, region, difficulty) {
 }
 
 // --------------------------------------------------------------------- //
+// Field sampling (one collector for every "compare vs peers" analysis)
+// --------------------------------------------------------------------- //
+// Scan the top DPS rankings for a spec and return up to `limit` ranking entries
+// to fetch. Options cover every caller's needs:
+//   encounters: one or more encounter ids to draw from (deduped by name+server)
+//   pages:      how many ranking pages to scan per encounter
+//   ilvl/window: when ilvl is set, keep only parses within +/-window of it
+// Callers then mapLimit() over the result to pull whatever per-peer data they
+// need (metrics, buffs, stats, timeline, ...).
+export async function collectPeers({
+  encounters, difficulty, className, specName,
+  limit = 10, pages = 4, ilvl = null, window = 3, dedupe = true,
+}) {
+  const ids = Array.isArray(encounters) ? encounters : [encounters];
+  const seen = new Set();
+  const cands = [];
+  for (const eid of ids) {
+    if (cands.length >= limit) break;
+    for (let page = 1; page <= pages; page++) {
+      if (cands.length >= limit) break;
+      for (const r of await topRankings(eid, difficulty, className, specName, page)) {
+        if (dedupe) {
+          const k = `${r.name}|${(r.server || {}).name}`;
+          if (seen.has(k)) continue;
+          seen.add(k);
+        }
+        if (ilvl != null && !(r.bracketData && Math.abs(r.bracketData - ilvl) <= window)) continue;
+        cands.push(r);
+        if (cands.length >= limit) break;
+      }
+    }
+  }
+  return cands;
+}
+
+// --------------------------------------------------------------------- //
 // Auto-detection (so the UI only needs character / server / region)
 // --------------------------------------------------------------------- //
 const DIFF_ORDER = [5, 4, 3, 2]; // Mythic -> LFR; pick the highest with kills.
@@ -233,13 +269,7 @@ export async function detectContext(name, server, region) {
 
 // The gear stat to optimize toward = the one the top field stacks most.
 export async function detectPriority(className, specName, difficulty, encounterId, sample = 6) {
-  const cands = [];
-  for (let page = 1; page <= 4 && cands.length < sample + 3; page++) {
-    for (const r of await topRankings(encounterId, difficulty, className, specName, page)) {
-      cands.push(r);
-      if (cands.length >= sample + 3) break;
-    }
-  }
+  const cands = await collectPeers({ encounters: encounterId, difficulty, className, specName, limit: sample + 3, pages: 4 });
   const stats = await mapLimit(cands, 5, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
     return m ? secondaryStats(r.report.code, r.report.fightID, m.sourceID) : null;

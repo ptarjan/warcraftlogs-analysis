@@ -1,7 +1,7 @@
 // Comparative timeline root-cause diagnosis. Ported from diagnose.py.
 import { gql } from "./wcl.js";
 import {
-  characterZone, characterEncounter, playerMetrics, topRankings, median, f, mapLimit,
+  characterZone, characterEncounter, playerMetrics, collectPeers, median, f, mapLimit,
 } from "./core.js";
 
 
@@ -104,14 +104,8 @@ async function fightMetrics(code, fight, sourceId) {
 }
 
 async function peerMetricsFor(encounterId, difficulty, className, specName, targetIlvl, n = 6) {
-  const cands = [];
-  for (let page = 1; page <= 7 && cands.length < n + 3; page++) {
-    for (const r of await topRankings(encounterId, difficulty, className, specName, page)) {
-      const il = r.bracketData;
-      if (il && Math.abs(il - targetIlvl) <= 3) cands.push(r);
-      if (cands.length >= n + 3) break;
-    }
-  }
+  const cands = await collectPeers({ encounters: encounterId, difficulty, className, specName,
+    limit: n + 3, pages: 7, ilvl: targetIlvl, window: 3 });
   // fightMetrics paginates events (heavy), so a smaller concurrency cap.
   const results = await mapLimit(cands, 4, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
