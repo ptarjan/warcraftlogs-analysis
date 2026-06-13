@@ -24,9 +24,21 @@ payoff; the list is sorted **biggest-DPS-first by the impact actually shown**.
   not a secret) only switches the browser from the proxy to the user's own token.
 - A connected token that 401s throws `NeedsAuth` (reconnect) — we don't silently
   fall back to the proxy, so the active identity stays honest.
-- Each analysis module exports `run(log, …)` (the card entrypoint) AND a
-  `…Findings` data function (`gearFindings`, `rotationFindings`,
-  `timelineFindings`, …) so `prescribe.js` can fold findings into the list.
+- Each analysis module exports `run(log, …)` (the card entrypoint — renders) AND
+  a `…Findings` data function (`gearFindings`, `rotationFindings`,
+  `timelineFindings`, …) that only computes. Keep compute and render separate.
+- **Findings are the shared currency.** A finding is `{ dim, impact, label, text }`
+  built with `DPS()/COMP()/INFO` + `finding()` from `core.js` — `impact` (a
+  number) is the ONLY sort key, `label` is the matching display string (built
+  together so they can't drift). Each domain owns its `…Levers(data)→Finding[]`
+  (`gearLevers`, `rotationLevers`, `topParseLevers`); `prescribe.js` adds the
+  cross-cutting ones (execution/consumables/enchants/stat-gap), concatenates,
+  sorts by `impact`, splits yours-vs-comp, renders. Don't re-derive a finding's
+  category from its text — set `dim` explicitly.
+- **One fetch per report.** All report reads go through `core.reportCore` (one
+  bundled, memoized query per `report+fight`); `test/loader.test.mjs` fails if any
+  table/event is fetched twice across a full run. Don't add a parallel fetch path.
+- camelCase all derived fields. Snake_case only for OAuth/HTTP wire formats.
 
 ## Hard rules (these are why earlier versions were wrong)
 - **Class-agnostic, always.** It must work for all 39 specs. NEVER hard-code
