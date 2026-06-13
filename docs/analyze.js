@@ -62,7 +62,7 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
     log(`    DPS at your kill-time (+/-40s): you ${f(you.dps, 0)}  vs peer med ${f(median(near), 0)}  (n=${near.length})`);
   }
 
-  const youStats = await secondaryStats(code, fight, you.sourceID);
+  const youStats = await secondaryStats(code, fight, you.sourceID, className);
   if (youStats) {
     const keys = ["crit", "haste", "mastery", "vers"];
     const sec = keys.reduce((s, k) => s + youStats[k], 0) || 1;

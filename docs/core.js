@@ -109,13 +109,33 @@ function metricsFromTables(dmg, casts, name, specName) {
   };
 }
 
+// ONE shared query per (report, fight, class) for the per-report fields the
+// analysis used to fetch in separate calls: the damage + cast tables, the
+// CombatantInfo events (secondary stats), and the fight window. WCL bills ~flat
+// per request (a 100-row table costs ~the same as a tiny one), so folding these
+// into a single query is a real point saving -- playerMetrics, secondaryStats,
+// and fightWindow all share this one fetch. Keyed by sourceClass; the other
+// fields are class-agnostic, so callers pass the same className to share it.
+async function reportCore(code, fight, className = "Monk") {
+  const q = `query { reportData { report(code:"${code}") {
+    dmg: table(fightIDs:${fight}, dataType:DamageDone, sourceClass:"${clean(className)}")
+    casts: table(fightIDs:${fight}, dataType:Casts, sourceClass:"${clean(className)}")
+    combatant: events(fightIDs:${fight}, dataType:CombatantInfo, limit:50) { data }
+    fightWin: fights(fightIDs:${fight}) { startTime endTime } } } }`;
+  return (await gql(q)).reportData.report;
+}
+
 // Damage + cast metrics for one player on one fight.
 export async function playerMetrics(code, fight, name, specName, className = "Monk") {
-  const q = `query { reportData { report(code:"${code}") {
-    dmg: table(fightIDs:${fight}, dataType:DamageDone, sourceClass:"${className}")
-    casts: table(fightIDs:${fight}, dataType:Casts, sourceClass:"${className}") } } }`;
-  const d = (await gql(q)).reportData.report;
+  const d = await reportCore(code, fight, className);
   return metricsFromTables(d.dmg.data, d.casts.data, name, specName);
+}
+
+// Fight window [start, end] in ms -- from the shared reportCore query.
+export async function fightWindow(code, fight, className = "Monk") {
+  const d = await reportCore(code, fight, className);
+  const w = (d.fightWin || [])[0] || {};
+  return [w.startTime || 0, w.endTime || 0];
 }
 
 // Self-buff uptime % keyed by buff name (match by keyword to compare).
@@ -145,11 +165,11 @@ export async function bossDebuffs(code, fight) {
   return out;
 }
 
-// Crit/haste/mastery/vers ratings from CombatantInfo events.
-export async function secondaryStats(code, fight, sourceId) {
-  const q = `query { reportData { report(code:"${code}") { events(
-    fightIDs:${fight}, dataType:CombatantInfo, limit:50) { data } } } }`;
-  for (const e of (await gql(q)).reportData.report.events.data) {
+// Crit/haste/mastery/vers ratings from the shared reportCore CombatantInfo data,
+// so it rides on the playerMetrics query for the same kill. Pass the same className.
+export async function secondaryStats(code, fight, sourceId, className = "Monk") {
+  const d = await reportCore(code, fight, className);
+  for (const e of ((d.combatant && d.combatant.data) || [])) {
     if (e.sourceID === sourceId) {
       return {
         agi: e.agility || 0, stam: e.stamina || 0,
@@ -282,7 +302,7 @@ export async function detectPriority(className, specName, difficulty, encounterI
   const cands = await collectPeers({ encounters: encounterId, difficulty, className, specName, limit: sample + 3, pages: 4 });
   const stats = await mapLimit(cands, 5, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
-    return m ? secondaryStats(r.report.code, r.report.fightID, m.sourceID) : null;
+    return m ? secondaryStats(r.report.code, r.report.fightID, m.sourceID, className) : null;
   });
   const sums = { crit: 0, haste: 0, mastery: 0, vers: 0 };
   let n = 0;

@@ -90,7 +90,7 @@ async function fieldGearConsumables(encounterId, difficulty, className, specName
     const m = await playerMetrics(code, fight, r.name, specName, className);
     if (!m) return null;
     const bf = await buffUptimes(code, fight, m.sourceID);
-    const s = await secondaryStats(code, fight, m.sourceID);
+    const s = await secondaryStats(code, fight, m.sourceID, className);
     return { m, bf, s };
   })).filter(Boolean).slice(0, n);
 
@@ -128,7 +128,7 @@ async function fieldGearConsumables(encounterId, difficulty, className, specName
   };
 }
 
-async function mySetup(code, fight, sourceId, gear, priority = "crit") {
+async function mySetup(code, fight, sourceId, gear, priority = "crit", className = "Monk") {
   const bf = await buffUptimes(code, fight, sourceId);
   const flask = Object.entries(bf).find(([n, b]) => n.toLowerCase().includes("flask") && b.pct > 50);
   const food = Object.entries(bf).find(([n, b]) => n.toLowerCase().includes("well fed") && b.pct > 50);
@@ -138,7 +138,7 @@ async function mySetup(code, fight, sourceId, gear, priority = "crit") {
   });
   const augrune = Object.entries(bf).find(([n, b]) => n.toLowerCase().includes("augment rune") && b.pct > 50);
   const oil = Object.entries(bf).find(([n, b]) => /\boil\b|sharpening|whetstone|weightstone/.test(n.toLowerCase()) && b.pct > 50);
-  const stats = await secondaryStats(code, fight, sourceId);
+  const stats = await secondaryStats(code, fight, sourceId, className);
   const statPct = stats
     ? 100 * stats[priority] / (["crit", "haste", "mastery", "vers"].reduce((a, k) => a + stats[k], 0) || 1)
     : null;
@@ -205,7 +205,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const priority = knownPriority || await detectPriority(CL, SP, D, gearBoss.encounter.id);
   const PRI = priority.toUpperCase();
   const you = await playerMetrics(code, fight, N, SP, CL);
-  const my = await mySetup(code, fight, you.sourceID, you.gear, priority);
+  const my = await mySetup(code, fight, you.sourceID, you.gear, priority, CL);
 
   const field = await fieldGearConsumables(gearBoss.encounter.id, D, CL, SP, curIlvl, priority);
   const execd = await aggregateExecution(N, S, R, D, CL, SP, ranks);

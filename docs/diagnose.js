@@ -1,7 +1,7 @@
 // Comparative timeline root-cause diagnosis. Ported from diagnose.py.
 import { gql } from "./wcl.js";
 import {
-  characterZone, characterEncounter, playerMetrics, collectPeers, median, f, mapLimit,
+  characterZone, characterEncounter, playerMetrics, collectPeers, median, f, mapLimit, fightWindow,
 } from "./core.js";
 
 
@@ -24,11 +24,21 @@ async function paginateEvents(code, fight, sourceId, dataType, abilityId = null,
   return out;
 }
 
-async function fightWindow(code, fight) {
+// Casts + auto-attack events for one actor on one fight, in ONE query. Each is
+// well under the 10k page limit for a single player, so a second page is rare
+// (handled if it happens). Melee autos = ability 1; if empty (hunters/casters)
+// fall back to Auto Shot (75). Bundling halves the per-kill event requests.
+async function fightEvents(code, fight, sourceId, start, end) {
+  const win = `, startTime: ${start}, endTime: ${end}`;
   const q = `query { reportData { report(code:"${code}") {
-    fights(fightIDs:${fight}) { startTime endTime } } } }`;
-  const ff = (await gql(q)).reportData.report.fights[0];
-  return [ff.startTime, ff.endTime];
+    casts: events(fightIDs:${fight}, sourceID:${sourceId}, dataType:Casts, limit:10000${win}) { data nextPageTimestamp }
+    autos: events(fightIDs:${fight}, sourceID:${sourceId}, dataType:DamageDone, abilityID:1, limit:10000${win}) { data nextPageTimestamp } } } }`;
+  const r = (await gql(q)).reportData.report;
+  let casts = r.casts.data, autos = r.autos.data;
+  if (r.casts.nextPageTimestamp) casts = casts.concat(await paginateEvents(code, fight, sourceId, "Casts", null, r.casts.nextPageTimestamp, end));
+  if (r.autos.nextPageTimestamp) autos = autos.concat(await paginateEvents(code, fight, sourceId, "DamageDone", 1, r.autos.nextPageTimestamp, end));
+  if (!autos.length) autos = await paginateEvents(code, fight, sourceId, "DamageDone", 75, start, end);
+  return { casts: casts.filter((e) => !e.fake), autos };
 }
 
 function estimateGcd(gapsMs) {
@@ -37,16 +47,13 @@ function estimateGcd(gapsMs) {
 }
 
 // Pure computation: timeline diagnostic for one actor on one fight.
-async function fightMetrics(code, fight, sourceId) {
-  const [fStart, fEnd] = await fightWindow(code, fight);
+async function fightMetrics(code, fight, sourceId, className = "Monk") {
+  const [fStart, fEnd] = await fightWindow(code, fight, className);
   const dur = (fEnd - fStart) / 1000.0;
-  const castEvents = (await paginateEvents(code, fight, sourceId, "Casts", null, fStart, fEnd))
-    .filter((e) => !e.fake);
-  // Auto-attacks anchor the "in range vs not pressing" split. Melee = ability 1,
-  // Hunters = Auto Shot (75). Casters have none -> hasAuto false, and we stop
-  // claiming "out of range" (their gaps are casting/movement, not melee range).
-  let autos = await paginateEvents(code, fight, sourceId, "DamageDone", 1, fStart, fEnd);
-  if (!autos.length) autos = await paginateEvents(code, fight, sourceId, "DamageDone", 75, fStart, fEnd);
+  // Casts + auto-attacks in one query. Autos anchor the "in range vs not pressing"
+  // split (melee=ability 1, Hunters=Auto Shot 75; casters have none -> no autos,
+  // so we stop claiming "out of range" -- their gaps are casting/movement).
+  const { casts: castEvents, autos } = await fightEvents(code, fight, sourceId, fStart, fEnd);
   const hasAuto = autos.length > 0;
   const autoTs = autos.map((e) => e.timestamp).sort((a, b) => a - b);
   const castTs = castEvents.map((e) => e.timestamp).sort((a, b) => a - b);
@@ -109,7 +116,7 @@ async function peerMetricsFor(encounterId, difficulty, className, specName, targ
   // fightMetrics paginates events (heavy), so a smaller concurrency cap.
   const results = await mapLimit(cands, 4, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
-    return m ? fightMetrics(r.report.code, r.report.fightID, m.sourceID) : null;
+    return m ? fightMetrics(r.report.code, r.report.fightID, m.sourceID, className) : null;
   });
   return results.filter(Boolean).slice(0, n);
 }
@@ -126,7 +133,7 @@ export async function compareBoss(name, server, region, encounter, difficulty, c
   if (!er || !er.ranks || !er.ranks.length) return null;
   const perKill = await mapLimit(er.ranks.slice(0, KILLS_PER_BOSS), 4, async (rk) => {
     const you = await playerMetrics(rk.report.code, rk.report.fightID, name, specName, className);
-    const fm = await fightMetrics(rk.report.code, rk.report.fightID, you.sourceID);
+    const fm = await fightMetrics(rk.report.code, rk.report.fightID, you.sourceID, className);
     return fm ? { fm, ilvl: rk.bracketData || 0 } : null;
   });
   const yourFms = perKill.filter(Boolean).map((x) => x.fm);
