@@ -206,6 +206,10 @@
   .d1 { animation-delay: .05s; } .d2 { animation-delay: .12s; } .d3 { animation-delay: .2s; }
   @media (prefers-reduced-motion: reduce) { .reveal { animation: none; } html { scroll-behavior: auto; } }
 </style>
+<!-- Wowhead hover tooltips for the [item]/[spell] links the report emits.
+     colorLinks = quality colors; keep our own labels (renameLinks off). -->
+<script>const whTooltips = { colorLinks: true, iconizeLinks: false, renameLinks: false };</script>
+<script src="https://wow.zamimg.com/widgets/power.js"></script>
 </head>
 <body>
 <header>

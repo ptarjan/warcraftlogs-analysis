@@ -164,19 +164,27 @@ function appendMono(line) {
   cur.mono.appendChild(span);
   scroll();
 }
+// Tell Wowhead's tooltip widget (power.js) to scan links added since last call.
+// Debounced because the report streams in line by line.
+let _whTimer = null;
+function refreshWowhead() {
+  clearTimeout(_whTimer);
+  _whTimer = setTimeout(() => { try { window.$WowheadPower?.refreshLinks?.(); } catch (e) {} }, 250);
+}
 // Render text into `el`, turning [label](https://…) markdown links into safe
 // anchors (built as DOM nodes, never innerHTML). Used for Wowhead links.
 function linkify(el, text) {
   const re = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
-  let last = 0, m;
+  let last = 0, m, linked = false;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
     const a = document.createElement("a");
     a.href = m[2]; a.target = "_blank"; a.rel = "noopener"; a.textContent = m[1];
     el.appendChild(a);
-    last = re.lastIndex;
+    last = re.lastIndex; linked = true;
   }
   if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
+  if (linked) refreshWowhead();
 }
 // Render markdown-link text into el (links if it contains "](", else plain text).
 function fillText(el, text) {

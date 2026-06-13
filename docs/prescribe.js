@@ -5,7 +5,7 @@ import {
 } from "./core.js";
 import { compareBoss } from "./diagnose.js";
 import { gearFindings, sourceText } from "./gear.js";
-import { wowheadItem } from "./links.js";
+import { wowheadItem, wowheadSpell } from "./links.js";
 import { rotationFindings } from "./rotation.js";
 
 const SLOT_NAME = ENCHANTABLE_SLOTS;
@@ -61,6 +61,7 @@ async function bestIlvlKill(name, server, region, encounterId, difficulty) {
 async function fieldGearConsumables(encounterId, difficulty, className, specName, targetIlvl, priority = "crit", n = 10) {
   const enchBySlot = {};   // slot -> Map(name -> count)
   const trinkets = new Map(), flasks = new Map(), foods = new Map();
+  const guids = new Map(); // flask/food name -> spell guid (for Wowhead links)
   const statPcts = [];
   // Collect ilvl-matched candidates, then fetch each peer's gear/buffs/stats
   // concurrently (bounded) instead of one slow peer at a time.
@@ -91,9 +92,10 @@ async function fieldGearConsumables(encounterId, difficulty, className, specName
       }
       if ((slot === 12 || slot === 13) && g.name) trinkets.set(g.name, (trinkets.get(g.name) || 0) + 1);
     }
-    for (const [nm, up] of Object.entries(bf)) {
-      if (up > 50 && nm.toLowerCase().includes("flask")) flasks.set(nm, (flasks.get(nm) || 0) + 1);
-      if (up > 50 && nm.toLowerCase().includes("well fed")) foods.set(nm, (foods.get(nm) || 0) + 1);
+    for (const [nm, b] of Object.entries(bf)) {
+      const lc = nm.toLowerCase();
+      if (b.pct > 50 && lc.includes("flask")) { flasks.set(nm, (flasks.get(nm) || 0) + 1); guids.set(nm, b.guid); }
+      if (b.pct > 50 && lc.includes("well fed")) { foods.set(nm, (foods.get(nm) || 0) + 1); guids.set(nm, b.guid); }
     }
     if (s) {
       const sec = ["crit", "haste", "mastery", "vers"].reduce((acc, k) => acc + s[k], 0) || 1;
@@ -101,22 +103,26 @@ async function fieldGearConsumables(encounterId, difficulty, className, specName
     }
   }
   return {
-    ench_by_slot: enchBySlot, trinkets, flasks, foods,
+    ench_by_slot: enchBySlot, trinkets, flasks, foods, guids,
     stat_pct: statPcts.length ? median(statPcts) : null, n: peers.length,
   };
 }
 
 async function mySetup(code, fight, sourceId, gear, priority = "crit") {
   const bf = await buffUptimes(code, fight, sourceId);
-  const flask = Object.entries(bf).find(([n, u]) => n.toLowerCase().includes("flask") && u > 50);
-  const food = Object.entries(bf).find(([n, u]) => n.toLowerCase().includes("well fed") && u > 50);
+  const flask = Object.entries(bf).find(([n, b]) => n.toLowerCase().includes("flask") && b.pct > 50);
+  const food = Object.entries(bf).find(([n, b]) => n.toLowerCase().includes("well fed") && b.pct > 50);
   const stats = await secondaryStats(code, fight, sourceId);
   const statPct = stats
     ? 100 * stats[priority] / (["crit", "haste", "mastery", "vers"].reduce((a, k) => a + stats[k], 0) || 1)
     : null;
   const trinkets = gear.filter((g) => g.slot === 12 || g.slot === 13).map((g) => g.name);
   const ench = new Set(gear.filter((g) => g.slot in SLOT_NAME && g.permanentEnchant).map((g) => SLOT_NAME[g.slot]));
-  return { flask: flask ? flask[0] : null, food: food ? food[0] : null, statPct, trinkets, ench };
+  return {
+    flask: flask ? flask[0] : null, flaskGuid: flask ? flask[1].guid : null,
+    food: food ? food[0] : null, foodGuid: food ? food[1].guid : null,
+    statPct, trinkets, ench,
+  };
 }
 
 async function aggregateExecution(name, server, region, difficulty, className, specName, bosses) {
@@ -191,12 +197,15 @@ export async function run(log, name, server, region, className = "Monk", specNam
   if (field.flasks.size) {
     const tf = topEntry(field.flasks)[0];
     if (my.flask && my.flask !== tf) {
-      rx.push([-2.5, "~2% DPS", `FLASK: ${my.flask} -> ${tf} (${field.flasks.get(tf)}/${field.n} peers).`]);
+      rx.push([-2.5, "~2% DPS", `FLASK: ${wowheadSpell(my.flaskGuid, my.flask)} -> ` +
+        `${wowheadSpell(field.guids.get(tf), tf)} (${field.flasks.get(tf)}/${field.n} peers).`]);
     }
   }
   if (field.foods.size) {
     const tfo = topEntry(field.foods)[0];
-    if (my.food && my.food !== tfo) rx.push([-1.0, "~1% DPS", `FOOD: ${my.food} -> ${tfo}.`]);
+    if (my.food && my.food !== tfo) {
+      rx.push([-1.0, "~1% DPS", `FOOD: ${wowheadSpell(my.foodGuid, my.food)} -> ${wowheadSpell(field.guids.get(tfo), tfo)}.`]);
+    }
   }
 
   const gf = await gearFindings(N, S, R, D, CL, SP, priority);

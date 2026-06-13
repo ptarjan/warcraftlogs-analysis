@@ -123,7 +123,9 @@ export async function buffUptimes(code, fight, sourceId) {
   const d = (await gql(q)).reportData.report.table.data;
   const tt = d.totalTime;
   const out = {};
-  for (const a of d.auras) if (tt) out[a.name] = 100 * (a.totalUptime || 0) / tt;
+  // name -> { pct, guid }: keep the aura's spell id so flask/food findings can
+  // link to Wowhead (the consumable's buff is a spell).
+  for (const a of d.auras) if (tt) out[a.name] = { pct: 100 * (a.totalUptime || 0) / tt, guid: a.guid };
   return out;
 }
 
