@@ -400,7 +400,7 @@ async function runAnalysis({ name, server, region, serverLabel }) {
     // fills last -- the payoff once the supporting flows complete.
     rxCard.body.innerHTML = ""; cur = rxCard; // clear placeholder, fill the list
     try {
-      await prescribe.run(makeLog(rxCard), p.name, p.server, p.region, p.cls, p.spec, p.difficulty);
+      await prescribe.run(makeLog(rxCard), p.name, p.server, p.region, p.cls, p.spec, p.difficulty, p.priority);
       setCardState(rxCard, "done");
     } catch (err) {
       setCardState(rxCard, "error");

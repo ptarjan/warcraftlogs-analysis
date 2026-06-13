@@ -112,7 +112,7 @@ const SECTIONS = {
   gear: ["GEAR AUDIT",
     () => gear.audit(log, p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority)],
   prescribe: ["PRESCRIPTION",
-    () => prescribe.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+    () => prescribe.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty, p.priority)],
 };
 
 log(`=== ${p.name}-${p.server} (${p.region}) | ${p.spec} ${p.cls} | difficulty ${p.difficulty} ===`);

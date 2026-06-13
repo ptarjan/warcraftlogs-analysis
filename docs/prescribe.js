@@ -156,7 +156,8 @@ async function aggregateExecution(name, server, region, difficulty, className, s
   };
 }
 
-export async function run(log, name, server, region, className = "Monk", specName = "Brewmaster", difficulty = 5) {
+export async function run(log, name, server, region, className = "Monk", specName = "Brewmaster",
+  difficulty = 5, knownPriority = null) {
   const N = name, S = server, R = region, CL = className, SP = specName, D = difficulty;
   const c = await characterZone(N, S, R, D);
   const ranks = (c.zoneRankings.rankings || []).filter(
@@ -171,8 +172,10 @@ export async function run(log, name, server, region, className = "Monk", specNam
   }
   encBest.sort((a, b) => b[0] - a[0]);
   const [curIlvl, gearBoss, [code, fight]] = encBest[0];
-  // Stat priority derived from what the field stacks -- never hard-coded.
-  const priority = await detectPriority(CL, SP, D, gearBoss.encounter.id);
+  // Stat priority derived from what the field stacks -- never hard-coded. The
+  // caller (app/CLI) already detected it; reuse it instead of re-sampling the
+  // field's secondary stats (a whole peer fetch) again.
+  const priority = knownPriority || await detectPriority(CL, SP, D, gearBoss.encounter.id);
   const PRI = priority.toUpperCase();
   const you = await playerMetrics(code, fight, N, SP, CL);
   const my = await mySetup(code, fight, you.sourceID, you.gear, priority);

@@ -121,10 +121,16 @@ async function peerMetricsFor(encounterId, difficulty, className, specName, targ
 }
 
 // Diagnose all your kills of a boss vs peer median on the SAME boss.
+// Your per-boss number is a median over your kills, so a few representative kills
+// are as good as all of them -- but each extra kill costs ~5 WCL requests
+// (metrics + timeline events). Re-analyzing every farm kill of the same boss is
+// the single biggest, most redundant draw on the hourly budget; cap it.
+const KILLS_PER_BOSS = 3;
+
 export async function compareBoss(name, server, region, encounter, difficulty, className, specName) {
   const er = await characterEncounter(name, server, region, encounter.id, difficulty);
   if (!er || !er.ranks || !er.ranks.length) return null;
-  const perKill = await mapLimit(er.ranks, 4, async (rk) => {
+  const perKill = await mapLimit(er.ranks.slice(0, KILLS_PER_BOSS), 4, async (rk) => {
     const you = await playerMetrics(rk.report.code, rk.report.fightID, name, specName, className);
     const fm = await fightMetrics(rk.report.code, rk.report.fightID, you.sourceID);
     return fm ? { fm, ilvl: rk.bracketData || 0 } : null;
