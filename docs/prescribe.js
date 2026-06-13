@@ -9,6 +9,14 @@ import { gearFindings } from "./gear.js";
 import { rotationFindings } from "./rotation.js";
 
 const SLOT_NAME = ENCHANTABLE_SLOTS;
+
+// Numeric DPS impact parsed from an item's impact label ("~3% DPS", "~1-3% DPS",
+// "info"). Midpoint of any range; "info" -> 0. Used to order the change-list so
+// it actually matches the displayed "% DPS" -- "biggest DPS first".
+export function impactScore(label) {
+  const nums = (String(label).match(/\d+(\.\d+)?/g) || []).map(Number);
+  return nums.length ? (Math.min(...nums) + Math.max(...nums)) / 2 : 0;
+}
 const mostCommon = (counter) => {
   if (!counter || !counter.size) return null;
   return [...counter.entries()].sort((a, b) => b[1] - a[1])[0];
@@ -204,7 +212,9 @@ export async function run(log, name, server, region, className = "Monk", specNam
   if (!rx.length) {
     log("  You match the field on gear, consumables, stats, and execution. Remaining gains are farm kills + raid comp.");
   }
-  rx.sort((a, b) => a[0] - b[0]);
+  // Sort by the actual displayed DPS impact, biggest first -- the order MUST
+  // match the "% DPS" the user sees (the bug was an unrelated sort key).
+  rx.sort((a, b) => impactScore(b[1]) - impactScore(a[1]));
   rx.forEach(([, impact, text], i) => log(`  ${i + 1}. [${String(impact).padStart(9)}]  ${text}`));
   log("");
 }
