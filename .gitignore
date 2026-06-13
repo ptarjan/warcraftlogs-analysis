@@ -10,6 +10,7 @@ worker/.wrangler/
 
 # Local caches
 .item_cache.json
+.cli-cache.json
 
 # Python
 __pycache__/

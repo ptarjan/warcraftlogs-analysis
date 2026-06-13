@@ -85,6 +85,24 @@ cd docs && python3 -m http.server 8000
 # open http://localhost:8000/?worker=http://localhost:8787
 ```
 
+## Command line (no Worker)
+
+Under Node the secret is safe locally and there's no CORS, so the CLI talks
+straight to WCL/Wowhead — **no Worker needed**, just credentials:
+
+```bash
+# credentials via env, .env, or worker/.dev.vars
+export WCL_CLIENT_ID=...  WCL_CLIENT_SECRET=...
+node cli.mjs "Hadryan" proudmoore US
+node cli.mjs "Hadryan" proudmoore US --only prescribe
+node cli.mjs "Name" server EU --class Monk --spec Brewmaster --difficulty 4
+```
+
+`cli.mjs` shims the one browser global the analyses use (`localStorage`, for
+gear.js's item cache — persisted to `.cli-cache.json`) and calls the same
+`run()`/`audit()` functions the web UI does. `wcl.js` is dual-mode: browser →
+Worker, Node → direct.
+
 ## Lessons baked in (don't relearn these)
 
 - Buff/consumable names vary by rank/tier (`"Hearty Well Fed"` vs `"Well Fed"`).

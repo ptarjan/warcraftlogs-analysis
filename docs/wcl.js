@@ -1,9 +1,68 @@
-// Client for the Cloudflare Worker proxy: WCL GraphQL + Wowhead tooltips.
-import { WORKER_URL } from "./config.js";
+// WCL GraphQL + Wowhead tooltips. Dual-mode:
+//   browser -> the Cloudflare Worker proxy (hides the secret, adds CORS)
+//   Node/CLI -> straight to WCL/Wowhead (the secret is safe locally and there's
+//               no CORS), so the CLI needs NO Worker -- just credentials.
+import { WORKER_URL, IS_NODE } from "./config.js";
 
 export class PrivateReport extends Error {}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---- Node direct-to-WCL path (no Worker) -------------------------------------
+const WCL_TOKEN_URL = "https://www.warcraftlogs.com/oauth/token";
+const WCL_API_URL = "https://www.warcraftlogs.com/api/v2/client";
+const WOWHEAD = "https://nether.wowhead.com/tooltip/item/";
+let _nodeToken = null;
+
+async function nodeCreds() {
+  let id = process.env.WCL_CLIENT_ID, secret = process.env.WCL_CLIENT_SECRET;
+  if (id && secret) return { id, secret };
+  // Fall back to .env / worker/.dev.vars next to the repo (gitignored).
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const dir = path.dirname(fileURLToPath(import.meta.url));
+  for (const rel of ["../worker/.dev.vars", "../.env"]) {
+    try {
+      for (const line of fs.readFileSync(path.join(dir, rel), "utf8").split("\n")) {
+        const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.*?)\s*$/);
+        if (!m) continue;
+        const v = m[2].replace(/^["']|["']$/g, "");
+        if (m[1] === "WCL_CLIENT_ID") id = id || v;
+        if (m[1] === "WCL_CLIENT_SECRET") secret = secret || v;
+      }
+    } catch { /* file absent -- try the next */ }
+  }
+  if (!id || !secret)
+    throw new Error("Missing WCL_CLIENT_ID / WCL_CLIENT_SECRET (env, .env, or worker/.dev.vars)");
+  return { id, secret };
+}
+
+async function nodeToken() {
+  const now = Date.now() / 1000;
+  if (_nodeToken && _nodeToken.exp > now + 60) return _nodeToken.t;
+  const { id, secret } = await nodeCreds();
+  const r = await fetch(WCL_TOKEN_URL, {
+    method: "POST",
+    headers: { Authorization: `Basic ${btoa(`${id}:${secret}`)}`,
+               "Content-Type": "application/x-www-form-urlencoded" },
+    body: "grant_type=client_credentials",
+  });
+  if (!r.ok) throw new Error(`token exchange failed: ${r.status}`);
+  const j = await r.json();
+  _nodeToken = { t: j.access_token, exp: now + (j.expires_in || 0) };
+  return _nodeToken.t;
+}
+
+async function nodeWcl(query) {
+  const token = await nodeToken();
+  const r = await fetch(WCL_API_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  return { status: r.status, j: await r.json().catch(() => ({})) };
+}
 
 // Session-level dedupe: identical queries fired concurrently share one request
 // (coalescing), and a resolved query is reused for the rest of the session.
@@ -33,14 +92,19 @@ export async function gql(query, retries = 6) {
 async function _gqlRun(query, retries = 6) {
   let last;
   for (let attempt = 0; attempt < retries; attempt++) {
-    let r, j;
+    let status, j;
     try {
-      r = await fetch(`${WORKER_URL}/wcl`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query }),
-      });
-      j = await r.json();
+      if (IS_NODE) {
+        ({ status, j } = await nodeWcl(query));
+      } else {
+        const r = await fetch(`${WORKER_URL}/wcl`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query }),
+        });
+        status = r.status;
+        j = await r.json();
+      }
     } catch (e) {
       // Network/transport failure -- worth retrying with backoff.
       last = e;
@@ -54,7 +118,7 @@ async function _gqlRun(query, retries = 6) {
     }
     // Honor HTTP 429 rate limits with exponential backoff -- several parallel
     // sessions share one API client's hourly point budget.
-    if (r.status === 429 || (j.error && /too many requests/i.test(j.error))) {
+    if (status === 429 || (j.error && /too many requests/i.test(j.error))) {
       last = new Error(j.error || "rate limited (429)");
       await sleep(Math.min(90000, 10000 * 2 ** attempt));
       continue;
@@ -73,9 +137,12 @@ const _itemInflight = new Map();
 export async function itemTooltip(id, bonusIds) {
   const bonus = (bonusIds || []).map(String);
   const q = bonus.length ? `?bonus=${bonus.join(":")}` : "";
-  const url = `${WORKER_URL}/item/${id}${q}`;
+  const url = IS_NODE
+    ? `${WOWHEAD}${encodeURIComponent(id)}${q}`
+    : `${WORKER_URL}/item/${id}${q}`;
   if (_itemInflight.has(url)) return _itemInflight.get(url);
-  const p = fetch(url).then((r) => r.json());
+  const opts = IS_NODE ? { headers: { "User-Agent": "Mozilla/5.0" } } : undefined;
+  const p = fetch(url, opts).then((r) => r.json());
   _itemInflight.set(url, p);
   try { return await p; } finally { _itemInflight.delete(url); }
 }
