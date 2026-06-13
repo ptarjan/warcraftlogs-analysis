@@ -110,6 +110,7 @@ def field_consensus(class_name, spec_name, difficulty, encounters, n=40):
     """
     per_slot = {}            # slot -> Counter(item_id)
     bonus_sample = {}        # item_id -> bonusIDs (first seen, to read true stats)
+    variants = {}            # item_id -> Counter(tuple(bonusIDs)) -- all stat variants seen
     gems = Counter()         # gem_id -> times used
     gem_variety = []         # per player: count of distinct gem ids
     seen = set()
@@ -136,6 +137,7 @@ def field_consensus(class_name, spec_name, difficulty, encounters, n=40):
                     if g.get("slot") in SLOT and g.get("name"):
                         per_slot.setdefault(g["slot"], Counter())[g["id"]] += 1
                         bonus_sample.setdefault(g["id"], g.get("bonusIDs"))
+                        variants.setdefault(g["id"], Counter())[tuple(g.get("bonusIDs") or [])] += 1
                     for gm in g.get("gems", []):
                         if gm.get("id"):
                             gems[gm["id"]] += 1
@@ -146,8 +148,8 @@ def field_consensus(class_name, spec_name, difficulty, encounters, n=40):
                     break
             if got >= n:
                 break
-    return {"per_slot": per_slot, "bonus_sample": bonus_sample, "gems": gems,
-            "gem_variety": gem_variety, "n": got}
+    return {"per_slot": per_slot, "bonus_sample": bonus_sample, "variants": variants,
+            "gems": gems, "gem_variety": gem_variety, "n": got}
 
 
 def gear_findings(name, server, region, difficulty, class_name, spec_name, priority):
@@ -164,8 +166,9 @@ def gear_findings(name, server, region, difficulty, class_name, spec_name, prior
     enc = [3176, 3177, 3179, 3181, 3306]
     fc = field_consensus(class_name, spec_name, difficulty, enc)
     per_slot, bonus_sample, npl = fc["per_slot"], fc["bonus_sample"], fc["n"]
+    variants = fc["variants"]
     my_item_ids = {g["id"] for g in you["gear"]}
-    rows, swaps, embellished_slots = [], [], []
+    rows, swaps, embellished_slots, restats = [], [], [], []
     for s in sorted(SLOT):
         if s not in ymap:
             continue
@@ -179,8 +182,17 @@ def gear_findings(name, server, region, difficulty, class_name, spec_name, prior
         rows.append((SLOT[s], ist, match, ist.get("embellished")))
         if ist.get("embellished"):
             embellished_slots.append(SLOT[s])
-        # Suggest a swap only if YOUR piece lacks the priority stat AND the
-        # field's item has it AND it isn't a Unique you already wear elsewhere.
+        # Re-stat opportunity: does ANYONE run more `priority` on YOUR SAME item?
+        # (Catches "this crafted piece's stats are actually selectable" vs fixed.)
+        best = ist.get(priority, 0)
+        for bset in variants.get(g["id"], Counter()):
+            v = item_stats(g["id"], list(bset)).get(priority, 0)
+            if v > best:
+                best = v
+        if best > ist.get(priority, 0) + 15:
+            restats.append((SLOT[s], ist["name"], ist.get(priority, 0), best))
+        # Drop swap: YOUR piece lacks the priority stat AND the field's item has
+        # it AND it isn't a Unique you already wear elsewhere.
         if ist.get(priority, 0) == 0 and top_id and top_id != g["id"]:
             alt = item_stats(top_id, bonus_sample.get(top_id))
             already = alt.get("unique") and top_id in my_item_ids
@@ -195,7 +207,7 @@ def gear_findings(name, server, region, difficulty, class_name, spec_name, prior
                               if fc["gem_variety"] else None),
     }
     return {"rows": rows, "swaps": swaps, "embellished_slots": embellished_slots,
-            "n": npl, "priority": priority, "gems": gem_info}
+            "restats": restats, "n": npl, "priority": priority, "gems": gem_info}
 
 
 def audit(name, server, region, difficulty, class_name, spec_name, priority):
@@ -226,15 +238,20 @@ def audit(name, server, region, difficulty, class_name, spec_name, priority):
     print(f"  your gems (id x count): {dict(gi['your_gems'])}")
 
     if f["swaps"]:
-        print(f"\nReal {priority} upgrades (your piece lacks it, field's has it, not a "
+        print(f"\nReal {priority} drop-swaps (your piece lacks it, field's has it, not a "
               f"Unique you already wear):")
         for slot, mine, theirs, amt in f["swaps"]:
             print(f"  {slot}: '{mine}' -> '{theirs}' (+{amt} {priority})")
     else:
-        restat = [s for s in emb]
-        print(f"\nNo {priority} drop-swap available -- your item choices match the field. "
-              f"Gains: re-stat your embellished slots ({', '.join(restat) or 'none'}) to "
-              f"{priority}; non-embellished crafted slots should be drops; sim the rest.")
+        print(f"\nNo {priority} drop-swap available -- your item choices match the field.")
+    if f["restats"]:
+        print(f"\nRe-stat opportunities (others run MORE {priority} on your SAME item, so "
+              f"the stats are selectable):")
+        for slot, name, mine, best in f["restats"]:
+            print(f"  {slot} '{name}': you {mine} {priority} -> achievable {best}")
+    else:
+        print(f"\nNo re-stat gains: on every item you own, nobody in the field runs more "
+              f"{priority} than you -- your stats are maxed/fixed for the gear you have.")
 
 
 def main():

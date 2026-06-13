@@ -183,28 +183,34 @@ def main():
         if my_food and my_food != tfo:
             rx.append((-1.0, "~1% DPS", f"FOOD: {my_food} -> {tfo}."))
 
-    # --- Stats (allocation gap) ---
+    # --- Gear + crit: every crit recommendation must come with a concrete HOW ---
     priority = "crit"
-    if my_crit is not None and field["crit_pct"] and field["crit_pct"] - my_crit >= 4:
-        rx.append((-3.5, "~3-5% DPS", f"STATS: crit {my_crit:.0f}% -> ~{field['crit_pct']:.0f}% "
-                   f"of secondaries."))
-
-    # --- Gear: real item-stat audit (reads Wowhead, not a peer heuristic) ---
     gf = gear_findings(N, S, R, D, CL, SP, priority)
+    crit_gap = (field["crit_pct"] - my_crit) if (my_crit is not None and field["crit_pct"]) else 0
+    how_to_crit = False
     if gf:
+        # Concrete ways to gain crit (these ARE the "how"):
         for slot, mine, theirs, amt in gf["swaps"]:
-            rx.append((-2.0, "~1-3% DPS", f"GEAR {slot}: '{mine}' has 0 {priority} -> "
-                       f"field runs '{theirs}' (+{amt} {priority})."))
+            how_to_crit = True
+            rx.append((-2.0, "~1-3% DPS", f"CRIT via {slot}: replace '{mine}' (0 {priority}) "
+                       f"with '{theirs}' (+{amt} {priority})."))
+        for slot, name, mine, best in gf["restats"]:
+            how_to_crit = True
+            rx.append((-1.5, "~1-2% DPS", f"CRIT via {slot}: '{name}' is selectable -- recraft "
+                       f"to {best} {priority} (you have {mine})."))
         emb = gf["embellished_slots"]
-        if emb and (field["crit_pct"] or 0) - (my_crit or 0) >= 3:
-            rx.append((-1.5, "~1-2% DPS", f"EMBELLISHED slots ({', '.join(emb)}): re-stat "
-                       f"these crafted pieces to {priority} (you choose the stats)."))
         if len(emb) < 2:
             rx.append((-2.5, "~2-4% DPS", f"EMBELLISHMENTS: you run {len(emb)}/2 -- fill the "
-                       f"free embellishment slot (throughput you can't get from drops)."))
-        if not gf["swaps"]:
-            rx.append((0.0, "info", "GEAR: item choices match the field -- no crit drop to "
-                       "swap to; gains are embellished-slot stats + a sim (Droptimizer)."))
+                       f"free slot (throughput you can't get from drops)."))
+    # Only mention the crit gap if we can't act on it -- and say WHY, not "raise crit".
+    if crit_gap >= 4 and not how_to_crit:
+        rx.append((0.0, "info", f"CRIT: yours ({my_crit:.0f}%) is below the field "
+                   f"({field['crit_pct']:.0f}%), but NOT actionable now -- every item you own is "
+                   f"already crit-maxed and no crit-itemized upgrade exists to swap to. It only "
+                   f"rises when crit-itemized drops come (watch belt/boots)."))
+    elif gf and not gf["swaps"] and not gf["restats"] and crit_gap < 4:
+        rx.append((0.0, "info", "GEAR/STATS: optimal for what you own -- no lever; gains are "
+                   "future drops + a sim (Droptimizer)."))
 
     print("\nDO THESE IN ORDER (biggest DPS first):")
     if not rx:
