@@ -2,6 +2,9 @@
 // surfaces PrivateReport on permission errors, and coalesces duplicate queries.
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { installLocalStorage, mockFetch } from "./helpers.mjs";
 
 installLocalStorage();
@@ -35,4 +38,33 @@ test("concurrent identical queries are coalesced into one request", async () => 
   assert.deepEqual(a, b);
   const apiCalls = fx.calls.filter((c) => c.url.includes("/api/v2/client")).length;
   assert.equal(apiCalls, 1, "duplicate concurrent queries should share one API call");
+});
+
+// The Node-only on-disk cache: a second run reuses the first run's results
+// instead of re-hitting WCL (which is what trips the per-IP 429 throttle).
+test("disk cache: a fresh run serves persisted results without a new request", async () => {
+  const { gql, clearGqlCache, _flushGqlDisk, _resetGqlDisk } = await import("../docs/wcl.js");
+  const file = path.join(os.tmpdir(), `wcl-gql-cache-test-${process.pid}.json`);
+  try { fs.rmSync(file, { force: true }); } catch { /* none */ }
+  process.env.WCL_GQL_CACHE = "1";
+  process.env.WCL_GQL_CACHE_FILE = file;
+  const q = "query{ persisted }";
+  try {
+    // First "run": fetch once, then flush + forget all in-memory state.
+    clearGqlCache(); _resetGqlDisk();
+    globalThis.fetch = mockFetch([TOKEN, ["/api/v2/client", { json: { data: { v: 42 } } }]]);
+    assert.deepEqual(await gql(q), { v: 42 });
+    _flushGqlDisk();
+
+    // Second "run": same query, but any network call now throws -- the answer
+    // must come from the cache file written by the first run.
+    clearGqlCache(); _resetGqlDisk();
+    globalThis.fetch = () => { throw new Error("must not hit the network on a cache hit"); };
+    assert.deepEqual(await gql(q), { v: 42 });
+  } finally {
+    delete process.env.WCL_GQL_CACHE;
+    delete process.env.WCL_GQL_CACHE_FILE;
+    _resetGqlDisk();
+    try { fs.rmSync(file, { force: true }); } catch { /* ignore */ }
+  }
 });

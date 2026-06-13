@@ -20,6 +20,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// Persist WCL GraphQL results to disk between runs (wcl.js, Node-only) so
+// iterating on one character doesn't re-spend points and trip WCL's per-IP 429
+// throttle. Must be set before importing anything that pulls in wcl.js.
+process.env.WCL_GQL_CACHE = "1";
+
 // --- file-backed localStorage shim (persists gear.js's item cache between runs)
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const CACHE_FILE = path.join(dir, ".cli-cache.json");
@@ -39,7 +44,7 @@ globalThis.localStorage = {
 // --- args ---
 const argv = process.argv.slice(2);
 const positional = [];
-const opt = { class: "Monk", spec: "Brewmaster", difficulty: "5", priority: "crit", only: "" };
+const opt = { only: "" }; // class/spec/difficulty/priority are auto-detected unless given
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a.startsWith("--")) opt[a.slice(2)] = argv[++i];
@@ -49,17 +54,14 @@ const [name, server, region] = positional;
 if (!name || !server || !region) {
   console.error("usage: node cli.mjs <name> <server> <region> " +
     "[--class Monk] [--spec Brewmaster] [--difficulty 5] [--priority crit] " +
-    "[--only overview,diagnose,gear,prescribe]");
+    "[--only overview,diagnose,gear,prescribe]\n" +
+    "(class/spec/difficulty/priority are auto-detected from your logs if omitted)");
   process.exit(1);
 }
-const p = {
-  name, server, region,
-  cls: opt.class, spec: opt.spec,
-  difficulty: parseInt(opt.difficulty, 10), priority: opt.priority,
-};
 const only = opt.only ? new Set(opt.only.split(",").map((s) => s.trim())) : null;
 
 // --- run ---
+const { detectContext, detectPriority, DIFFICULTY } = await import("./docs/core.js");
 const analyze = await import("./docs/analyze.js");
 const diagnose = await import("./docs/diagnose.js");
 const rotation = await import("./docs/rotation.js");
@@ -67,6 +69,23 @@ const gear = await import("./docs/gear.js");
 const prescribe = await import("./docs/prescribe.js");
 
 const log = (line = "") => console.log(line);
+
+// Auto-detect class / spec / difficulty / priority from the character's own
+// logs (mirrors the browser app). NEVER assume a class -- the analysis filters
+// WCL tables by sourceClass, so a wrong class silently empties every section.
+// CLI flags override individual detected fields.
+let cls = opt.class, spec = opt.spec, priority = opt.priority;
+let difficulty = opt.difficulty != null ? parseInt(opt.difficulty, 10) : undefined;
+if (!cls || !spec || difficulty === undefined || !priority) {
+  log("Detecting class, spec, and difficulty…");
+  const ctx = await detectContext(name, server, region);
+  cls = cls || ctx.className;
+  spec = spec || ctx.specName;
+  if (difficulty === undefined) difficulty = ctx.difficulty;
+  if (!priority) priority = await detectPriority(ctx.className, ctx.specName, ctx.difficulty, ctx.killed[0].encounter.id);
+  log(`Detected: ${spec} ${cls} · ${DIFFICULTY[difficulty] || difficulty} · gear priority ${priority}`);
+}
+const p = { name, server, region, cls, spec, difficulty, priority };
 const SECTIONS = {
   overview: ["OVERVIEW & ITEM-LEVEL-MATCHED COMPARISON",
     () => analyze.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],

@@ -17,6 +17,13 @@ export class NeedsAuth extends Error {}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Abort a request that hangs on a dead socket instead of freezing forever (a
+// no-timeout fetch once stalled a CLI run for 26 minutes). An abort surfaces as
+// a thrown error, which the gql retry loop treats as a transient transport
+// failure and retries with backoff.
+const HTTP_TIMEOUT_MS = 45000;
+const withTimeout = (opts = {}) => ({ ...opts, signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) });
+
 // ---- Node direct-to-WCL path (client-credentials) ----------------------------
 const WCL_TOKEN_URL = TOKEN_URL;
 const WCL_API_URL = CLIENT_API_URL;
@@ -51,12 +58,12 @@ async function nodeToken() {
   const now = Date.now() / 1000;
   if (_nodeToken && _nodeToken.exp > now + 60) return _nodeToken.t;
   const { id, secret } = await nodeCreds();
-  const r = await fetch(WCL_TOKEN_URL, {
+  const r = await fetch(WCL_TOKEN_URL, withTimeout({
     method: "POST",
     headers: { Authorization: `Basic ${btoa(`${id}:${secret}`)}`,
                "Content-Type": "application/x-www-form-urlencoded" },
     body: "grant_type=client_credentials",
-  });
+  }));
   if (!r.ok) throw new Error(`token exchange failed: ${r.status}`);
   const j = await r.json();
   _nodeToken = { t: j.access_token, exp: now + (j.expires_in || 0) };
@@ -65,11 +72,11 @@ async function nodeToken() {
 
 async function nodeWcl(query) {
   const token = await nodeToken();
-  const r = await fetch(WCL_API_URL, {
+  const r = await fetch(WCL_API_URL, withTimeout({
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ query }),
-  });
+  }));
   return { status: r.status, j: await r.json().catch(() => ({})) };
 }
 
@@ -83,11 +90,11 @@ const readRetryAfter = (r) => {
 async function browserWcl(query) {
   const token = getAccessToken();
   if (token) {
-    const r = await fetch(USER_API_URL, {
+    const r = await fetch(USER_API_URL, withTimeout({
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ query }),
-    });
+    }));
     // A connected user whose token died must reconnect (or disconnect to use the
     // shared proxy). Clear the dead token so the UI/next load reflect it; we don't
     // silently fall back, so the active identity stays honest.
@@ -100,11 +107,11 @@ async function browserWcl(query) {
   // Anonymous: route through the Worker, which holds the shared app secret.
   if (!WORKER_CONFIGURED)
     throw new NeedsAuth("Connect your Warcraft Logs account to run the analysis (no proxy is configured).");
-  const r = await fetch(`${WORKER_URL}/wcl`, {
+  const r = await fetch(`${WORKER_URL}/wcl`, withTimeout({
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query }),
-  });
+  }));
   return { status: r.status, j: await r.json().catch(() => ({})), retryAfter: readRetryAfter(r) };
 }
 
@@ -117,7 +124,68 @@ const _gqlCache = new Map();
 
 export function clearGqlCache() { _gqlCache.clear(); }
 
+// ---- Node-only on-disk cache -------------------------------------------------
+// The browser path is already cached by the Worker (shared, keyed by query
+// hash). Node talks straight to WCL, so without this every CLI run re-fetches
+// everything and back-to-back runs trip WCL's per-IP 429 throttle. Persisting
+// successful GraphQL results between runs makes iterating ~free. No effect in
+// the browser (guarded by IS_NODE; node:* imports are dynamic).
+const DISK_TTL_MS = 6 * 60 * 60 * 1000; // logs are immutable; rankings drift slowly
+let _diskReady = null;   // Promise, set once init starts
+let _diskStore = null;   // { [query]: { t, d } } mirrored to disk
+let _diskFile = null;
+let _diskFs = null;
+let _diskTimer = null;
+
+// Off unless the caller opts in (cli.mjs sets WCL_GQL_CACHE=1). This keeps the
+// tests -- which also run under Node -- on the pure in-memory path, and lets the
+// test suite point the cache at a temp file via WCL_GQL_CACHE_FILE.
+const diskEnabled = () => IS_NODE && typeof process !== "undefined" && process.env.WCL_GQL_CACHE === "1";
+
+async function initDisk() {
+  if (!diskEnabled()) return;
+  if (_diskReady) return _diskReady;
+  _diskReady = (async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    _diskFs = fs;
+    _diskFile = process.env.WCL_GQL_CACHE_FILE ||
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "..", ".gql-cache.json");
+    _diskStore = {};
+    try {
+      const raw = JSON.parse(fs.readFileSync(_diskFile, "utf8"));
+      const now = Date.now();
+      for (const [q, e] of Object.entries(raw)) {
+        if (e && (now - e.t) < DISK_TTL_MS) { _diskStore[q] = e; _gqlCache.set(q, e.d); }
+      }
+    } catch { /* no cache file yet */ }
+  })();
+  return _diskReady;
+}
+
+function diskPut(query, data) {
+  if (!_diskStore) return;
+  _diskStore[query] = { t: Date.now(), d: data };
+  // Debounced write; the pending timer keeps the event loop alive, so the CLI
+  // won't exit before the cache is flushed.
+  clearTimeout(_diskTimer);
+  _diskTimer = setTimeout(_flushDisk, 300);
+}
+
+function _flushDisk() {
+  clearTimeout(_diskTimer);
+  if (!_diskStore || !_diskFs) return;
+  try { _diskFs.writeFileSync(_diskFile, JSON.stringify(_diskStore)); } catch {}
+}
+
+// Test-only hooks: flush the debounced write now, and forget all disk state so a
+// fresh initDisk() re-reads the file (simulating a separate CLI run).
+export function _flushGqlDisk() { _flushDisk(); }
+export function _resetGqlDisk() { clearTimeout(_diskTimer); _diskReady = _diskStore = _diskFile = _diskFs = null; }
+
 export async function gql(query, retries = 6) {
+  await initDisk();                 // seeds _gqlCache from disk on first call (Node)
   if (_gqlCache.has(query)) return _gqlCache.get(query);
   if (_gqlInflight.has(query)) return _gqlInflight.get(query);
   const p = _gqlRun(query, retries);
@@ -125,6 +193,7 @@ export async function gql(query, retries = 6) {
   try {
     const data = await p;
     _gqlCache.set(query, data);
+    diskPut(query, data);           // persist for the next run (Node only)
     return data;
   } finally {
     _gqlInflight.delete(query);
@@ -183,7 +252,7 @@ export async function itemTooltip(id, bonusIds) {
   if (_itemInflight.has(url)) return _itemInflight.get(url);
   // Node has no default UA Wowhead likes; the browser sends its own (and can't
   // override it anyway), so only set it under Node.
-  const opts = IS_NODE ? { headers: { "User-Agent": "Mozilla/5.0" } } : undefined;
+  const opts = withTimeout(IS_NODE ? { headers: { "User-Agent": "Mozilla/5.0" } } : {});
   const p = fetch(url, opts).then((r) => r.json());
   _itemInflight.set(url, p);
   try { return await p; } finally { _itemInflight.delete(url); }

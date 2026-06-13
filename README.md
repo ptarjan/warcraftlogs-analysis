@@ -117,17 +117,21 @@ Create a *confidential* client (or reuse one) and provide its id + secret:
 ```bash
 # credentials via env, .env, or worker/.dev.vars
 export WCL_CLIENT_ID=...  WCL_CLIENT_SECRET=...
-node cli.mjs "Hadryan" proudmoore US
+node cli.mjs "Hadryan" proudmoore US                 # class/spec/difficulty auto-detected
 node cli.mjs "Hadryan" proudmoore US --only prescribe
-node cli.mjs "Name" server EU --class Monk --spec Brewmaster --difficulty 4
+node cli.mjs "Name" server EU --class Monk --spec Brewmaster --difficulty 4   # override detection
 ```
 
-`cli.mjs` shims the one browser global the analyses use (`localStorage`, for
-gear.js's item cache — persisted to `.cli-cache.json`) and calls the same
-`run()`/`audit()` functions the web UI does. `wcl.js` is multi-mode: **Node** uses
+Class, spec, difficulty, and gear priority are **auto-detected from your logs**
+(same as the web app) — the flags only override individual fields. `cli.mjs`
+shims the one browser global the analyses use (`localStorage`, for gear.js's item
+cache — persisted to `.cli-cache.json`) and calls the same `run()`/`audit()`
+functions the web UI does. `wcl.js` is multi-mode: **Node** uses
 client-credentials against `/api/v2/client`; the **browser** uses the visitor's
 own PKCE token against `/api/v2/user` when connected, else falls back to the
-Worker proxy. Node and connected sessions hit Wowhead directly.
+Worker proxy. Node and connected sessions hit Wowhead directly. The Node path
+persists GraphQL results to `.gql-cache.json` (6 h TTL) so iterating on one
+character doesn't re-spend points or trip the per-IP 429.
 
 ## Tests
 
@@ -161,7 +165,19 @@ query coalescing), and a smoke test that the browser modules import under Node.
   intermissions otherwise look like your mistakes.
 - WCL enforces an hourly request limit **per token**; a full analysis makes many
   calls, so back-to-back runs can hit a 429 (handled with backoff; raise the cap
-  via the WCL Patreon). With PKCE each user spends their own budget.
+  via the WCL Patreon). With PKCE each user spends their own budget. Beyond that
+  point budget, the **direct (Node) path can also trip a per-IP throttle**
+  ("Too many requests from this IP address") that the browser dodges (it exits
+  through the Worker's IPs and reuses the Worker cache). The CLI persists GraphQL
+  results to `.gql-cache.json` so reruns are nearly free and don't re-trigger it.
+- **Every HTTP call needs a timeout.** A no-timeout `fetch` once hung on a dead
+  socket and froze a CLI run for 26 minutes; requests now abort after 45 s and
+  the retry/backoff loop takes over.
+- **Auto-detect class/spec/difficulty — never default to a class.** The CLI used
+  to hard-default to Monk/Brewmaster; for any other character the analyses filter
+  WCL tables by `sourceClass` and silently return *empty* (you'd see "No gear
+  found" / "could not read casts"). Detect from the character's own kills
+  (`detectContext`); flags only override. (Found via Hadron, a Guardian Druid.)
 - **Never hard-code class abilities, priorities, or stat weights.** It must work
   for all 39 specs. Deriving "Tiger Palm is a filler" was wrong — an empowered
   Tiger Palm is the biggest hit. Derive everything from the data and the field;
