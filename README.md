@@ -103,6 +103,19 @@ gear.js's item cache — persisted to `.cli-cache.json`) and calls the same
 `run()`/`audit()` functions the web UI does. `wcl.js` is dual-mode: browser →
 Worker, Node → direct.
 
+## Tests
+
+Zero-dependency, using Node's built-in runner (mocked fetch + localStorage shim,
+no network):
+
+```bash
+npm test          # node --test test/*.test.mjs
+```
+
+Covers the regression-prone bits: Wowhead tooltip parsing (stats / embellished /
+unique / item level), the dual-mode WCL client (direct-to-WCL, PrivateReport,
+query coalescing), and a smoke test that the browser modules import under Node.
+
 ## Lessons baked in (don't relearn these)
 
 - Buff/consumable names vary by rank/tier (`"Hearty Well Fed"` vs `"Well Fed"`).

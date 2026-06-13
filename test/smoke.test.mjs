@@ -1,0 +1,32 @@
+// Guards the dual-mode / CLI work: the browser modules must import cleanly under
+// Node (no unguarded window/document/localStorage at import time) and expose the
+// entry points the CLI calls.
+import test from "node:test";
+import assert from "node:assert/strict";
+import { installLocalStorage } from "./helpers.mjs";
+
+installLocalStorage();
+globalThis.fetch = async () => { throw new Error("smoke test must not hit the network"); };
+
+test("modules import under Node and expose their entry points", async () => {
+  const config = await import("../docs/config.js");
+  assert.equal(config.IS_NODE, true, "IS_NODE should be true under Node");
+
+  const wcl = await import("../docs/wcl.js");
+  assert.equal(typeof wcl.gql, "function");
+  assert.equal(typeof wcl.itemTooltip, "function");
+  assert.equal(typeof wcl.clearGqlCache, "function");
+
+  const analyze = await import("../docs/analyze.js");
+  assert.equal(typeof analyze.run, "function");
+
+  const diagnose = await import("../docs/diagnose.js");
+  assert.equal(typeof diagnose.run, "function");
+
+  const gear = await import("../docs/gear.js");
+  assert.equal(typeof gear.itemStats, "function");
+  assert.equal(typeof gear.audit, "function");
+
+  const prescribe = await import("../docs/prescribe.js");
+  assert.equal(typeof prescribe.run, "function");
+});
