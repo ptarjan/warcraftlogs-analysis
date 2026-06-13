@@ -26,6 +26,10 @@ const TOPN = 6; // how many top-ranked kills to learn the recipe from
 // none of -- you can't apply them yourself, so it's a raid-comp/source gap, not
 // execution. Names come from the data, so this finds Ebon Might / Power Infusion
 // / Bloodlust with no hard-coded ability list.
+// Consumable buffs you apply YOURSELF -- a gap here is a setup fix (eat/flask/pot),
+// never a comp/source gap, no matter how low your uptime is.
+const SELF_BUFF = /well fed|\bfood\b|flask|phial|potion|\brune\b|\boil\b|sharpening|weightstone|whetstone/i;
+
 export function buffGaps(youBuffs, topBuffsList, { minTop = 40, minGap = 20 } = {}) {
   const names = new Set(topBuffsList.flatMap((b) => Object.keys(b || {})));
   const out = [];
@@ -34,7 +38,8 @@ export function buffGaps(youBuffs, topBuffsList, { minTop = 40, minGap = 20 } = 
     const you = youBuffs && youBuffs[name] ? youBuffs[name].pct : 0;
     if (top >= minTop && top - you >= minGap) {
       const withGuid = topBuffsList.find((b) => b && b[name]);
-      out.push({ name, you, top, guid: withGuid ? withGuid[name].guid : null, comp: you < 5 });
+      // comp = you have ~none AND you can't apply it yourself (a raid-source gap).
+      out.push({ name, you, top, guid: withGuid ? withGuid[name].guid : null, comp: you < 5 && !SELF_BUFF.test(name) });
     }
   }
   return out.sort((a, b) => (b.top - b.you) - (a.top - a.you));

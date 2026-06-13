@@ -5,7 +5,26 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { impactScore, embellishmentRx } = await import("../docs/prescribe.js");
+const { impactScore, embellishmentRx, dimensionOf, rxHeadline } = await import("../docs/prescribe.js");
+
+test("dimensionOf groups each finding under the analysis it came from", () => {
+  assert.equal(dimensionOf("PRESS FASTER (every boss): you idle ..."), "Execution");
+  assert.equal(dimensionOf("UPTIME on specific fights: ..."), "Execution");
+  assert.equal(dimensionOf("ROTATION: press Ravage ..."), "Rotation");
+  assert.equal(dimensionOf("PROC: you land ..."), "Rotation");
+  assert.equal(dimensionOf("FLASK: you ran none ..."), "Setup");
+  assert.equal(dimensionOf("COMBAT POTION: you used none ..."), "Setup");
+  assert.equal(dimensionOf("BUFF (comp): top parses run ..."), "Comp");
+  assert.equal(dimensionOf("ROUTING: top parses put ..."), "Comp");
+  assert.equal(dimensionOf("HASTE via Neck: replace ..."), "Gear");   // the catch-all
+  assert.equal(dimensionOf("EMBELLISHMENTS: you run 0/2 ..."), "Gear");
+});
+
+test("rxHeadline keeps the keyword + first clause, trimming the detail", () => {
+  assert.equal(rxHeadline("ROTATION: press Ravage (peers 5.5/min vs your 0.0) more; you over-press Thrash"),
+    "ROTATION: press Ravage");
+  assert.equal(rxHeadline("PRESS FASTER (every boss): you idle ~4.8s/min MORE"), "PRESS FASTER");
+});
 
 test("impactScore reads the displayed % (midpoint of ranges)", () => {
   assert.equal(impactScore("~3% DPS"), 3);

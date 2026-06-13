@@ -19,6 +19,23 @@ export function impactScore(label) {
   return nums.length ? (Math.min(...nums) + Math.max(...nums)) / 2 : 0;
 }
 
+// Which analysis a finding came from -- groups the levers by area for the
+// synthesis "where your DPS leaks" line. Keyed off the finding's leading label.
+export function dimensionOf(text) {
+  if (/^(PRESS FASTER|UPTIME)/.test(text)) return "Execution";
+  if (/^(ROTATION|PROC)/.test(text)) return "Rotation";
+  if (/^(FLASK|FOOD|COMBAT POTION|POTIONS)/.test(text)) return "Setup";
+  if (/^(BUFF|ROUTING)/.test(text)) return "Comp";
+  return "Gear";   // "<STAT> via ...", EMBELLISHMENTS, GEAR/STATS, re-stat
+}
+
+// A short headline for a finding (its keyword + first action clause), for naming
+// the #1 lever in the synthesis without dumping the whole sentence.
+export function rxHeadline(text) {
+  const head = String(text).split(/ -- |;|\(/)[0].trim();
+  return head.length > 72 ? head.slice(0, 69) + "…" : head;
+}
+
 // ONE embellishment finding (not two): name the specific items to craft, in the
 // slots of the field's #1 combo -- "craft X on Back", not "fill a slot" + "pick
 // a combo" as separate lines. You get 2 embellished slots total. Returns an
@@ -164,6 +181,12 @@ export async function run(log, name, server, region, className = "Monk", specNam
     (r) => (r.totalKills || 0) > 0 && r.rankPercent !== null && r.rankPercent !== undefined);
   if (!ranks.length) throw new Error("No kills found.");
 
+  // Where you parse NOW -- the ground truth the player is trying to raise.
+  const parses = ranks.map((r) => r.rankPercent).filter((x) => x != null);
+  const medP = parses.length ? Math.round(median(parses)) : null;
+  const bestRank = ranks.reduce((a, b) => ((a.rankPercent || 0) >= (b.rankPercent || 0) ? a : b));
+  const bestP = Math.round(bestRank.rankPercent || 0);
+
   // Highest-ilvl kill = current gear.
   const encBest = [];
   for (const r of ranks) {
@@ -179,12 +202,6 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const PRI = priority.toUpperCase();
   const you = await playerMetrics(code, fight, N, SP, CL);
   const my = await mySetup(code, fight, you.sourceID, you.gear, priority);
-
-  log("");
-  log("=".repeat(66));
-  log(`PRESCRIPTION for ${N}-${S} (${SP} ${CL}) | current ilvl ~${curIlvl}`);
-  log(`Aggregated across ${ranks.length} killed bosses; gear from your ${gearBoss.encounter.name} kill; execution normalized vs peers.`);
-  log("=".repeat(66));
 
   const field = await fieldGearConsumables(gearBoss.encounter.id, D, CL, SP, curIlvl, priority);
   const execd = await aggregateExecution(N, S, R, D, CL, SP, ranks);
@@ -207,14 +224,20 @@ export async function run(log, name, server, region, className = "Monk", specNam
 
   if (field.flasks.size) {
     const tf = topEntry(field.flasks)[0];
-    if (my.flask && my.flask !== tf) {
+    if (!my.flask) {
+      rx.push([-2.5, "~2% DPS", `FLASK: you ran none -- ${field.flasks.get(tf)}/${field.n} peers run ` +
+        `${wowheadSpell(field.guids.get(tf), tf)}. Free parse with equal gear.`]);
+    } else if (my.flask !== tf) {
       rx.push([-2.5, "~2% DPS", `FLASK: ${wowheadSpell(my.flaskGuid, my.flask)} -> ` +
         `${wowheadSpell(field.guids.get(tf), tf)}.`]);
     }
   }
   if (field.foods.size) {
     const tfo = topEntry(field.foods)[0];
-    if (my.food && my.food !== tfo) {
+    if (!my.food) {
+      rx.push([-1.5, "~1-2% DPS", `FOOD: you ate none -- ${field.foods.get(tfo)}/${field.n} peers run ` +
+        `${wowheadSpell(field.guids.get(tfo), tfo)}. Free parse.`]);
+    } else if (my.food !== tfo) {
       rx.push([-1.0, "~1% DPS", `FOOD: ${wowheadSpell(my.foodGuid, my.food)} -> ${wowheadSpell(field.guids.get(tfo), tfo)}.`]);
     }
   }
@@ -309,14 +332,47 @@ export async function run(log, name, server, region, className = "Monk", specNam
     }
   } catch (e) { /* top-parse data unavailable -- skip */ }
 
+  // Sort by the actual displayed DPS impact, biggest first -- the order MUST
+  // match the "% DPS" the user sees (the bug was an unrelated sort key).
+  rx.sort((a, b) => impactScore(b[1]) - impactScore(a[1]));
+
+  // THE SYNTHESIS: this card pulls every other analysis's verdict into one direct
+  // answer -- where you parse now, the single biggest lever, and where your DPS is
+  // leaking by area. Built from the same findings the list below details.
+  const act = rx.filter((r) => impactScore(r[1]) > 0);
+  const isComp = (r) => dimensionOf(r[2]) === "Comp";       // raid-dependent, not yours to press
+  const yours = act.filter((r) => !isComp(r));
+  const buckets = new Map();   // area -> summed estimated %
+  for (const [, impact, text] of act) {
+    const area = dimensionOf(text);
+    buckets.set(area, (buckets.get(area) || 0) + impactScore(impact));
+  }
+  const byArea = [...buckets.entries()].sort((a, b) => b[1] - a[1]);
+  const yoursTop3 = Math.round(yours.slice(0, 3).reduce((s, r) => s + impactScore(r[1]), 0));
+  const compTotal = Math.round(buckets.get("Comp") || 0);
+  const jump = (medP != null && medP < 55)
+    ? "near the median, a few % is a big percentile jump"
+    : "at this level gains are harder-won, but each % still moves you up";
+
+  log("");
+  log("=".repeat(66));
+  log(`HOW TO PARSE BETTER -- ${N}-${S} (${SP} ${CL}), ilvl ~${curIlvl}`);
+  log("=".repeat(66));
+  if (medP != null) log(`You parse ${medP}th percentile (median of ${ranks.length} bosses; best ${bestP}th on ${bestRank.encounter.name}).`);
+  if (yours.length) log(`Biggest fix YOU control: ${rxHeadline(yours[0][2])} (${yours[0][1].trim()}) -- start here.`);
+  if (act.length) log(`Where your DPS leaks (sum of fixes): ${byArea.map(([a, p]) => `${a} ~${Math.round(p)}%`).join("  ·  ")}.`);
+  if (yours.length) {
+    let line = `Your top 3 controllable fixes ≈ ~${yoursTop3}% more DPS`;
+    if (compTotal) line += `; comp (raid buffs you lack) ~${compTotal}% on top`;
+    log(`${line} -- ${jump}.`);
+  }
+  log(`(Gear/setup vs ilvl-matched peers; rotation/execution vs your own kills; comp vs the top parses.)`);
+
   log("");
   log("DO THESE IN ORDER (biggest DPS first):");
   if (!rx.length) {
     log("  You match your peers on gear, consumables, stats, and execution. Remaining gains are farm kills + raid comp.");
   }
-  // Sort by the actual displayed DPS impact, biggest first -- the order MUST
-  // match the "% DPS" the user sees (the bug was an unrelated sort key).
-  rx.sort((a, b) => impactScore(b[1]) - impactScore(a[1]));
   rx.forEach(([, impact, text], i) => log(`  ${i + 1}. [${String(impact).padStart(9)}]  ${text}`));
   log("");
 }

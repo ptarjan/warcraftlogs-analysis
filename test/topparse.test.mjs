@@ -34,6 +34,14 @@ test("buffGaps marks a buff you under-RUN (not zero) as execution, not comp", ()
   assert.equal(gaps[0].comp, false);                      // you had some -> not a pure comp gap
 });
 
+test("buffGaps: a self-applicable buff (food/flask) you lack is NOT comp", () => {
+  const you = { "Bloodlust": buff(0) };                  // you ate no food
+  const top = [{ "Well Fed": buff(100) }, { "Well Fed": buff(100) }, { "Well Fed": buff(95) }];
+  const g = buffGaps(you, top).find((x) => x.name === "Well Fed");
+  assert.ok(g, "the Well Fed gap is surfaced");
+  assert.equal(g.comp, false, "food is self-applicable -> a setup fix, never comp");
+});
+
 test("buffGaps ignores buffs you already match", () => {
   const you = { "Mark of the Wild": buff(100) };
   const top = [{ "Mark of the Wild": buff(100) }, { "Mark of the Wild": buff(100) }];
