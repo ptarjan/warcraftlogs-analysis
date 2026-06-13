@@ -8,6 +8,7 @@ import { paramsFromSearch, shareSearch } from "./share.js";
 import * as overview from "./overview.js";
 import * as timeline from "./timeline.js";
 import * as rotation from "./rotation.js";
+import * as talents from "./talents.js";
 import * as topparse from "./topparse.js";
 import * as gear from "./gear.js";
 import * as prescribe from "./prescribe.js";
@@ -287,6 +288,7 @@ const SUPPORTING = [
   ["Overview & item-level comparison", (p, log) => overview.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Timeline diagnosis", (p, log) => timeline.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Rotation: opener & priority", (p, log) => rotation.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  ["Talents vs the field", (p, log) => talents.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Chasing 99: you vs the top parses", (p, log) => topparse.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Gear audit", (p, log) => gear.run(log, p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority)],
 ];

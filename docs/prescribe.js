@@ -13,6 +13,7 @@ import { timelineFindings } from "./timeline.js";
 import { gearFindings, gearLevers } from "./gear.js";
 import { wowheadSpell } from "./links.js";
 import { rotationFindings, rotationLevers } from "./rotation.js";
+import { talentFindings, talentLevers } from "./talents.js";
 import { topParseFindings, topParseLevers } from "./topparse.js";
 
 const SLOT_NAME = ENCHANTABLE_SLOTS;
@@ -310,11 +311,13 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const gf = await gearFindings(name, server, region, difficulty, className, specName, priority);
   // rot/tp are hoisted so the synthesis below can quote their MEASURED numbers.
   // Each may be unavailable (private logs, no peers) -- treat that as no findings.
-  let rot = null, tp = null;
+  let rot = null, tp = null, tal = null;
   try { rot = await rotationFindings(name, server, region, className, specName, difficulty); }
   catch (e) { /* rotation data unavailable -- skip */ }
   try { tp = await topParseFindings(name, server, region, difficulty, className, specName); }
   catch (e) { /* top-parse data unavailable -- skip */ }
+  try { tal = await talentFindings(name, server, region, className, specName, difficulty); }
+  catch (e) { /* talent data unavailable -- skip */ }
 
   // Fold every domain's levers into ONE list of findings, then sort biggest-DPS
   // first. impact is a real number, so the order can't disagree with the shown
@@ -327,6 +330,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
     ...gearLevers(gf, priority),
     ...statGapLever(gf, my, field, priority),
     ...rotationLevers(rot),
+    ...talentLevers(tal),
     ...topParseLevers(tp),
   ];
   rx.sort((a, b) => b.impact - a.impact);

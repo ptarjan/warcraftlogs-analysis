@@ -2,7 +2,27 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 installLocalStorage();
-const { talentDiff } = await import("../docs/talents.js");
+const { talentDiff, buildTalentIndex, talentLabel } = await import("../docs/talents.js");
+
+test("buildTalentIndex maps Raidbots node/entry ids to names + spell ids", () => {
+  // shape mirrors Raidbots talents.json: WCL nodeID === node.id, WCL id === entry.id
+  const spec = {
+    classNodes: [{ id: 100, name: "Rake", entries: [{ id: 5001, name: "Rake", spellId: 1822 }] }],
+    specNodes: [{ id: 200, name: "Maul", entries: [{ id: 5002, name: "Maul", spellId: 6807 }] }],
+  };
+  const idx = buildTalentIndex(spec);
+  assert.equal(idx.byNode.get(100), "Rake");
+  assert.deepEqual(idx.byEntry.get(5002), { name: "Maul", spellId: 6807 });
+  // talentLabel resolves a taken node (nodeID, entryId) -> name + link target
+  assert.deepEqual(talentLabel(idx, 200, 5002), { name: "Maul", spellId: 6807 });
+});
+
+test("talentLabel falls back to the entry name, then a placeholder", () => {
+  const idx = buildTalentIndex({ classNodes: [{ id: 1, entries: [{ id: 9, name: "Gore", spellId: 210706 }] }] });
+  assert.equal(talentLabel(idx, 1, 9).name, "Gore");        // node had no name -> entry name
+  assert.equal(talentLabel(idx, 99, 99).name, "talent 99"); // unknown -> placeholder, no crash
+  assert.equal(talentLabel(idx, 99, 99).spellId, null);
+});
 
 test("talentDiff flags missing meta talents and off-meta picks", () => {
   const you = new Map([
