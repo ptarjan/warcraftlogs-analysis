@@ -129,14 +129,22 @@ export async function timelineFindings(name, server, region, encounter, difficul
 function printBossComparison(log, c) {
   log("");
   log(`  ${c.boss}  (your ${c.yourKills} kills vs ${c.peers} peers)`);
+  // Data-driven visibility -- skip rows with no signal so a caster (no autos: range
+  // and out-of-melee are structurally 0, and "not pressing" just repeats the
+  // headline) doesn't get two always-zero rows + a redundant split on every boss.
+  // The range/press split only informs when there's real range loss; the
+  // out-of-melee row only when something's actually off-target. Class-agnostic.
+  const splitShown = Math.max(c.you.rangeLostPerMin, c.peer.rangeLostPerMin) >= 0.1;
+  const meleeShown = Math.max(c.you.autoDownPct, c.peer.autoDownPct) >= 0.1;
   const rows = [
-    ["lost GCD time /min", "lostPerMin", "s"],
-    ["  - out of range/moving /min", "rangeLostPerMin", "s"],
-    ["  - in range, not pressing /min", "pressLostPerMin", "s"],
-    ["out-of-melee % of fight", "autoDownPct", "%"],
-    ["GCD overshoot (latency)", "overshootMs", "ms"],
+    ["lost GCD time /min", "lostPerMin", "s", true],
+    ["  - out of range/moving /min", "rangeLostPerMin", "s", splitShown],
+    ["  - in range, not pressing /min", "pressLostPerMin", "s", splitShown],
+    ["out-of-melee % of fight", "autoDownPct", "%", meleeShown],
+    ["GCD overshoot (latency)", "overshootMs", "ms", true],
   ];
-  for (const [label, key, unit] of rows) {
+  for (const [label, key, unit, show] of rows) {
+    if (!show) continue;
     const y = c.you[key], p = c.peer[key];
     const delta = y - p;
     let flag = "";
@@ -173,8 +181,13 @@ export async function run(log, name, server, region, className = "Monk", specNam
     log(`  === AGGREGATE excess vs peers (median across ${agg.lostPerMin.length} bosses) ===`);
     const sgn = (x) => (x >= 0 ? "+" : "") + f(x, 1);
     log(`    total lost GCD /min over peers: ${sgn(median(agg.lostPerMin))}s`);
-    log(`      from out-of-range/moving:     ${sgn(median(agg.rangeLostPerMin))}s`);
-    log(`      from not pressing in range:   ${sgn(median(agg.pressLostPerMin))}s`);
-    log(`    out-of-melee % over peers:      ${sgn(median(agg.autoDownPct))} pts`);
+    // Only break out the range/melee components when they carry signal -- a caster's
+    // are structurally 0 (see printBossComparison), so don't print +0.0 rows.
+    const aggRange = median(agg.rangeLostPerMin), aggMelee = median(agg.autoDownPct);
+    if (Math.abs(aggRange) >= 0.1) {
+      log(`      from out-of-range/moving:     ${sgn(aggRange)}s`);
+      log(`      from not pressing in range:   ${sgn(median(agg.pressLostPerMin))}s`);
+    }
+    if (Math.abs(aggMelee) >= 0.1) log(`    out-of-melee % over peers:      ${sgn(aggMelee)} pts`);
   }
 }
