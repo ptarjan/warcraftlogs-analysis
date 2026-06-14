@@ -5,7 +5,53 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse } = await import("../docs/rotation.js");
+
+test("realOveruse: an over-press vs a ~0 field is a build difference, not a rotation error", () => {
+  // Cross-tree field (heroMatched null): you press Thrash 5.8/min, peers 0.0 --
+  // they DROPPED the button (different hero tree), so "press it less" is wrong.
+  const over = [
+    { name: "Thrash", you: 5.8, field: 0 },
+    { name: "Maul", you: 4.0, field: 1.5 },  // field DOES press it, just less -> real
+  ];
+  const real = realOveruse(over, null);
+  assert.deepEqual(real.map((a) => a.name), ["Maul"]);
+});
+
+test("realOveruse: same-tree field keeps a zero-field over-press (a real wrong button)", () => {
+  // heroMatched set: peers run YOUR tree and still press Thrash ~0 -> you really
+  // are pressing a button your own build's best players don't.
+  const over = [{ name: "Thrash", you: 5.8, field: 0 }];
+  assert.equal(realOveruse(over, "Elune's Chosen").length, 1);
+});
+
+test("sameHeroPeers: compares you only to same-hero-tree peers when enough exist", () => {
+  // 3 Elune's Chosen + 2 Druid of the Claw. You're Elune's Chosen -> keep the 3
+  // who run your tree (else the DotC peers' 0 Thrash makes you look over-pressing).
+  const peers = [
+    { name: "a", hero: "Elune's Chosen" }, { name: "b", hero: "Elune's Chosen" },
+    { name: "c", hero: "Elune's Chosen" }, { name: "d", hero: "Druid of the Claw" },
+    { name: "e", hero: "Druid of the Claw" },
+  ];
+  const same = sameHeroPeers(peers, "Elune's Chosen");
+  assert.equal(same.length, 3);
+  assert.ok(same.every((p) => p.hero === "Elune's Chosen"));
+});
+
+test("sameHeroPeers: falls back to the whole field when too few share your tree", () => {
+  // Only 1 peer on your tree -- not a real sample, so use all 5 (noisy beats none).
+  const peers = [
+    { name: "a", hero: "Elune's Chosen" }, { name: "b", hero: "Druid of the Claw" },
+    { name: "c", hero: "Druid of the Claw" }, { name: "d", hero: "Druid of the Claw" },
+    { name: "e", hero: "Druid of the Claw" },
+  ];
+  assert.equal(sameHeroPeers(peers, "Elune's Chosen").length, 5);
+});
+
+test("sameHeroPeers: unknown hero tree -> compare to the whole field", () => {
+  const peers = [{ name: "a", hero: null }, { name: "b", hero: "X" }];
+  assert.equal(sameHeroPeers(peers, null).length, 2);
+});
 
 test("perCastGaps: flags a hard hit you land WEAK -- ability-specific, beyond the comp/stats edge", () => {
   // The field does 1.4x your total overall (comp+stats). Your Big hits 100k/cast,

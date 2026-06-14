@@ -11,7 +11,7 @@ import {
   playerMetrics, ilvlPeers, mapLimit, median, bestKill,
   reportCore, fightWindow, fightEvents, paginateEvents, f, DPS, finding, eventTable, runIsHealer,
 } from "./core.js";
-import { talentedAbilities } from "./talents.js";
+import { talentedAbilities, heroTreeOf } from "./talents.js";
 import { wowheadSpell } from "./links.js";
 import { spellTooltip } from "./wcl.js";
 
@@ -108,8 +108,9 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
     // Return the per-ability damage TOTALS + cast rates too (no extra fetch -- they
     // ride on the playerMetrics table already loaded). The per-cast-damage lever
     // medians these across peers to see how hard the FIELD's same ability hits.
+    // sourceID lets the caller resolve this peer's hero tree (same-tree matching).
     return { opener: openerSequence(casts), procPerMin, castRate, allCastRate, name2id,
-             dmgBy: m.dmgBy, total: m.total, dur };
+             dmgBy: m.dmgBy, total: m.total, dur, sourceID: m.sourceID };
   }
 
   // You: per-hit detail for the top damage abilities (bounded for API cost).
@@ -155,6 +156,27 @@ export function usageDivergence(youRate, fieldRate, { floor = 0.5, ratio = 2 } =
   under.sort((a, b) => b.gap - a.gap);
   over.sort((a, b) => b.gap - a.gap);
   return { under, over };
+}
+
+// Pick the peers to compare your rotation against. Prefer ones on your SAME hero
+// tree (each peer carries `.hero`) -- two trees swap whole buttons, so a mixed
+// field makes the cast-rate diff lie. Fall back to the whole field when your tree
+// is unknown or too few peers share it (a noisy comparison beats none). Pure.
+export function sameHeroPeers(analyzed, yourHero, min = 3) {
+  if (!yourHero) return analyzed;
+  const same = analyzed.filter((a) => a.hero === yourHero);
+  return same.length >= min ? same : analyzed;
+}
+
+// Keep only over-press findings that are real ROTATION levers. An over-press is a
+// rotation error only when the field ALSO presses the ability (just less) -- you
+// can't "press it less" toward a field that presses it ~0 without dropping the
+// talent, which is a BUILD/hero-tree difference, not a rotation fix (an Elune's
+// Chosen Guardian "over-pressing" Thrash/Raze next to a Druid-of-the-Claw field
+// that replaced them). Keep a near-zero field only when peers are hero-matched,
+// where a zero genuinely means a wrong button within your own build. Pure.
+export function realOveruse(over, heroMatched, floor = 0.5) {
+  return (over || []).filter((a) => heroMatched || a.field >= floor);
 }
 
 // Under-used DAMAGE COOLDOWNS -- the lever usageDivergence structurally MISSES.
@@ -296,12 +318,22 @@ export async function rotationFindings(name, server, region, className, specName
   // timeline / prescribe use, so the fetches dedupe). It feeds the proc rate, the
   // opener, AND the ability-usage comparison.
   const cands = await ilvlPeers(name, server, region, boss, difficulty, className, specName);
-  const peers = (await mapLimit(cands, 4, async (r) => {
+  // Your hero tree, so we can compare you only to peers who run the SAME one --
+  // two hero trees swap whole buttons, and a mixed field makes the cast-rate diff
+  // lie in BOTH directions (you "over-press" a button the other tree dropped, and
+  // "under-press" one it added). Best-effort; null -> compare to the whole field.
+  let yourHero = null;
+  try { yourHero = await heroTreeOf(best.code, best.fight, you.sourceID); } catch (e) { /* no talent data */ }
+  const analyzed = (await mapLimit(cands, 4, async (r) => {
     try {
-      return await analyzeKill(r.name, r.report.code, r.report.fightID, specName, className,
-                               { onlyAbility: top.name });
+      const a = await analyzeKill(r.name, r.report.code, r.report.fightID, specName, className,
+                                  { onlyAbility: top.name });
+      if (!a) return null;
+      const hero = yourHero ? await heroTreeOf(r.report.code, r.report.fightID, a.sourceID).catch(() => null) : null;
+      return { ...a, hero };
     } catch (e) { return null; }
-  })).filter(Boolean).slice(0, 5);
+  })).filter(Boolean);
+  const peers = sameHeroPeers(analyzed, yourHero).slice(0, 5);
   const fieldProc = (isReal && peers.length) ? median(peers.map((a) => a.procPerMin)) : null;
   const fieldOpener = peers.length ? peers[0].opener : null;
   const fieldRate = fieldCastRates(peers.map((p) => p.castRate || {}));
@@ -386,6 +418,7 @@ export async function rotationFindings(name, server, region, className, specName
   return {
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener,
     usage, cooldowns, cdUsage, perCast, castGap, fieldPeers: peers.length, talent, abilityIds,
+    heroMatched: yourHero && peers.length ? (peers.every((p) => p.hero === yourHero) ? yourHero : null) : null,
     proc: { name: top.name, isReal, youPerMin: top.procPerMin, fieldPerMin: fieldProc },
   };
 }
@@ -431,13 +464,17 @@ export async function run(log, name, server, region, className = "Monk",
   // Only recommend pressing abilities you can actually cast -- the peer pool can
   // skew to a different hero tree and surface buttons your build doesn't have.
   const under = u.under.filter((a) => castable(a.name, fnd.talent));
-  if (under.length || u.over.length) {
+  // Drop over-press findings that are really a hero-tree/build difference (you
+  // press a button the field replaced) rather than a rotation error.
+  const over = realOveruse(u.over, fnd.heroMatched);
+  if (under.length || over.length) {
     log("");
-    log(`=== ABILITY USAGE vs PEERS (casts/min, ${fnd.fieldPeers} peers) ===`);
+    log(`=== ABILITY USAGE vs PEERS (casts/min, ${fnd.fieldPeers} peers` +
+        `${fnd.heroMatched ? `, all on ${fnd.heroMatched}` : ""}) ===`);
     for (const a of under.slice(0, 4))
       log(`  UNDER-USE  ${a.name.padEnd(20)} you ${a.you.toFixed(1)}/min  peers ${a.field.toFixed(1)}/min  <-- press it more`);
-    for (const a of u.over.slice(0, 4))
-      log(`  OVER-USE   ${a.name.padEnd(20)} you ${a.you.toFixed(1)}/min  peers ${a.field.toFixed(1)}/min  <-- peers barely press this`);
+    for (const a of over.slice(0, 4))
+      log(`  OVER-USE   ${a.name.padEnd(20)} you ${a.you.toFixed(1)}/min  peers ${a.field.toFixed(1)}/min  <-- peers press this less`);
     if (under.length) log("  -> Shift presses toward what peers actually cast.");
   }
 }
@@ -455,9 +492,12 @@ export function rotationLevers(rot) {
   // a cooldown is usually the largest gap for an underperformer -- sorts above
   // gear. Impact is an estimate (we can't sim it), sized by wrong-button vs under-use.
   const u = rot && rot.usage;
+  // Over-press findings, minus hero-tree/build differences (see realOveruse): a
+  // button the field replaced isn't something you're pressing "too much".
+  const realOver = u ? realOveruse(u.over, rot && rot.heroMatched) : [];
   if (u && u.under.length) {
     const top = u.under[0];
-    const overTop = u.over[0];
+    const overTop = realOver[0];
     // Never casting an ability the field leans on USED to be reported as "missing
     // the talent -- respec". That over-reached on baseline buttons (a Prot Paladin
     // told to respec for Shield of the Righteous). Now we check YOUR talents:
@@ -484,9 +524,9 @@ export function rotationLevers(rot) {
       const underAbilities = u.under.filter((a) => castable(a.name, rot && rot.talent));
       if (underAbilities.length) {
         const under = underAbilities.slice(0, 2).map((a) => `${link(a.name)} (peers ${f(a.field, 1)}/min vs your ${f(a.you, 1)})`);
-        const wrongButton = u.over.length > 0;
+        const wrongButton = realOver.length > 0;
         const over = wrongButton
-          ? `; you over-press ${u.over.slice(0, 1).map((a) => `${link(a.name)} (your ${f(a.you, 1)}/min vs peers ${f(a.field, 1)})`).join("")}`
+          ? `; you over-press ${realOver.slice(0, 1).map((a) => `${link(a.name)} (your ${f(a.you, 1)}/min vs peers ${f(a.field, 1)})`).join("")}`
           : "";
         out.push(finding("Rotation", wrongButton ? DPS(5, 10) : DPS(3, 6),
           `ROTATION: press ${under.join(" and ")} more${over} -- match your peers' ability priority ` +

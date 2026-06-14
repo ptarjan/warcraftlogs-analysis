@@ -195,6 +195,21 @@ export async function talentedAbilities(code, fight, sourceId) {
   return { taken, universe };
 }
 
+// The hero tree a player ran on one fight (e.g. "Elune's Chosen"), or null if
+// unknowable (no CombatantInfo/Raidbots, or a spec with no hero choice). Lets a
+// caller compare you only to peers on the SAME hero tree: two trees routinely
+// swap whole buttons, so a mixed field makes the cast-rate diff lie -- an Elune's
+// Chosen Guardian looks like they "over-press" Thrash next to a Druid-of-the-Claw
+// field that replaced Thrash with Ravage.
+export async function heroTreeOf(code, fight, sourceId) {
+  const you = await loadout(code, fight, sourceId);
+  if (!you) return null;
+  const idx = await talentIndex(you.specID);
+  if (!idx.heroChoice) return null;
+  const pick = you.map.get(idx.heroChoice);
+  return pick ? idx.heroByEntry.get(pick.id) || null : null;
+}
+
 // --- findings (data the prescription + card consume) -------------------------
 
 // Named talent findings vs the field on your benchmark boss. Returns null when
