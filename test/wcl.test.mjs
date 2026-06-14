@@ -68,3 +68,37 @@ test("disk cache: a fresh run serves persisted results without a new request", a
     try { fs.rmSync(file, { force: true }); } catch { /* ignore */ }
   }
 });
+
+// Report data (a specific logged kill) is immutable -> it must NEVER age out of the
+// disk cache, even when a rankings entry written at the same time would have.
+test("disk cache: immutable report data never expires; rankings do", async () => {
+  const { gql, clearGqlCache, _flushGqlDisk, _resetGqlDisk } = await import("../docs/wcl.js");
+  const file = path.join(os.tmpdir(), `wcl-gql-immutable-test-${process.pid}.json`);
+  try { fs.rmSync(file, { force: true }); } catch { /* none */ }
+  process.env.WCL_GQL_CACHE = "1";
+  process.env.WCL_GQL_CACHE_FILE = file;
+  const reportQ = 'query { reportData { report(code:"abcd") { events(fightIDs:1) { data } } } }';
+  const rankingsQ = "query { worldData { encounter(id:1) { characterRankings(page:1) } } }";
+  try {
+    // Seed both as if written 30 days ago (older than the weekly rankings TTL).
+    const old = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    fs.writeFileSync(file, JSON.stringify({
+      [reportQ]: { t: old, d: { report: "kept" } },
+      [rankingsQ]: { t: old, d: { ranks: "stale" } },
+    }));
+    clearGqlCache(); _resetGqlDisk();
+    // Report query: served from the ancient cache entry, no network.
+    globalThis.fetch = () => { throw new Error("immutable report data must not refetch"); };
+    assert.deepEqual(await gql(reportQ), { report: "kept" });
+
+    // Rankings query: the 30-day-old entry is expired, so it refetches.
+    clearGqlCache(); _resetGqlDisk();
+    globalThis.fetch = mockFetch([TOKEN, ["/api/v2/client", { json: { data: { ranks: "fresh" } } }]]);
+    assert.deepEqual(await gql(rankingsQ), { ranks: "fresh" }, "stale rankings refetch");
+  } finally {
+    delete process.env.WCL_GQL_CACHE;
+    delete process.env.WCL_GQL_CACHE_FILE;
+    _resetGqlDisk();
+    try { fs.rmSync(file, { force: true }); } catch { /* ignore */ }
+  }
+});

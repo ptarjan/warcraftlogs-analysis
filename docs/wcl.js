@@ -128,7 +128,11 @@ const _gqlCache = new Map();
 // the store falls back to an in-memory map, so the cross-reload behavior is testable.
 const PERSIST = !IS_NODE ||
   (typeof process !== "undefined" && process.env && process.env.WCL_PERSIST_TEST === "1");
-const CACHE_TTL = 60 * 60 * 1000; // 1 hour
+const CACHE_TTL = 60 * 60 * 1000; // 1 hour (rankings drift; Worker edge-cache backs this)
+// A specific logged kill's report data (events/tables for a report+fight) never
+// changes once logged -- so it must never expire from any cache. Ranking/world/
+// character queries (the "field") DO drift, so they keep a finite TTL.
+const _isImmutable = (q) => /report\s*\(\s*code\s*:/.test(q);
 
 // Short, stable key from the query text (FNV-1a). Collisions are made safe by
 // storing the query alongside the value and verifying it on read.
@@ -176,7 +180,7 @@ async function _storeSet(key, val) {
 export async function _cacheRead(query) {
   try {
     const e = await _storeGet(_hash(query));
-    if (e && e.q === query && Date.now() - e.t < CACHE_TTL) return e.d;
+    if (e && e.q === query && Date.now() - e.t < (_isImmutable(query) ? Infinity : CACHE_TTL)) return e.d;
   } catch { /* fall through to network */ }
   return undefined;
 }
@@ -192,7 +196,11 @@ export function clearGqlCache() { _gqlCache.clear(); }
 // everything and back-to-back runs trip WCL's per-IP 429 throttle. Persisting
 // successful GraphQL results between runs makes iterating ~free. No effect in
 // the browser (guarded by IS_NODE; node:* imports are dynamic).
-const DISK_TTL_MS = 6 * 60 * 60 * 1000; // logs are immutable; rankings drift slowly
+// Immutable report data is cached FOREVER (see _isImmutable); ranking/world/
+// character queries keep a finite TTL -- weekly, not hours, so a roster review
+// spanning several days stays warm instead of aging out and re-spending points.
+const DISK_TTL_MS = 7 * 24 * 60 * 60 * 1000; // rankings: refresh ~weekly
+const _ttlFor = (q) => (_isImmutable(q) ? Infinity : DISK_TTL_MS);
 let _diskReady = null;   // Promise, set once init starts
 let _diskStore = null;   // { [query]: { t, d } } mirrored to disk
 let _diskFile = null;
@@ -223,7 +231,7 @@ async function initDisk() {
       const raw = JSON.parse(fs.readFileSync(_diskFile, "utf8"));
       const now = Date.now();
       for (const [q, e] of Object.entries(raw)) {
-        if (e && (now - e.t) < DISK_TTL_MS) { _diskStore[q] = e; _gqlCache.set(q, e.d); }
+        if (e && (now - e.t) < _ttlFor(q)) { _diskStore[q] = e; _gqlCache.set(q, e.d); }
       }
     } catch { /* no cache file yet */ }
   })();
@@ -251,7 +259,7 @@ function _flushDisk() {
     const merged = {};
     try {
       const onDisk = JSON.parse(_diskFs.readFileSync(_diskFile, "utf8"));
-      for (const [q, e] of Object.entries(onDisk)) if (e && now - e.t < DISK_TTL_MS) merged[q] = e;
+      for (const [q, e] of Object.entries(onDisk)) if (e && now - e.t < _ttlFor(q)) merged[q] = e;
     } catch { /* no/invalid file -- just write ours */ }
     for (const [q, e] of Object.entries(_diskStore)) if (!merged[q] || merged[q].t < e.t) merged[q] = e;
     const tmp = `${_diskFile}.${process.pid}.tmp`;
