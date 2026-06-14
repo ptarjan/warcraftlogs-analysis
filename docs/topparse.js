@@ -155,14 +155,17 @@ export async function run(log, name, server, region, className, specName, diffic
   if (fnd.comp.present.length) log(`  Present: ${fnd.comp.present.map((e) => e.label).join(", ")}`);
   log("");
 
-  if (fnd.routing) {
+  // Only surface routing/potions when there's a GAP to act on. "top 2% you 4%"
+  // (you already route more) or "potions: top 0, you 0" are non-actionable noise.
+  if (fnd.routing && fnd.routing.top - fnd.routing.you >= 1 && fnd.routing.addNames.length) {
     log("--- Damage routing ---");
     log(`  top parses put ${f(fnd.routing.top, 0)}% of damage on non-boss targets; you ${f(fnd.routing.you, 0)}%.`);
-    if (fnd.routing.addNames.length) log(`  they cleave/funnel that you don't: ${fnd.routing.addNames.join(", ")}`);
+    log(`  they cleave/funnel that you don't: ${fnd.routing.addNames.join(", ")}`);
     log("");
+  }
+  if (fnd.potions && fnd.potions.top > fnd.potions.you) {
     log("--- Consumables timing ---");
-    log(`  potions/kill: top ${fnd.potions.top}, you ${fnd.potions.you}` +
-        (fnd.potions.top > fnd.potions.you ? "  <-- pre-pot + a second combat potion" : ""));
+    log(`  potions/kill: top ${fnd.potions.top}, you ${fnd.potions.you}  <-- pre-pot + a second combat potion`);
   }
 }
 
