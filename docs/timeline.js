@@ -3,7 +3,7 @@
 // vs ilvl-matched peers on the SAME boss (phase/intermission aware).
 import { gql } from "./wcl.js";
 import {
-  characterZone, characterEncounter, playerMetrics, collectPeers, median, f, mapLimit,
+  characterZone, characterEncounter, playerMetrics, ilvlPeers, PEER_SAMPLE, median, f, mapLimit,
   fightWindow, fightEvents,
 } from "./core.js";
 
@@ -76,15 +76,14 @@ async function fightMetrics(code, fight, sourceId, className = "Monk") {
   };
 }
 
-async function peerMetricsFor(encounterId, difficulty, className, specName, targetIlvl, n = 6) {
-  const cands = await collectPeers({ encounters: encounterId, difficulty, className, specName,
-    limit: n + 3, pages: 7, ilvl: targetIlvl, window: 3 });
+async function peerMetricsFor(name, server, region, encounter, difficulty, className, specName) {
+  const cands = await ilvlPeers(name, server, region, encounter, difficulty, className, specName);
   // fightMetrics paginates events (heavy), so a smaller concurrency cap.
   const results = await mapLimit(cands, 4, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
     return m ? fightMetrics(r.report.code, r.report.fightID, m.sourceID, className) : null;
   });
-  return results.filter(Boolean).slice(0, n);
+  return results.filter(Boolean).slice(0, PEER_SAMPLE);
 }
 
 // Diagnose all your kills of a boss vs peer median on the SAME boss.
@@ -107,11 +106,9 @@ export async function timelineFindings(name, server, region, encounter, difficul
   });
   const yourFms = perKill.filter(Boolean).map((x) => x.fm);
   if (!yourFms.length) return null;
-  // Target the field at your TOP ilvl across ALL kills of this boss (not just the
-  // analyzed ones) -- the same value overview uses -- so the two sections select
-  // the identical peer set and their reportCore fetches COALESCE.
-  const peerIlvl = Math.max(...er.ranks.map((r) => r.bracketData || 0)) || 0;
-  const peers = await peerMetricsFor(encounter.id, difficulty, className, specName, peerIlvl);
+  // The ilvl-matched field -- via the shared core.ilvlPeers, so this can't drift
+  // from overview's selection and start double-fetching the same peers.
+  const peers = await peerMetricsFor(name, server, region, encounter, difficulty, className, specName);
   const ymed = (k) => median(yourFms.map((x) => x[k]));
   const pmed = (k) => (peers.length ? median(peers.map((x) => x[k])) : NaN);
   const keys = ["lostPerMin", "rangeLostPerMin", "pressLostPerMin", "autoDownPct", "overshootMs"];

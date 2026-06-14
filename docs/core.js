@@ -383,6 +383,25 @@ export async function collectPeers({
   return cands;
 }
 
+// THE one definition of "the field at YOUR item level on this boss". Both the
+// overview and the timeline comparisons compare you to ilvl-matched peers -- if
+// they pick DIFFERENT peer sets, their per-peer reportCore fetches don't dedupe
+// (a pile of redundant requests). So the selection lives in EXACTLY ONE place:
+// the collectPeers params AND the target ilvl (your top ilvl on this boss). Both
+// callers go through this, so they can't drift apart. They differ only in which
+// metric they map over the SAME candidates (playerMetrics vs fightMetrics+events),
+// and those fetches coalesce. Returns the candidate ranking entries; PEER_SAMPLE
+// is how many each caller keeps after dropping the ones that fail to load.
+export const PEER_SAMPLE = 6;
+export async function ilvlPeers(name, server, region, encounter, difficulty, className, specName) {
+  const er = await characterEncounter(name, server, region, encounter.id, difficulty);
+  const ranks = (er && er.ranks) || [];
+  if (!ranks.length) return [];
+  const ilvl = Math.max(...ranks.map((r) => r.bracketData || 0)) || 0;
+  return collectPeers({ encounters: encounter.id, difficulty, className, specName,
+    limit: PEER_SAMPLE + 3, pages: 7, ilvl, window: 3 });
+}
+
 // --------------------------------------------------------------------- //
 // Auto-detection (so the UI only needs character / server / region)
 // --------------------------------------------------------------------- //

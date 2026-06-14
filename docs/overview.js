@@ -2,8 +2,8 @@
 // Overview + item-level / duration-controlled comparison vs the field.
 import {
   DIFFICULTY, characterZone, characterEncounter, topRankings, playerMetrics,
-  secondaryStats, gearSummary, median, f, padL, padR, mapLimit, bestRank, collectPeers,
-  metricUnit, recentKills,
+  secondaryStats, gearSummary, median, f, padL, padR, mapLimit, bestRank,
+  ilvlPeers, PEER_SAMPLE, metricUnit, recentKills,
 } from "./core.js";
 
 export async function overview(log, name, server, region, difficulty) {
@@ -22,21 +22,18 @@ export async function overview(log, name, server, region, difficulty) {
   return { zr, killed };
 }
 
-// Peers within +/- ilvlWindow of targetIlvl, with full metrics. The defaults
-// MATCH timeline's peerMetricsFor (n/window/pages/limit) on purpose: identical
-// collectPeers args mean the same peers are selected, so their reportCore fetches
-// COALESCE with timeline's (which already runs every boss) -- making the per-boss
-// peer pull effectively free and letting the overview uncap to all bosses.
-async function collectIlvlPeers(encounterId, difficulty, className, specName,
-  targetIlvl, n = 6, ilvlWindow = 3, pages = 7) {
-  const cands = await collectPeers({ encounters: encounterId, difficulty, className, specName,
-    limit: n + 3, pages, ilvl: targetIlvl, window: ilvlWindow });
+// Your per-metric numbers for the SHARED ilvl-matched peer set (core.ilvlPeers --
+// the single source so this can't drift from timeline's selection and start
+// double-fetching). We map playerMetrics; timeline maps fightMetrics over the
+// same candidates, so the reportCore fetches dedupe.
+async function ilvlPeerMetrics(name, server, region, encounter, difficulty, className, specName) {
+  const cands = await ilvlPeers(name, server, region, encounter, difficulty, className, specName);
   const metrics = await mapLimit(cands, 5, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
     if (m) m.rankDur = (r.duration || 0) / 1000;
     return m;
   });
-  return metrics.filter(Boolean).slice(0, n);
+  return metrics.filter(Boolean).slice(0, PEER_SAMPLE);
 }
 
 // Full controlled comparison for one encounter (uses the best-ilvl kill).
@@ -50,10 +47,7 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
   log("");
   log(`--- ${encounter.name} | your best-ilvl kill: ilvl ${ilvl}, ${f(you.dur, 0)}s, ${f(you.dps, 0)} ${metricUnit().toLowerCase()}, ${f(best.rankPercent, 0)}%ile ---`);
 
-  // Target the field at your TOP ilvl on this boss -- same value timeline uses --
-  // so the peer set (and its fetches) coalesce with timeline's.
-  const peerIlvl = Math.max(...er.ranks.map((r) => r.bracketData || 0)) || ilvl || 0;
-  const peers = await collectIlvlPeers(encounter.id, difficulty, className, specName, peerIlvl);
+  const peers = await ilvlPeerMetrics(name, server, region, encounter, difficulty, className, specName);
   if (!peers.length) {
     log("  (no item-level-matched peers found)");
     return;
@@ -130,7 +124,8 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const { killed } = await overview(log, name, server, region, difficulty);
   // Deep-compare EVERY killed boss (most recent first). It's affordable because
   // each boss's peers + your-kill data come from the same fetches timeline already
-  // makes for all bosses -- the collectPeers args now match, so they coalesce.
+  // makes for all bosses -- both go through core.ilvlPeers, so they pick the
+  // identical peer set and the reportCore fetches coalesce.
   const recent = await recentKills(name, server, region, difficulty);
   for (const r of recent.slice(0, bosses)) {
     try {
