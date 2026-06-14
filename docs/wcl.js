@@ -288,12 +288,15 @@ async function initDisk() {
     // Read every shard that exists -- these ARE the cache.
     try { for (const f of fs.readdirSync(_diskDir)) if (f.endsWith(".json")) load(fs.readFileSync(path.join(_diskDir, f), "utf8")); } catch { /* none yet */ }
     // Back-compat + one-time migration: an old monolithic gql-cache.json is read
-    // too, then its entries are distributed into shards (and it's removed) on the
-    // next flush. Marks the affected shards dirty so the migration actually writes.
+    // too, then its entries are distributed into shards and it's removed. Marks the
+    // affected shards dirty AND flushes EAGERLY (not lazily on the next fetch): the
+    // point is to get off the fragile single-file format ASAP, so even a read-only /
+    // cache-only run migrates it (no WCL points -- it's a disk reformat, not a fetch).
     try {
       load(fs.readFileSync(_diskFile, "utf8"));
       _migrate = true;
       for (const q of Object.keys(_diskStore)) _dirty.add(_shardId(q));
+      if (_dirty.size) { clearTimeout(_diskTimer); _diskTimer = setTimeout(_flushDisk, 0); }
     } catch { /* no monolith -- already sharded or first run */ }
   })();
   return _diskReady;
