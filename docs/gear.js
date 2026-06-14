@@ -274,10 +274,21 @@ export async function gearFindings(name, server, region, difficulty, className, 
   const topItemInSlot = (sl) => topEntry(fe.perSlotItems.get(sl)); // [name, count] | null
   const recommended = (comboList[0] ? comboList[0][0] : [])
     .map((sl) => { const it = topItemInSlot(sl); return it ? [sl, it[0], it[1]] : null; })
-    .filter(Boolean); // [[slot, itemName, count], ...]
+    .filter(Boolean) // [[slot, itemName, count], ...]
+    // Never tell someone to craft an embellishment they ALREADY run -- the field
+    // keys its combo by slot (Finger1 vs Finger2), so owning the right items in a
+    // differently-labeled slot can leave yourRank unmatched; match by item NAME so
+    // we only ever recommend pieces you don't have. (The "but I have that" bug.)
+    .filter(([, nm]) => !yourEmbItems.includes(nm));
+  // Do you already run the #1 combo's actual ITEMS (regardless of how the field
+  // keys Finger1/Finger2)? If so, you're effectively on the best combo even when
+  // yourRank doesn't match -- don't nag you to switch or craft.
+  const topComboItems = (comboList[0] ? comboList[0][0] : [])
+    .map((sl) => { const it = topItemInSlot(sl); return it && it[0]; }).filter(Boolean);
+  const runsTopItems = topComboItems.length > 0 && topComboItems.every((nm) => yourEmbItems.includes(nm));
   const embCompare = {
     yourCombo: yourCombo, yourRank: yourRank, topCombos: comboList.slice(0, 4),
-    fieldN: fe.n, yourItemsPop: yourItemsPop, topItems: topItems, recommended,
+    fieldN: fe.n, yourItemsPop: yourItemsPop, topItems: topItems, recommended, runsTopItems,
   };
 
   // Holistic per-slot reconciliation: a slot earmarked for an embellishment
@@ -295,9 +306,15 @@ export async function gearFindings(name, server, region, difficulty, className, 
   // Resolve the field's #1 gem's real NAME here (gearFindings is async + already
   // reads item tooltips) so the lever can link it by name, not a generic phrase.
   const fieldTopName = fieldTop.length ? (await itemStats(fieldTop[0][0])).name : null;
+  // Resolve every shown gem id to its real NAME so the audit links the gem, never
+  // a bare numeric id. [name, id, count]; itemStats is cached, so this is cheap.
+  const nameGems = (pairs) => mapLimit(pairs, 4, async ([id, cnt]) =>
+    [(await itemStats(id)).name || `gem ${id}`, id, cnt]);
+  const fieldTopNamed = await nameGems(fieldTop);
+  const yourGemsNamed = await nameGems([...gemCount]);
   const gemInfo = {
     yourGems: gemCount, yourVariety: new Set(myGems).size,
-    fieldTop: fieldTop, fieldTopName,
+    fieldTop: fieldTop, fieldTopName, fieldTopNamed, yourGemsNamed,
     fieldVarietyMed: variety.length ? variety[Math.floor(variety.length / 2)] : null,
   };
   return { rows, swaps: reconciledSwaps, embellishedSlots, restats, embCompare: embCompare, n: fc.n, priority, gems: gemInfo };
@@ -330,6 +347,7 @@ export async function run(log, name, server, region, difficulty, className, spec
     log(`  your embellishment items' popularity among peers: ${ec.yourItemsPop.map(([nm, pop]) => `${nm} (${pop})`).join(", ")}`);
     if (ec.recommended && ec.recommended.length)
       log(`  -> craft the #1 combo's items: ${ec.recommended.map(([sl, nm, cnt]) => `${nm} on ${sl} (${cnt}/${ec.fieldN})`).join(", ")}`);
+    else if (ec.runsTopItems) log("  -> You already run the #1 combo's embellishments. Good.");
     else if (!ec.yourRank) log("  -> Consider matching a top combo above (yours isn't one top performers run).");
   }
 
@@ -337,8 +355,9 @@ export async function run(log, name, server, region, difficulty, className, spec
   const totalGems = [...gi.yourGems.values()].reduce((s, v) => s + v, 0);
   log("");
   log(`Gems: you run ${totalGems} gem(s), ${gi.yourVariety} distinct color(s); peer median ${gi.fieldVarietyMed} distinct.`);
-  log(`  peers' most-used gems (id x count): ${JSON.stringify(gi.fieldTop)}`);
-  log(`  your gems (id x count): ${JSON.stringify(Object.fromEntries(gi.yourGems))}`);
+  const gemList = (named) => named.map(([nm, id, cnt]) => `${wowheadItem(id, nm)} x${cnt}`).join(", ") || "none";
+  log(`  peers' most-used gems: ${gemList(gi.fieldTopNamed)}`);
+  log(`  your gems: ${gemList(gi.yourGemsNamed)}`);
 
   if (ff.swaps.length) {
     log("");
@@ -373,7 +392,7 @@ export function embellishmentRx(gf) {
   if (!gf) return null;
   const emb = gf.embellishedSlots || [];
   const ec = gf.embCompare;
-  const matchesTop = ec && ec.yourRank;            // you already run a top combo
+  const matchesTop = ec && (ec.yourRank || ec.runsTopItems); // run a top combo, or its items
   if (!(emb.length < 2 || (ec && !matchesTop && ec.topCombos && ec.topCombos.length))) return null;
   const top = ec && ec.topCombos && ec.topCombos[0];
   const pop = top ? ` (#1 field combo, ${top[1]}/${ec.fieldN})` : "";

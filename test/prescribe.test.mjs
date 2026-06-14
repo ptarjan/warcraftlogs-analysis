@@ -315,3 +315,14 @@ test("embellishments: already running a top combo -> no finding", () => {
   });
   assert.equal(r, null);
 });
+
+test("embellishments: you OWN the #1 items (slot keyed differently) -> no finding", () => {
+  // The "but I have that" bug: you run the field's #1 items, but the field keys
+  // the combo by a slot label yours doesn't match (Finger1 vs Finger2), so
+  // yourRank is null. runsTopItems + an empty recommended must suppress the nag.
+  const r = embellishmentRx({
+    embellishedSlots: ["Back", "Wrist"],
+    embCompare: EC({ yourCombo: ["Back", "Wrist"], yourRank: null, runsTopItems: true, recommended: [] }),
+  });
+  assert.equal(r, null);
+});
