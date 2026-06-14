@@ -65,7 +65,12 @@ export function overhealLever(you, field) {
 // GCDs), while going dry early is the opposite failure. We don't size it as a DPS%
 // (no clean field-priced delta) -- it's a measured INFO diagnostic the player acts
 // on directly. `you.mana = { endPct, oom (ms into fight or null), wastePct }`.
-export function manaLever(you) {
+// `overhealFlagged` = the OVERHEALING lever actually fired (you spill MORE than the
+// field). It gates the "(see OVERHEALING)" pointer: the old code keyed the "spilling"
+// message off an ABSOLUTE 20% overheal, but the OVERHEALING lever fires on a RELATIVE
+// field+5pp threshold -- so a healer at a field-NORMAL 22% overheal (Teejvoker) got
+// told to "heal smarter (see OVERHEALING)" with no OVERHEALING item in the list.
+export function manaLever(you, overhealFlagged = false) {
   const m = you && you.mana;
   if (!m || m.endPct == null) return [];
   // Ran genuinely DRY: hit ~empty AND finished low (a momentary dip that recovers
@@ -76,18 +81,26 @@ export function manaLever(you) {
       `Smooth your spend (cheaper fillers between damage events, fewer overheals) so you aren't dry when a spike or your cooldowns land.`,
       "measured")];
   }
-  // Lots LEFT: finished with mana to spare. What that MEANS depends on overheal --
-  // "heal more" only recovers HPS if you're EFFICIENT (spare mana you could have
-  // turned into effective healing). If you're already spilling a lot, more casts =
-  // more overheal, not more effective HPS (and it would contradict the OVERHEALING
-  // item). So when overheal is high, spare mana just means mana wasn't your limiter
-  // (your HPS is damage-bound), and the fix is to heal SMARTER, not more.
+  // Lots LEFT: finished with mana to spare. What that MEANS depends on overheal:
   if (m.endPct >= 30) {
-    const spilling = (you.overhealPct || 0) >= 20;
+    const oh = you.overhealPct || 0;
+    // (1) The OVERHEALING lever FIRED -> "heal more" would just overheal; point at it.
+    if (overhealFlagged) {
+      return [finding("Setup", INFO,
+        `MANA: you finished with ~${f(m.endPct, 0)}% mana unspent -- mana wasn't your limiter (your HPS is bounded by the damage taken + overhealing, not mana). The lever isn't "cast more" (you already overheal ${f(oh, 0)}%); it's healing SMARTER -- spend that spare mana on heals that LAND (see OVERHEALING), not more casts into full bars.`,
+        "measured")];
+    }
+    // (2) Genuinely EFFICIENT (low overheal) -> you had headroom to be more aggressive.
+    if (oh < 20) {
+      return [finding("Setup", INFO,
+        `MANA: you finished with ~${f(m.endPct, 0)}% mana unspent (low-water ${f(m.minPct, 0)}%) and you're efficient (only ${f(oh, 0)}% overheal) -- you had headroom to be more aggressive (bigger/earlier casts, cover more of the damage) rather than bank mana. That spare mana is effective healing left on the table.`,
+        "measured")];
+    }
+    // (3) Overheal high in ABSOLUTE terms but NOT flagged above the field (or no field) --
+    // mana isn't the limiter AND your efficiency isn't an outlier, so neither is a lever;
+    // the rest is damage-bound. Don't dangle a "(see OVERHEALING)" that isn't in the list.
     return [finding("Setup", INFO,
-      spilling
-        ? `MANA: you finished with ~${f(m.endPct, 0)}% mana unspent -- mana wasn't your limiter (your HPS is bounded by the damage taken + overhealing, not mana). The lever isn't "cast more" (you already overheal ${f(you.overhealPct, 0)}%); it's healing SMARTER -- spend that spare mana on heals that LAND (see OVERHEALING), not more casts into full bars.`
-        : `MANA: you finished with ~${f(m.endPct, 0)}% mana unspent (low-water ${f(m.minPct, 0)}%) and you're efficient (only ${f(you.overhealPct || 0, 0)}% overheal) -- you had headroom to be more aggressive (bigger/earlier casts, cover more of the damage) rather than bank mana. That spare mana is effective healing left on the table.`,
+      `MANA: you finished with ~${f(m.endPct, 0)}% mana unspent -- mana wasn't your limiter (your HPS is bounded by the damage taken, not mana). Your ${f(oh, 0)}% overheal isn't flagged above the field, so cutting it isn't a separate lever here; the rest of the gap is damage-bound (encounter + comp + assignment). Spend mana when there's real damage to catch, not into full bars.`,
       "measured")];
   }
   return [];
@@ -97,7 +110,8 @@ export function manaLever(you) {
 // Silent for non-healers (a DPS run has overheal 0 and no mana data anyway).
 export function healingLevers(you, field) {
   if (!runIsHealer() || !you) return [];
-  return [...overhealLever(you, field), ...manaLever(you)];
+  const overheal = overhealLever(you, field);                 // fires only ABOVE the field
+  return [...overheal, ...manaLever(you, overheal.length > 0)]; // mana cites OVERHEALING only if it fired
 }
 
 // --- supporting card ---------------------------------------------------------

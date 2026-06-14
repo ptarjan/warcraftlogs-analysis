@@ -50,12 +50,18 @@ test("manaLever: OOM and big leftover mana both fire as measured diagnostics; mi
     // Spare mana while EFFICIENT -> "be more aggressive" (real recoverable HPS).
     const left = manaLever({ overhealPct: 10, mana: { oom: null, endPct: 40, minPct: 35 } });
     assert.match(left[0].text, /more aggressive|headroom/i);
-    // Spare mana while ALREADY OVERHEALING -> NOT "cast more" (it'd overheal); the
-    // honest read is mana wasn't the limiter -> heal smarter. Don't contradict the
-    // OVERHEALING item.
-    const spilling = manaLever({ overhealPct: 35, mana: { oom: null, endPct: 40, minPct: 35 } });
-    assert.match(spilling[0].text, /smarter|wasn't your limiter/i);
+    // Spare mana while the OVERHEALING lever FIRED (overhealFlagged true) -> NOT "cast
+    // more" (it'd overheal); point at OVERHEALING. Don't contradict the OVERHEALING item.
+    const spilling = manaLever({ overhealPct: 35, mana: { oom: null, endPct: 40, minPct: 35 } }, true);
+    assert.match(spilling[0].text, /smarter/i);
+    assert.match(spilling[0].text, /see OVERHEALING/);
     assert.ok(!/more aggressive/.test(spilling[0].text), "don't tell an overhealer to cast more");
+    // High overheal but NOT flagged above the field (overhealFlagged false) -> mana isn't
+    // the limiter AND it's not an outlier; must NOT dangle "(see OVERHEALING)" (Teejvoker).
+    const normalHigh = manaLever({ overhealPct: 22, mana: { oom: null, endPct: 63, minPct: 40 } }, false);
+    assert.match(normalHigh[0].text, /wasn't your limiter/i);
+    assert.doesNotMatch(normalHigh[0].text, /see OVERHEALING/);
+    assert.ok(!/more aggressive/.test(normalHigh[0].text), "field-normal-high overheal -> not 'cast more' either");
     assert.equal(manaLever({ mana: { oom: null, endPct: 10, minPct: 8 } }).length, 0, "spent most of it -> no lever");
     const recovered = manaLever({ mana: { oom: 30000, endPct: 55, minPct: 4 } });   // dipped to 4% but ended 55%
     assert.match(recovered[0].text, /headroom|unspent/i, "ended high -> headroom lever, NOT a 'ran dry' callout");
