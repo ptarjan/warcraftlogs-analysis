@@ -7,6 +7,10 @@ import {
 } from "./core.js";
 import { wowheadItem } from "./links.js";
 
+// Truncate a long item name to fit a fixed table column, with an ellipsis so it
+// reads as abbreviated rather than a name cut off mid-word ("Swiftsweepers of Ra-de").
+const trunc = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + "…" : s);
+
 // Up to n unique top-ranked candidates across the given encounters -- via the
 // shared core.topField so gear and talents select the same players (their
 // per-peer fetches dedupe).
@@ -208,7 +212,7 @@ export async function gearFindings(name, server, region, difficulty, className, 
     const topId = topItem(perSlot[s]);
     let match;
     if (topId === g.id) match = "== peers";
-    else if (topId) match = `peers: ${(await itemStats(topId, bonusSample[topId])).name.slice(0, 22)}`;
+    else if (topId) match = `peers: ${trunc((await itemStats(topId, bonusSample[topId])).name, 22)}`;
     else match = "?";
     rows.push([SLOT[s], ist, match, ist.embellished]);
     if (ist.embellished) { embellishedSlots.push(SLOT[s]); yourEmbItems.push(ist.name); }
@@ -328,7 +332,7 @@ export async function run(log, name, server, region, difficulty, className, spec
   log(`${"SLOT".padEnd(9)} ${"YOUR ITEM".padEnd(30)} ${"crit/hst/mas/ver".padEnd(17)} matches peers?`);
   for (const [slot, ist, match, embellished] of ff.rows) {
     const secs = `${String(ist.crit).padStart(3)}/${String(ist.haste).padStart(3)}/${String(ist.mastery).padStart(3)}/${String(ist.vers).padStart(3)}`;
-    log(`${slot.padEnd(9)} ${ist.name.slice(0, 30).padEnd(30)} ${secs.padEnd(17)} ${match}${embellished ? " [EMBELLISHED]" : ""}`);
+    log(`${slot.padEnd(9)} ${trunc(ist.name, 30).padEnd(30)} ${secs.padEnd(17)} ${match}${embellished ? " [EMBELLISHED]" : ""}`);
   }
   log("");
   log(`Legend: crit/haste/mastery/vers. [EMBELLISHED] = crafted slot carrying an embellishment (you can re-stat it to ${priority}).`);

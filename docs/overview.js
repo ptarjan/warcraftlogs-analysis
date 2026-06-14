@@ -10,7 +10,7 @@ export async function overview(log, name, server, region, difficulty) {
   const c = await characterZone(name, server, region, difficulty);
   const zr = c.zoneRankings;
   log("");
-  log(`=== ${name}-${server} (${region}) | ${DIFFICULTY[difficulty] || difficulty} | zone ${zr.zone} ===`);
+  log(`=== ${name}-${server} (${region}) | ${DIFFICULTY[difficulty] || difficulty} ===`);
   log(`Best-avg %ile: ${f(zr.bestPerformanceAverage, 1)}   Median %ile: ${f(zr.medianPerformanceAverage, 1)}`);
   const killed = [];
   for (const r of (zr.rankings || [])) {
@@ -60,8 +60,10 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
   log(`    active %:     you ${padL(f(you.activePct, 1), 9)}   peer med ${padL(f(pmed("activePct"), 1), 9)}`);
   log(`    targets hit:  you ${padL(you.targets, 9)}   peer med ${padL(f(pmed("targets"), 1), 9)}`);
 
+  // Duration-controlled cut: peers whose kill time is within 40s of yours. Only
+  // worth showing with a few of them -- a "median" of 1-2 just repeats the headline.
   const near = peers.filter((p) => Math.abs(p.dur - you.dur) <= 40).map((p) => p.dps);
-  if (near.length) {
+  if (near.length >= 3) {
     log(`    ${metricUnit()} at your kill-time (+/-40s): you ${f(you.dps, 0)}  vs peer med ${f(median(near), 0)}  (n=${near.length})`);
   }
 
