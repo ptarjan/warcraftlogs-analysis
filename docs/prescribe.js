@@ -30,7 +30,18 @@ async function bestIlvlKill(name, server, region, encounterId, difficulty) {
   const er = await characterEncounter(name, server, region, encounterId, difficulty);
   const best = bestRank(er && er.ranks);
   if (!best) return null;
-  return [best.report.code, best.report.fightID, best.bracketData];
+  return [best.report.code, best.report.fightID, best.bracketData, best.startTime || 0];
+}
+
+// "Current gear" = the most RECENT kill within `band` ilvls of your top, NOT the
+// single highest-ilvl one. A peak-ilvl kill from weeks ago hides the enchant/gem/
+// gear fixes you've made since (the classic stale-snapshot bug -- e.g. "my missing
+// enchants were from weeks ago"). Mirrors core.bestRank, applied across every boss.
+export function pickCurrentKill(kills, band = 1) {
+  if (!kills || !kills.length) return null;
+  const maxIl = Math.max(...kills.map((k) => k.ilvl || 0));
+  return kills.filter((k) => (k.ilvl || 0) >= maxIl - band)
+    .reduce((a, b) => ((b.startTime || 0) > (a.startTime || 0) ? b : a));
 }
 
 async function fieldGearConsumables(encounterId, difficulty, className, specName, targetIlvl, priority = "crit", n = 10) {
@@ -189,7 +200,7 @@ export function latencyLever(execd) {
     `Raise your spell-queue window (Options > Combat, or /console SpellQueueWindow 300-400), cut world latency, and pre-press your next ability so it queues.`)];
 }
 
-export function executionLevers(execd, rot, peerGapPct = null) {
+export function executionLevers(execd, rot, peerGapPct = null, activePct = null) {
   if (!execd) return [];
   const out = [];
   // Size press-faster from the MEASURED cast deficit (you cast N fewer damaging
@@ -223,8 +234,14 @@ export function executionLevers(execd, rot, peerGapPct = null) {
   // a 99%-active, out-casting player with "press faster" buries the real lever:
   // the gap is damage-PER-CAST (stats/gear/trinkets), not pressing. A genuine
   // deficit (speedPct>=3) still fires normally.
+  // If you're essentially always active (high uptime), there's no idle to recover:
+  // "press faster" is contradicted by your OWN uptime -- you can't idle ~2s/min
+  // while 99% active. A cast deficit at high uptime is ability-MIX (defensive or
+  // lower-APM GCDs, or the rotation lever), not idling. Class-agnostic -- catches a
+  // 99.5%-active tank and a 99.2%-active DPS alike, without special-casing roles.
+  const noIdle = activePct != null && activePct >= 98;
   const outpacesField = cg && cg.field > 0 && cg.you >= cg.field;
-  if ((execd.pressExcess >= 1.0 || speedPct >= 3) && !(speedPct < 3 && outpacesField)) {
+  if (!noIdle && (execd.pressExcess >= 1.0 || speedPct >= 3) && !(speedPct < 3 && outpacesField)) {
     const castEst = Math.round(speedPct / 2);
     const headroomCap = (peerGapPct && peerGapPct > 0) ? Math.max(1, Math.ceil(peerGapPct * 0.6)) : Infinity;
     const pct = Math.min(Math.max(idlePct, castEst) || 1, headroomCap, 12);
@@ -376,6 +393,11 @@ function renderPrescription(log, d) {
   if (d.skipped && d.skipped.length) {
     log(`NOTE: partial list -- couldn't load ${d.skipped.join(", ")} (likely the WCL rate limit). This isn't the full picture; re-run when the budget resets for the rest.`);
   }
+  // Staleness: gear/enchant/gem/consumable findings are read off your most recent
+  // kill. If that's not actually recent, the setup findings may already be fixed.
+  if (d.gearAgeDays != null && d.gearAgeDays >= 7) {
+    log(`NOTE: your most recent ${d.difficultyName} kill is ~${d.gearAgeDays} days old (ilvl ${d.curIlvl}). The enchant/gem/gear/consumable findings reflect THAT kill -- if you've enchanted/re-gemmed/upgraded since, some are already done. Re-run after a fresh kill for an accurate setup check.`);
+  }
   if (peerGap != null) {
     const vsField = peerGap > 0 ? `${peerGap}% behind` : `${Math.abs(peerGap)}% ahead of`;
     log(`Measured on ${d.gearBoss.encounter.name}: you (ilvl ~${d.curIlvl}) do ${k(you.dps)} ${metricUnit()} -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
@@ -438,15 +460,20 @@ function renderPrescription(log, d) {
   // unexplained chunk -> flag the list as incomplete; only a SMALL one is plausibly
   // sim/variance.
   if (gap > 0 && residual >= 1) {
+    const r = Math.round(residual);
+    // PRECEDENCE BY SIZE FIRST. A big remainder is the analysis admitting it can't
+    // explain the gap -- it must NEVER be relabeled "press faster" (you can't
+    // attribute 17% to a press-faster lever that's worth 4%). Only a small remainder
+    // with a real cast deficit is credibly "press a bit faster".
     const underPress = (rot && rot.castGap && rot.castGap.field > rot.castGap.you)
       || (execd && execd.pressExcess >= 1 && !outpaces);
     let rtext;
-    if (underPress) {
-      rtext = `THE REMAINDER (~${Math.round(residual)}%): not a setup item -- it's GCD uptime and hitting your priority on more pulls (see the measured cast/idle gaps above). That's where the rest of your gap lives.`;
-    } else if (residual >= 8) {
-      rtext = `UNEXPLAINED (~${Math.round(residual)}%): the analysis can't attribute this much of your gap -- a chunk this big usually means a lever we're NOT measuring (a trinket/proc, a cooldown, a damage source) rather than pure variance. Treat the list above as incomplete; a Droptimizer sim will expose what's missing.`;
+    if (residual >= 8) {
+      rtext = `UNEXPLAINED (~${r}%): the analysis can't attribute this much of your gap -- a chunk this big usually means a lever we're NOT measuring (a trinket/proc, a cooldown, a damage source) or a stale/mismatched benchmark, NOT "press faster". Treat the list above as incomplete; a sim (Droptimizer) is the honest next step, not grinding your rotation.`;
+    } else if (underPress) {
+      rtext = `THE REMAINDER (~${r}%): not a setup item -- it's GCD uptime and hitting your priority on more pulls (see the measured cast/idle gaps above). That's where the rest of your gap lives.`;
     } else {
-      rtext = `THE REMAINDER (~${Math.round(residual)}%): small and unattributed -- sim-only tuning (exact trinket/stat effect sizes) and kill-to-kill variance. No single button.`;
+      rtext = `THE REMAINDER (~${r}%): small and unattributed -- sim-only tuning (exact trinket/stat effect sizes) and kill-to-kill variance. No single button.`;
     }
     renderYou.push({ dim: "Execution", impact: residual, label: pctLabel(residual), text: rtext });
   }
@@ -485,14 +512,17 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const topParse = ranks.reduce((a, b) => ((a.rankPercent || 0) >= (b.rankPercent || 0) ? a : b));
   const bestP = Math.round(topParse.rankPercent || 0);
 
-  // Highest-ilvl kill = current gear.
+  // Current gear = the most RECENT kill near your top ilvl (NOT the single highest-
+  // ilvl one, which can be weeks old and hide enchant/gem fixes you've made since).
   const kills = [];
   for (const r of ranks) {
     const bk = await bestIlvlKill(name, server, region, r.encounter.id, difficulty);
-    if (bk) kills.push({ ilvl: bk[2] || 0, boss: r, code: bk[0], fight: bk[1] });
+    if (bk) kills.push({ ilvl: bk[2] || 0, boss: r, code: bk[0], fight: bk[1], startTime: bk[3] || 0 });
   }
-  kills.sort((a, b) => b.ilvl - a.ilvl);
-  const { ilvl: curIlvl, boss: gearBoss, code, fight } = kills[0];
+  const { ilvl: curIlvl, boss: gearBoss, code, fight, startTime: gearKillStart } = pickCurrentKill(kills);
+  // How old is that gear snapshot? Enchant/gem/gear/consumable findings reflect THIS
+  // kill, so if it's stale, say so -- some may already be fixed.
+  const gearAgeDays = gearKillStart ? Math.floor((Date.now() - gearKillStart) / 86400000) : null;
   // Stat priority derived from what the field stacks -- never hard-coded. The
   // caller (app/CLI) already detected it; reuse it instead of re-sampling the
   // field's secondary stats (a whole peer fetch) again.
@@ -538,7 +568,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const trinketRx = (field && my) ? await trinketLevers(field, my) : [];
   /** @type {Finding[]} */
   const rx = [
-    ...executionLevers(execd, rot, peerGapPct),
+    ...executionLevers(execd, rot, peerGapPct, you && you.activePct),
     ...(field && my ? consumableLevers(field, my) : []),
     ...(field && my ? enchantLevers(field, my) : []),
     ...trinketRx,
@@ -553,7 +583,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   renderPrescription(log, {
     name, server, className, specName, curIlvl, gearBoss,
     difficultyName: DIFFICULTY[difficulty] || `difficulty ${difficulty}`,
-    medP, bestP, topParse, nBosses: ranks.length,
+    medP, bestP, topParse, nBosses: ranks.length, gearAgeDays,
     you, field, execd, rot, tp, gf, priority, rx, skipped,
   });
 }

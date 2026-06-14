@@ -8,7 +8,7 @@ import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
 const { DPS, COMP, INFO } = await import("../docs/core.js");          // shared Finding currency
-const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts } = await import("../docs/prescribe.js");
+const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill } = await import("../docs/prescribe.js");
 const { embellishmentRx, gemLever } = await import("../docs/gear.js");          // gear-domain lever
 
 test("executionLevers: press-faster doesn't pipe the raw cast gap into DPS%", () => {
@@ -68,6 +68,18 @@ test("executionLevers: a genuine cast deficit still fires press-faster", () => {
   assert.match(press.text, /PRESS FASTER/);
 });
 
+test("executionLevers: no press-faster when your uptime is already ~99% (no idle to recover)", () => {
+  // A 99%-active player with a cast deficit (47 vs 51) can't be idling -- the
+  // deficit is ability-mix (defensive/lower-APM GCDs), not idle gaps. Pass active%.
+  const execd = { pressExcess: 2.0, rangeExcess: 0, worstRange: [], overshootExcess: 0 };
+  const rot = { castGap: { you: 47, field: 51, pct: 8 } };
+  const high = executionLevers(execd, rot, 49, 99.5);
+  assert.ok(!high.some((r) => /PRESS FASTER/.test(r.text)), "99.5% active -> no press-faster");
+  // Same player but genuinely idle (low active%) -> press-faster fires.
+  const low = executionLevers(execd, rot, 49, 90);
+  assert.ok(low.some((r) => /PRESS FASTER/.test(r.text)), "90% active -> press-faster fires");
+});
+
 test("trinketLevers: fires on a real consensus, sized by it; silent on a split field", async () => {
   // Trinkets are effect-based -- gear.js skips them -- so this lever flags a
   // trinket most ilvl-matched peers run that you lack, as a "sim it" candidate.
@@ -101,6 +113,24 @@ test("trinketLevers: fires on a real consensus, sized by it; silent on a split f
   // Too small a field sample -> not enough signal, stays silent (no false positive).
   const tiny = { n: 3, trinkets: new Map([[1001, { name: "X", count: 3 }]]) };
   assert.equal((await trinketLevers(tiny, { trinketIds: new Set(), trinkets: [] })).length, 0);
+});
+
+test("pickCurrentKill: most recent within the ilvl band, not the stale peak", () => {
+  // The classic stale-snapshot bug: a peak-ilvl kill from weeks ago must NOT be
+  // read as 'current gear' when a near-peak kill from last night exists -- else
+  // enchant/gem fixes made since are hidden.
+  const recentNearPeak = pickCurrentKill([
+    { ilvl: 290, startTime: 100, boss: "old-peak" },
+    { ilvl: 289, startTime: 900, boss: "last-night" },
+  ]);
+  assert.equal(recentNearPeak.boss, "last-night");
+  // But a recent kill from much LOWER gear (outside the band) isn't 'current'.
+  const ignoresAltGear = pickCurrentKill([
+    { ilvl: 290, startTime: 100, boss: "main" },
+    { ilvl: 283, startTime: 900, boss: "alt-or-old-tier" },
+  ]);
+  assert.equal(ignoresAltGear.boss, "main");
+  assert.equal(pickCurrentKill([]), null);
 });
 
 test("reconcileImpacts: concrete fixes + residual always sum to the target (the gap)", () => {
