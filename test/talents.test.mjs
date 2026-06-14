@@ -2,7 +2,32 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 installLocalStorage();
-const { talentDiff, buildTalentIndex, talentLabel, looksLikeDpsTalent, heroSwitch } = await import("../docs/talents.js");
+const { talentDiff, buildTalentIndex, talentLabel, looksLikeDpsTalent, heroSwitch, talentDamageShare } = await import("../docs/talents.js");
+
+test("talentDamageShare: a damage talent is worth its MEASURED share of the field's damage", () => {
+  // Three peers run node 7 ("Empty the Cellar") and it does ~3% of each one's total;
+  // measured value = the median share (no sim, no confound).
+  const peers = [
+    { map: new Map([[7, { id: 1 }]]), dmgBy: { "Empty the Cellar": 300, Other: 9700 }, total: 10000 },
+    { map: new Map([[7, { id: 1 }]]), dmgBy: { "Empty the Cellar": 280, Other: 9720 }, total: 10000 },
+    { map: new Map([[7, { id: 1 }]]), dmgBy: { "Empty the Cellar": 320, Other: 9680 }, total: 10000 },
+  ];
+  assert.equal(talentDamageShare(peers, 7, "Empty the Cellar"), 3);
+});
+
+test("talentDamageShare: null for a passive/buff talent (no matching damage ability)", () => {
+  const peers = [
+    { map: new Map([[7, { id: 1 }]]), dmgBy: { Other: 10000 }, total: 10000 },
+    { map: new Map([[7, { id: 1 }]]), dmgBy: { Other: 10000 }, total: 10000 },
+    { map: new Map([[7, { id: 1 }]]), dmgBy: { Other: 10000 }, total: 10000 },
+  ];
+  assert.equal(talentDamageShare(peers, 7, "Some Passive"), null);
+});
+
+test("talentDamageShare: null when too few peers run it to measure", () => {
+  const peers = [{ map: new Map([[7, { id: 1 }]]), dmgBy: { X: 300 }, total: 10000 }];
+  assert.equal(talentDamageShare(peers, 7, "X"), null);
+});
 
 test("buildTalentIndex pulls out the hero subtree (choice node + its nodes)", () => {
   const spec = {

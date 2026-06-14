@@ -173,15 +173,18 @@ export async function run(log, name, server, region, className, specName, diffic
 // the raid-comp amps your kill is missing, damage routing, and potion timing
 // from the actual top parses -- as the shared { dim, impact, label, text }
 // currency. Comp gaps are raid-dependent ("Comp"); potions are yours ("Setup").
-export function topParseLevers(tp) {
+export function topParseLevers(tp, compDeltas = null) {
   if (!tp) return [];
   const out = [];
   // Raid-comp amps missing from your kill (a buff on you / debuff on the boss).
-  // You can't press these -- it's who's in the raid -- sized by the effect's value.
-  // Per-line text stays terse -- the "Raid comp" section header already explains
-  // these are roster gaps, not execution, so don't repeat that on every row.
+  // You can't press these -- it's who's in the raid. Sized from the field when we
+  // measured it (peers who had the amp vs not -- a confounded floor, capped so a
+  // raid-quality outlier can't swamp the gap reconciliation) else the curated value.
   for (const e of (tp.comp ? tp.comp.missing : [])) {
-    out.push(finding("Comp", COMP(e.est), `Missing ${wowheadSpell(e.spell, e.label)} (${e.effect}) — bring ${e.who}.`));
+    const cd = compDeltas && compDeltas[e.key];
+    const pct = cd ? Math.min(e.est + 4, Math.max(1, Math.round(cd.pct))) : e.est;
+    const cite = cd ? ` (measured: peers with it do ${Math.round(cd.pct)}% more, n=${cd.nHave}/${cd.nNot})` : "";
+    out.push(finding("Comp", COMP(pct), `Missing ${wowheadSpell(e.spell, e.label)} (${e.effect}) — bring ${e.who}.${cite}`, cd ? "measured" : "est"));
   }
   // Damage routing: measured extra cleave/funnel the top parses get.
   const route = tp.routing ? tp.routing.top - tp.routing.you : 0;

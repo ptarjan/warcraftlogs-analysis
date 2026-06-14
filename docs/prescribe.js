@@ -15,7 +15,7 @@ import { gearFindings, gearLevers, itemInstance, sourceText } from "./gear.js";
 import { wowheadSpell, wowheadItem, wclReport } from "./links.js";
 import { rotationFindings, rotationLevers, castable } from "./rotation.js";
 import { talentFindings, talentLevers } from "./talents.js";
-import { topParseFindings, topParseLevers } from "./topparse.js";
+import { topParseFindings, topParseLevers, RAID_DAMAGE } from "./topparse.js";
 
 const SLOT_NAME = ENCHANTABLE_SLOTS;
 
@@ -157,8 +157,28 @@ async function fieldGearConsumables(name, server, region, encounter, difficulty,
                  - median(withRating.filter((x) => x.r < medR).map((x) => x.r));
     if (sd && spread > 0) statValue = { pct: sd.pct, perRating: sd.pct / spread, nHave: sd.nHave, nNot: sd.nNot };
   }
+  // Gem-choice value: peers running the field's most-common gem vs not (measured
+  // like a consumable -- no fragile per-rating math, and the net stat-redistribution
+  // is baked in because it's a real you-vs-the-field DPS delta).
+  const gemTally = new Map();
+  for (const { m } of peers) for (const g of (m.gear || [])) for (const gm of (g.gems || [])) if (gm.id) gemTally.set(gm.id, (gemTally.get(gm.id) || 0) + 1);
+  let gemDelta = null;
+  if (gemTally.size) {
+    const topGem = [...gemTally.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    gemDelta = fieldDelta(dps, peers.map((p) => (p.m.gear || []).some((g) => (g.gems || []).some((gm) => gm.id === topGem))));
+  }
+  // Raid-comp amp values from the SAME ilvl field: peers who had each self-buff vs
+  // not. A measured floor (confounded -- a raid that brings an Aug also plays well),
+  // null where there's no counterfactual -> the curated estimate stands. Boss-side
+  // debuffs (Chaos Brand, Mystic Touch) aren't fetched per peer, so they keep the est.
+  const compDeltas = {};
+  for (const e of RAID_DAMAGE) {
+    if (e.on !== "self") continue;
+    const d = fieldDelta(dps, peers.map((p) => Object.entries(p.bf || {}).some(([nm, b]) => e.match.test(nm) && b.pct > 1)));
+    if (d) compDeltas[e.key] = d;
+  }
   return {
-    enchBySlot, trinkets, flasks, foods, potions, augRunes, oils, guids, deltas, topDeltas, statDelta, statValue,
+    enchBySlot, trinkets, flasks, foods, potions, augRunes, oils, guids, deltas, topDeltas, statDelta, statValue, gemDelta, compDeltas,
     statPct: statPcts.length ? median(statPcts) : null, n: peers.length,
     dpsMed: peers.length ? median(peers.map((p) => p.m.dps)) : null, // measured field DPS
   };
@@ -768,11 +788,11 @@ export async function run(log, name, server, region, className = "Monk", specNam
     ...(field && my ? consumableLevers(field, my) : []),
     ...(field && my ? enchantLevers(field, my) : []),
     ...trinketRx,
-    ...gearLevers(gf, priority, field && field.statValue),
+    ...gearLevers(gf, priority, field && field.statValue, field && field.gemDelta),
     ...(my ? statGapLever(gf, my, field, priority) : []),
     ...rotationLevers(rot),
     ...talentLevers(tal),
-    ...topParseLevers(tp),
+    ...topParseLevers(tp, field && field.compDeltas),
   ];
   rx.sort((a, b) => b.impact - a.impact);
 

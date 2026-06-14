@@ -10,7 +10,7 @@
 // node `id`, and WCL `id` === Raidbots entry `id`, which carries the real name +
 // spellId. We match the spec by CombatantInfo.specID === Raidbots specId.
 import { spellTooltip } from "./wcl.js";
-import { reportCore, playerMetrics, topField, mapLimit, f, bestKill, DPS, finding } from "./core.js";
+import { reportCore, playerMetrics, topField, mapLimit, median, f, bestKill, DPS, finding } from "./core.js";
 import { wowheadSpell } from "./links.js";
 
 const TALENTS_URL = "https://www.raidbots.com/static/data/live/talents.json";
@@ -161,14 +161,33 @@ async function loadout(code, fight, sourceId) {
   return { map, specID: e.specID };
 }
 
+// Each field kill's talent map PLUS its per-ability damage (dmgBy) and total -- so a
+// missing DAMAGE talent can be priced by the field's MEASURED damage share from it
+// (the ability's damage / their total), which is unconfounded, instead of a guess.
 async function fieldLoadouts(encounterId, difficulty, className, specName, n = 10) {
   const cands = await topField(className, specName, difficulty, encounterId, n + 3);
   const outs = await mapLimit(cands, 5, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
     const lo = m ? await loadout(r.report.code, r.report.fightID, m.sourceID) : null;
-    return lo ? lo.map : null;
+    return lo ? { map: lo.map, dmgBy: m.dmgBy, total: m.total } : null;
   });
   return outs.filter(Boolean).slice(0, n);
+}
+
+// MEASURED value of taking a damage talent: among field peers who run it, the
+// median share of their total damage that the talent's ability deals. That IS what
+// the talent is worth on your parse, read straight from the logs -- no sim, no
+// confound (it's the ability's own damage, not "good players take it"). null for a
+// passive/buff talent (no matching damage ability) or too few peers -> keep the est.
+export function talentDamageShare(peers, node, abilityName, { minPeers = 3 } = {}) {
+  if (!abilityName) return null;
+  const shares = [];
+  for (const p of peers || []) {
+    if (!p.map.has(node) || !(p.total > 0) || !p.dmgBy) continue;
+    const dmg = p.dmgBy[abilityName] || 0;
+    if (dmg > 0) shares.push(100 * dmg / p.total);
+  }
+  return shares.length >= minPeers ? median(shares) : null;
 }
 
 // The abilities a player has TALENTED on a fight, plus the full set of ability
@@ -234,23 +253,29 @@ export async function talentFindings(name, server, region, className, specName, 
     return pick ? idx.heroByEntry.get(pick.id) || null : null;
   };
   const heroCounts = new Map();
-  for (const lo of peers) { const h = heroName(lo); if (h) heroCounts.set(h, (heroCounts.get(h) || 0) + 1); }
+  for (const p of peers) { const h = heroName(p.map); if (h) heroCounts.set(h, (heroCounts.get(h) || 0) + 1); }
   const heroField = [...heroCounts.entries()].sort((a, b) => b[1] - a[1])
     .map(([name, ct]) => ({ name, pct: 100 * ct / peers.length }));
   const hero = heroField.length ? { yours: heroName(you.map), field: heroField } : null;
 
   // Per-talent diff on the NON-hero nodes only.
   const fieldCount = new Map(); // nodeID -> {count, id}
-  for (const lo of peers) for (const [node, info] of lo) {
+  for (const p of peers) for (const [node, info] of p.map) {
     if (heroNodes.has(node)) continue;
     const cur = fieldCount.get(node) || { count: 0, id: info.id };
     cur.count++; fieldCount.set(node, cur);
   }
   const youReg = new Map([...you.map].filter(([node]) => !heroNodes.has(node)));
   const d = talentDiff(youReg, fieldCount, peers.length);
-  // Name each node, then tag whether it's a DPS talent (vs utility/defensive) so
-  // the prescription only ever recommends throughput.
-  const tag = async (t) => { const n = { ...t, ...talentLabel(idx, t.node, t.id) }; n.dps = await isDpsTalent(n.spellId); return n; };
+  // Name each node, tag whether it's a DPS talent (vs utility/defensive) so we only
+  // recommend throughput, and MEASURE a damage talent's value = the field's damage
+  // share from its ability (unconfounded; null for passives -> caller keeps the est).
+  const tag = async (t) => {
+    const n = { ...t, ...talentLabel(idx, t.node, t.id) };
+    n.dps = await isDpsTalent(n.spellId);
+    n.value = n.dps ? talentDamageShare(peers, t.node, n.name) : null;
+    return n;
+  };
   const missing = await mapLimit(d.missing, 5, tag);
   const offMeta = await mapLimit(d.offMeta, 5, tag);
   return {
@@ -283,10 +308,18 @@ export function talentLevers(tf) {
   // field happens to take unanimously.
   const top = tf ? tf.missing.filter((t) => t.dps && t.adopt >= 0.6).slice(0, 3) : [];
   if (top.length) {
-    const est = Math.min(2 + top.length, 6);
-    out.push(finding("Rotation", DPS(est),
+    // MEASURED when we could read each talent's field damage share; sum them (you'd
+    // gain roughly that share). Else the old flat estimate. Honestly tagged either way.
+    const measured = top.map((t) => t.value).filter((v) => v != null);
+    const allMeasured = measured.length === top.length;
+    const pct = allMeasured ? Math.max(1, Math.round(measured.reduce((a, b) => a + b, 0))) : Math.min(2 + top.length, 6);
+    const cite = allMeasured
+      ? ` (measured: ${top.map((t) => `${t.name} is ${f(t.value, 1)}% of the field's damage`).join(", ")})`
+      : "";
+    out.push(finding("Rotation", DPS(pct),
       `TALENTS: peers on ${tf.boss} take the damage talent${top.length > 1 ? "s" : ""} ${top.map((t) => `${wowheadSpell(t.spellId, t.name)} (${f(100 * t.adopt, 0)}%)`).join(", ")} ` +
-      `that you don't -- swap to the meta build for this content (confirm in a sim/guide).`));
+      `that you don't -- swap to the meta build for this content (confirm in a sim/guide).${cite}`,
+      allMeasured ? "measured" : "est"));
   }
   return out;
 }

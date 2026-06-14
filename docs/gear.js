@@ -442,7 +442,7 @@ export function embellishmentRx(gf) {
 // run it, or you split across more colors than peers (not stacking your best
 // stat), say so and link the field's gem. Pure -- unit-tested. Returns [] when
 // your gems already line up (or there's no field data to compare against).
-export function gemLever(gf) {
+export function gemLever(gf, gemDelta = null) {
   if (!gf || !gf.gems) return [];
   const gi = gf.gems;
   const fieldTopId = gi.fieldTop && gi.fieldTop[0] && gi.fieldTop[0][0];
@@ -461,7 +461,10 @@ export function gemLever(gf) {
   const msg = overVariety
     ? `GEMS: you run ${gi.yourVariety} gem colors vs the field's ${gi.fieldVarietyMed} -- you're splitting stats instead of stacking. Consolidate toward ${link}. Gems are the cheapest stat change there is.`
     : `GEMS: your main gem isn't the one most of the field runs -- re-socket toward ${link}. Gems are the cheapest stat change there is.`;
-  return [finding("Gear", DPS(1, 2), msg)];
+  // Measured value: peers running the field's gem vs not (same natural experiment
+  // as a consumable swap). Falls back to the flat estimate with no counterfactual.
+  const cite = gemDelta ? ` (measured: peers on the field's gem do ${Math.round(gemDelta.pct)}% more, n=${gemDelta.nHave}/${gemDelta.nNot})` : "";
+  return [finding("Gear", gemDelta ? DPS(Math.max(1, Math.round(gemDelta.pct))) : DPS(1, 2), msg + cite, gemDelta ? "measured" : "est")];
 }
 
 // A stat-gain lever's size scales with the ACTUAL rating gained, so a +260 swap
@@ -495,7 +498,7 @@ export function statValueScore(gain, statValue) {
 }
 
 // All gear levers as findings: priority-stat drop swaps, re-stats, embellishment.
-export function gearLevers(gf, priority, statValue = null) {
+export function gearLevers(gf, priority, statValue = null, gemDelta = null) {
   if (!gf) return [];
   const PRI = priority.toUpperCase();
   const out = [];
@@ -535,6 +538,6 @@ export function gearLevers(gf, priority, statValue = null) {
   }
   const embRx = embellishmentRx(gf);
   if (embRx) out.push(embRx);
-  out.push(...gemLever(gf));
+  out.push(...gemLever(gf, gemDelta));
   return out;
 }
