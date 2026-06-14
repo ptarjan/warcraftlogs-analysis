@@ -796,18 +796,23 @@ export async function topField(className, specName, difficulty, encounters, limi
 const DIFF_ORDER = [5, 4, 3, 2]; // Mythic -> LFR; pick the highest with kills.
 
 // Read class + spec from the character's best kill of an encounter.
+// Class/spec the player actually played on a SPECIFIC kill, read from the DamageDone
+// table icon (e.g. "Monk-Brewmaster"). Shares the loader's unfiltered table, so this
+// detect-phase read doesn't fetch the same kill's table again later.
+async function specOfKill(name, code, fight) {
+  let data;
+  try { data = (await reportCore(code, fight)).dmg.data; } catch (e) { return null; }
+  const e = (data.entries || []).find((x) => x.name === name);
+  if (!e) return null;
+  const icon = String(e.icon || "");
+  return { className: e.type, specName: icon.includes("-") ? icon.split("-")[1] : null };
+}
+
 async function classSpecFromKill(name, server, region, encounterId, difficulty) {
   const er = await characterEncounter(name, server, region, encounterId, difficulty);
   const best = bestRank(er && er.ranks);
   if (!best) return null;
-  // Share the loader's unfiltered DamageDone table -- so this detect-phase read
-  // doesn't fetch the same kill's table again later.
-  let data;
-  try { data = (await reportCore(best.report.code, best.report.fightID)).dmg.data; } catch (e) { return null; }
-  const e = (data.entries || []).find((x) => x.name === name);
-  if (!e) return null;
-  const icon = String(e.icon || ""); // e.g. "Monk-Brewmaster"
-  return { className: e.type, specName: icon.includes("-") ? icon.split("-")[1] : null };
+  return specOfKill(name, best.report.code, best.report.fightID);
 }
 
 // Highest difficulty the character has kills in, plus their class/spec.
@@ -820,15 +825,29 @@ export async function detectContext(name, server, region) {
     if (killed.length) { found = { difficulty: d, zr: c.zoneRankings, killed }; break; }
   }
   if (!found) throw new Error(`No ranked kills found for ${name}-${server} (${region}).`);
-  // Prefer a DPS/tank spec over a healing one: a player who flexes heal+DPS (e.g.
-  // a Holy/Shadow Priest) should be analyzed on their DPS spec, not skipped as a
-  // healer. Only fall back to a healer spec if that's ALL they ever play.
+  // Anchor the spec on the SAME kill the rest of the analysis uses -- bestKill, the
+  // most-recent current-gear kill that gear/rotation read. A spec-flexer whose most
+  // recent kill is spec B must NOT be detected as spec A off an older high parse:
+  // that compares B's casts to A's peers and yields nonsense (e.g. telling an Unholy
+  // DK to "press Obliterate" -- a Frost ability the spec doesn't have).
   let cs = null, healerCs = null;
-  for (const r of found.killed) {
-    const got = await classSpecFromKill(name, server, region, r.encounter.id, found.difficulty);
-    if (!got || !got.specName) continue;
-    if (!isHealer(got.specName)) { cs = got; break; }
-    healerCs = healerCs || got;
+  try {
+    const bk = await bestKill(name, server, region, found.difficulty);
+    if (bk) {
+      const got = await specOfKill(name, bk.code, bk.fight);
+      if (got && got.specName) { if (isHealer(got.specName)) healerCs = got; else cs = got; }
+    }
+  } catch (e) { /* fall through to the per-encounter scan */ }
+  // Prefer a DPS/tank spec over a healing one: a player who flexes heal+DPS (e.g. a
+  // Holy/Shadow Priest) is analyzed on their DPS spec, not skipped as a healer. Only
+  // fall back to a healer spec if that's ALL they ever play.
+  if (!cs) {
+    for (const r of found.killed) {
+      const got = await classSpecFromKill(name, server, region, r.encounter.id, found.difficulty);
+      if (!got || !got.specName) continue;
+      if (!isHealer(got.specName)) { cs = got; break; }
+      healerCs = healerCs || got;
+    }
   }
   cs = cs || healerCs;
   if (!cs || !cs.specName) throw new Error("Couldn't determine class/spec from your kills.");

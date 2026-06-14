@@ -3,10 +3,12 @@
 // old high-ilvl kill. bestRank is pure (no network).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { installLocalStorage } from "./helpers.mjs";
+import { installLocalStorage, mockFetch } from "./helpers.mjs";
 
+process.env.WCL_CLIENT_ID = "x";
+process.env.WCL_CLIENT_SECRET = "y";
 installLocalStorage();
-const { bestRank, isHealer, metricForSpec, setRunMetric, runMetric, metricUnit, runIsHealer, eventTable, DPS, collectUpTo } = await import("../docs/core.js");
+const { bestRank, isHealer, metricForSpec, setRunMetric, runMetric, metricUnit, runIsHealer, eventTable, DPS, collectUpTo, detectContext } = await import("../docs/core.js");
 
 test("collectUpTo: stops once n succeed; only fetches the buffer to backfill failures", async () => {
   // 13 candidates, all succeed -> reach n=10 in two waves of 5; the 3-candidate
@@ -112,4 +114,46 @@ test("rotation builds its ability list from the sourceID-filtered table, not the
   const src = readFileSync(fileURLToPath(new URL("../docs/rotation.js", import.meta.url)), "utf8");
   assert.match(src, /playerAbilities\s*\(/, "rotation must use core.playerAbilities (full, sourceID-filtered list)");
   assert.doesNotMatch(src, /reportCore\([^)]*\)\s*\)\s*\.dmg\.data\.entries/, "must not read the truncated unfiltered dmg entries for abilities");
+});
+
+// A spec-flexer must be detected on the spec they ACTUALLY PLAYED on the kill the
+// analysis uses (bestKill = the most-recent current-gear kill), not on an older,
+// higher-parsing spec. The bug: an Unholy DK whose most-recent kill is Unholy was
+// detected as Frost off a stale 90th-pct parse, then the rotation compared his Unholy
+// casts to FROST peers and told him to "press Obliterate" -- an ability Unholy lacks.
+test("detectContext: a spec-flexer is detected on the most-recent kill's spec, not an older parse", async () => {
+  const NAME = "Flexer";
+  process.env.WCL_ALLOW_FETCH = "1";   // permit the mock fetch (cache misses would otherwise throw)
+  // enc 1 = an OLD Frost kill that parsed 90th; enc 2 = a MORE-RECENT Unholy kill that
+  // parsed 50th. Same ilvl, so bestKill picks the most recent (enc 2 / Unholy).
+  globalThis.fetch = mockFetch([
+    ["oauth/token", { json: { access_token: "t", expires_in: 3600 } }],
+    ["/api/v2/", (u, opts) => {
+      const q = JSON.parse(opts.body).query || "";
+      if (/zoneRankings/.test(q)) return { json: { data: { characterData: { character: { id: 1, classID: 6, zoneRankings: {
+        zone: 1, bestPerformanceAverage: 70, medianPerformanceAverage: 50, rankings: [
+          { encounter: { id: 1, name: "B1" }, totalKills: 1, rankPercent: 90, bracketData: 480 },
+          { encounter: { id: 2, name: "B2" }, totalKills: 1, rankPercent: 50, bracketData: 480 },
+        ] } } } } } };
+      if (/encounterRankings/.test(q)) {
+        const eid = (q.match(/encounterID:\s*(\d+)/) || [])[1];
+        const ranks = eid === "2"
+          ? [{ bracketData: 480, rankPercent: 50, startTime: 100, report: { code: "UNHOLY2", fightID: 1 }, duration: 2e5 }]
+          : [{ bracketData: 480, rankPercent: 90, startTime: 1, report: { code: "FROST1", fightID: 1 }, duration: 2e5 }];
+        return { json: { data: { characterData: { character: { encounterRankings: { ranks } } } } } };
+      }
+      if (/reportData/.test(q)) {
+        const code = (q.match(/report\(\s*code:\s*"([^"]+)"/) || [])[1] || "";
+        const spec = code.includes("UNHOLY") ? "Unholy" : "Frost";
+        const report = { dmg: { data: { totalTime: 2e5, entries: [
+          { name: NAME, id: 1, type: "DeathKnight", icon: `DeathKnight-${spec}`, itemLevel: 480, total: 1e7 },
+        ], auras: [] } } };
+        return { json: { data: { reportData: { report } } } };
+      }
+      return { json: { data: {} } };
+    }],
+  ]);
+  const ctx = await detectContext(NAME, "s", "US");
+  assert.equal(ctx.className, "DeathKnight");
+  assert.equal(ctx.specName, "Unholy", "detected the most-recent kill's spec (Unholy), not the older Frost parse");
 });
