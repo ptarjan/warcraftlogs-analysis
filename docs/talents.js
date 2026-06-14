@@ -90,7 +90,17 @@ export function talentDiff(youSet, fieldCount, fieldN, missThresh = 0.6, offThre
 export function looksLikeDpsTalent(tooltipText) {
   const t = String(tooltipText || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").toLowerCase();
   const off = t.replace(/damage (taken|reduction)|(reduces?|reducing|less)[^.]{0,40}damage|damage[^.]{0,20}(reduced|taken)/g, " ");
-  return /% of (attack|spell) power|(increased|additional|extra|bonus) damage|damage (dealt|done)|deals?\s+\d|inflicts?\s+\d|increases?[^.]{0,40}(damage|critical strike|\bcrit\b|\bhaste\b|mastery|versatil|attack power|spell power|\bagility\b|\bstrength\b|\bintellect\b)|\d+%[^.]{0,30}\bdamage\b/.test(off);
+  const dpsy = /% of (attack|spell) power|(increased|additional|extra|bonus) damage|damage (dealt|done)|deals?\s+\d|inflicts?\s+\d|increases?[^.]{0,40}(damage|critical strike|\bcrit\b|\bhaste\b|mastery|versatil|attack power|spell power|\bagility\b|\bstrength\b|\bintellect\b)|\d+%[^.]{0,30}\bdamage\b/.test(off);
+  if (!dpsy) return false;
+  // HEALING/absorb effects scale with Spell Power too ("231% of Spell Power" of HEALING),
+  // so the "% of spell power" / stat cues above misfire on them -- Chain Heal and Earth
+  // Shield read as DPS talents and got recommended to a DPS player as a respec. A talent
+  // that heals/absorbs but never DEALS damage is utility, not throughput. (Detect heals by
+  // "heal/healing/absorb" -- NOT "shield", which is in DPS ability names like Shield of the
+  // Righteous; hybrids that both heal AND deal damage keep their damage clause and stay in.)
+  const heals = /\bheals?\b|\bhealing\b|\babsorbs?\b/.test(t);
+  const dealsDamage = /\b(deal|deals|dealing|inflict|inflicts|inflicting)\b[^.]{0,40}\bdamage\b|damage (dealt|done)|(increased|additional|extra|bonus) damage/.test(off);
+  return !(heals && !dealsDamage);
 }
 
 // Does a talent (by spell id) add damage? Reads the Wowhead tooltip, classifies
@@ -99,7 +109,7 @@ const _dpsCache = new Map();
 async function isDpsTalent(spellId) {
   if (!spellId) return false;
   if (_dpsCache.has(spellId)) return _dpsCache.get(spellId);
-  const ck = "taldps2:" + spellId; // "2" bumps the namespace past v1-classified entries
+  const ck = "taldps3:" + spellId; // "3" re-classifies past v2 entries that mislabeled Spell-Power HEALS (Chain Heal/Earth Shield) as DPS
   try { const c = localStorage.getItem(ck); if (c !== null && c !== undefined) { const v = c === "1"; _dpsCache.set(spellId, v); return v; } } catch (e) { /* ignore */ }
   let dps = false;
   try { const d = await spellTooltip(spellId); dps = looksLikeDpsTalent(d && d.tooltip); } catch (e) { dps = false; }

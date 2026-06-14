@@ -71,6 +71,16 @@ test("looksLikeDpsTalent keeps damage talents, even hybrids that ALSO heal/shiel
   assert.equal(looksLikeDpsTalent("Increases your Haste by 15%."), true);                 // a throughput stat
 });
 
+test("looksLikeDpsTalent drops HEALING spells that scale with Spell Power (not DPS talents)", () => {
+  // Real tooltips: heals scale with Spell Power ("X% of Spell Power"), which the DPS-cue
+  // regex used to match -- so Chain Heal / Earth Shield got recommended to a DPS player.
+  assert.equal(looksLikeDpsTalent("Heals the friendly target for (231% of Spell Power), then jumps up to 20 yards to heal the 3 most injured nearby allies. Healing is reduced by 30% with each jump."), false); // Chain Heal
+  assert.equal(looksLikeDpsTalent("Protects the target with an earthen shield, increasing your healing on them by 20% and healing them for [(73% of Spell Power) * (1.2)] when they take damage."), false); // Earth Shield
+  assert.equal(looksLikeDpsTalent("Heals an ally for (150% of Spell Power)."), false);    // generic heal
+  // but a heal that ALSO deals damage (leech/conversion) is still a DPS talent
+  assert.equal(looksLikeDpsTalent("Drains the enemy, dealing (120% of Spell Power) damage and healing you for the same amount."), true);
+});
+
 test("buildTalentIndex maps Raidbots node/entry ids to names + spell ids", () => {
   // shape mirrors Raidbots talents.json: WCL nodeID === node.id, WCL id === entry.id
   const spec = {
