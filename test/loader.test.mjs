@@ -113,6 +113,27 @@ test("each report table/event is fetched at most once across a full run", async 
     `full mocked run made ${queries.length} requests (ceiling 120). Expensive un-bundled fetches were added -- bundle them (prefetchReportCores/prefetchFightEvents/prefetchBuffUptimes), don't loop individual gql() calls.`);
 });
 
+// STRUCTURAL: report-data queries may be CONSTRUCTED only in core.js, where every
+// such read goes through a deduped + bundled accessor (reportCore / fightEvents /
+// buffUptimes / playerAbilities / bossDebuffs / paginateEvents). An analysis module
+// building its own `report(code:...)` query bypasses the loader AND the request
+// bundling -- a per-peer raw query is the classic budget regression. This static
+// check makes that fail CI no matter which section/archetype/code path adds it (the
+// request-ceiling test only sees what the single mocked run exercises; this sees all).
+test("structural: report-data queries are built ONLY in core.js (don't bypass the loader/bundlers)", async () => {
+  const fs = await import("node:fs");
+  const url = await import("node:url");
+  const path = await import("node:path");
+  const dir = path.join(path.dirname(url.fileURLToPath(import.meta.url)), "..", "docs");
+  for (const f of fs.readdirSync(dir)) {
+    if (!f.endsWith(".js") || f === "core.js") continue;
+    const src = fs.readFileSync(path.join(dir, f), "utf8");
+    assert.ok(!/report\s*\(\s*code:/.test(src),
+      `docs/${f} builds a raw report-data query -- route report reads through a core.js accessor ` +
+      `(reportCore/fightEvents/buffUptimes/...), which are deduped + request-bundled. Don't bypass the loader.`);
+  }
+});
+
 // CACHE-KEY STABILITY: the bundled prefetchers prime results under the SAME query
 // string the individual accessors use, so existing cached reports (and whole cached
 // characters) keep hitting. That only holds if these strings never drift -- a single
