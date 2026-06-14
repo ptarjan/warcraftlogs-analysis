@@ -434,7 +434,7 @@ export async function detectContext(name, server, region) {
 // caller resolves the slug). Excludes you. Returns [] on any hiccup (private
 // reports, rate limit, schema gap) so the picker degrades gracefully.
 // Same region as you -- retail raids are within-region.
-export async function raidTeammates(name, server, region, { maxReports = 4, top = 6 } = {}) {
+export async function raidTeammates(name, server, region, { maxReports = 12, top = 24 } = {}) {
   try {
     // Find the highest difficulty you have kills in, and its killed encounters.
     let difficulty = null, killed = [];
@@ -444,7 +444,9 @@ export async function raidTeammates(name, server, region, { maxReports = 4, top 
       if (killed.length) { difficulty = d; break; }
     }
     if (!difficulty) return [];
-    // Collect a few distinct recent report codes from your kills.
+    // Collect distinct recent report codes (= raid nights) from your kills. More
+    // reports -> a fuller team and a "shared" count that isn't capped at a tiny
+    // sample (the bug: "4 raids together" was just "all 4 of the 4 we checked").
     const codes = [];
     for (const r of killed) {
       if (codes.length >= maxReports) break;
@@ -460,7 +462,7 @@ export async function raidTeammates(name, server, region, { maxReports = 4, top 
     // -- server is the realm NAME (a scalar; the {name,region} object is a
     // different type used by rankings). region isn't on the actor, so we use yours
     // (retail raids are within-region).
-    const rosters = await mapLimit(codes, 4, async (code) => {
+    const rosters = await mapLimit(codes, 6, async (code) => {
       let actors = [];
       try {
         const q = `query { reportData { report(code:"${code}") { masterData { actors { name server type } } } } }`;
@@ -475,16 +477,21 @@ export async function raidTeammates(name, server, region, { maxReports = 4, top 
       }
       return out;
     });
+    const of = rosters.filter((r) => r.length).length;   // raids we actually read (the denominator)
     // Tally appearances across reports, excluding yourself.
     const self = name.toLowerCase();
     const tally = new Map();
     for (const roster of rosters) for (const p of roster) {
       if (p.name.toLowerCase() === self) continue;
       const k = `${p.name}|${p.server}`.toLowerCase();
-      const e = tally.get(k) || { name: p.name, server: p.server, region, shared: 0 };
+      const e = tally.get(k) || { name: p.name, server: p.server, region, shared: 0, of };
       e.shared++; tally.set(k, e);
     }
-    return [...tally.values()].sort((a, b) => b.shared - a.shared).slice(0, top);
+    const all = [...tally.values()].sort((a, b) => b.shared - a.shared);
+    // Prefer your REGULARS (in >=2 of the scanned raids) over one-off pugs; fall
+    // back to all if that's too thin (e.g. only one report could be read).
+    const regulars = all.filter((t) => t.shared >= 2);
+    return (regulars.length >= 5 ? regulars : all).slice(0, top);
   } catch { return []; }
 }
 

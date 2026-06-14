@@ -173,7 +173,7 @@ async function appendTeammates(picker, chars, run) {
   for (const m of rows) {
     grid.appendChild(charButton({
       name: m.name, server: m.slug, region: m.region, label: realmLabel(m.region, m.slug),
-      extra: `${m.shared} raid${m.shared === 1 ? "" : "s"} together`, cls: "charbtn mate",
+      extra: m.of ? `together in ${m.shared}/${m.of} recent raids` : `${m.shared} raids together`, cls: "charbtn mate",
     }));
   }
   picker.appendChild(grid);

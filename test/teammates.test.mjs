@@ -61,8 +61,9 @@ test("raidTeammates: tally / exclude self+pets / sort", async () => {
   const mates = await raidTeammates("Me", "proudmoore", "US");
   assert.equal(mates.find((m) => m.name === "Me"), undefined, "excludes yourself");
   assert.equal(mates.find((m) => m.name === "Critter"), undefined, "excludes pets");
-  assert.deepEqual(mates[0], { name: "Tank", server: "Proudmoore", region: "US", shared: 2 });
-  assert.equal(mates.length, 3); // Tank, Healer, Mage
+  // shared = appearances; `of` = raids scanned (2 here) -> "2/2" in the UI.
+  assert.deepEqual(mates[0], { name: "Tank", server: "Proudmoore", region: "US", shared: 2, of: 2 });
+  assert.equal(mates.length, 3); // Tank, Healer, Mage (regulars filter falls back: too few >=2)
 });
 
 test("raidTeammates: no kills -> empty (never throws)", async () => {
