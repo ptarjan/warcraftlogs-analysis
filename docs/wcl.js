@@ -227,7 +227,18 @@ let _diskFile = null;    // legacy monolith path (still READ for back-compat + m
 let _diskDir = null;     // directory of shard files -- the real on-disk store
 let _diskFs = null;
 let _diskPath = null;
+let _diskZlib = null;
 let _diskTimer = null;
+
+// Decode a shard file's raw bytes to its JSON object. Shards are gzipped (WCL
+// event/table JSON compresses ~7x), but we SNIFF the gzip magic (1f 8b) so we
+// transparently read BOTH gzipped (new) and plain-JSON (old monolith / in-flight
+// shards from pre-compression code) -- no flag-day migration. Throws on corrupt input.
+function _decodeShard(buf) {
+  const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+  const raw = (b.length >= 2 && b[0] === 0x1f && b[1] === 0x8b) ? _diskZlib.gunzipSync(b) : b;
+  return JSON.parse(raw.toString("utf8"));
+}
 let _migrate = false;            // a legacy monolith was found -> distribute it into shards
 let _flushRetries = 0;           // bounded retries for a preserved (unreadable) shard
 const _dirty = new Set();        // shard ids with unpersisted puts (or pending migration)
@@ -246,7 +257,12 @@ export function _shardId(query) {                // low byte of the FNV-1a hash,
   for (let i = 0; i < query.length; i++) { h ^= query.charCodeAt(i); h = Math.imul(h, 0x01000193); }
   return ((h >>> 0) & (SHARD_BITS - 1)).toString(16).padStart(2, "0");
 }
-const _shardFile = (id) => _diskPath.join(_diskDir, `${id}.json`);
+// New shards are gzipped with a distinct extension (.json.gz). The distinct name
+// is the migration aid: pre-compression code (readdir filter `.endsWith(".json")`)
+// simply IGNORES .json.gz instead of choking on gzip bytes, and new code reads both
+// and rewrites legacy .json shards as .json.gz (then deletes the .json).
+const _shardFile = (id) => _diskPath.join(_diskDir, `${id}.json.gz`);
+const _legacyShardFile = (id) => _diskPath.join(_diskDir, `${id}.json`);
 
 // Off unless the caller opts in (cli.mjs sets WCL_GQL_CACHE=1). This keeps the
 // tests -- which also run under Node -- on the pure in-memory path, and lets the
@@ -278,7 +294,8 @@ async function initDisk() {
     const fs = await import("node:fs");
     const path = await import("node:path");
     const os = await import("node:os");
-    _diskFs = fs; _diskPath = path;
+    const zlib = await import("node:zlib");
+    _diskFs = fs; _diskPath = path; _diskZlib = zlib;
     // Shared across git worktrees (which split one WCL point budget): a single
     // cache location in the user's home dir, not one per worktree root. Override
     // with WCL_GQL_CACHE_FILE (the tests do); shards live next to it.
@@ -288,28 +305,37 @@ async function initDisk() {
     try { fs.mkdirSync(_diskDir, { recursive: true }); } catch { /* ignore */ }
     _diskStore = {};
     const now = Date.now();
-    const load = (raw) => {
+    const load = (buf) => {
       try {
-        for (const [q, e] of Object.entries(JSON.parse(raw))) {
+        for (const [q, e] of Object.entries(_decodeShard(buf))) {
           if (e && (now - e.t) < _ttlFor(q) && (!_diskStore[q] || _diskStore[q].t < e.t)) {
             _diskStore[q] = e; _gqlCache.set(q, e.d);
           }
         }
       } catch { /* a corrupt shard is skipped -- every other shard still loads */ }
     };
-    // Read every shard that exists -- these ARE the cache.
-    try { for (const f of fs.readdirSync(_diskDir)) if (f.endsWith(".json")) load(fs.readFileSync(path.join(_diskDir, f), "utf8")); } catch { /* none yet */ }
-    // Back-compat + one-time migration: an old monolithic gql-cache.json is read
-    // too, then its entries are distributed into shards and it's removed. Marks the
-    // affected shards dirty AND flushes EAGERLY (not lazily on the next fetch): the
-    // point is to get off the fragile single-file format ASAP, so even a read-only /
-    // cache-only run migrates it (no WCL points -- it's a disk reformat, not a fetch).
+    // Read every shard that exists -- these ARE the cache. Both new gzipped
+    // (.json.gz) and legacy plain (.json) shards; _decodeShard sniffs the format.
+    let legacyShards = false;
     try {
-      load(fs.readFileSync(_diskFile, "utf8"));
-      _migrate = true;
+      for (const f of fs.readdirSync(_diskDir)) {
+        if (!f.endsWith(".json") && !f.endsWith(".json.gz")) continue;
+        if (f.endsWith(".json")) legacyShards = true;       // a plain shard -> rewrite it compressed
+        load(fs.readFileSync(path.join(_diskDir, f)));
+      }
+    } catch { /* none yet */ }
+    // Back-compat + one-time migration: an old monolithic gql-cache.json, and any
+    // legacy plain .json shards, are read then rewritten as gzipped .json.gz and the
+    // originals removed. Flush EAGERLY (not lazily on the next fetch): the point is to
+    // get onto the durable/compressed format ASAP, so even a read-only / cache-only run
+    // migrates it (no WCL points -- it's a disk reformat, not a fetch).
+    let haveMonolith = false;
+    try { load(fs.readFileSync(_diskFile)); haveMonolith = true; } catch { /* no monolith */ }
+    if (haveMonolith || legacyShards) {
+      _migrate = haveMonolith;                              // only the monolith file needs deleting
       for (const q of Object.keys(_diskStore)) _dirty.add(_shardId(q));
       if (_dirty.size) { clearTimeout(_diskTimer); _diskTimer = setTimeout(_flushDisk, 0); }
-    } catch { /* no monolith -- already sharded or first run */ }
+    }
   })();
   return _diskReady;
 }
@@ -345,7 +371,7 @@ function _flushDisk() {
     // other process's entries. Preserve it and retry. This is the guard whose
     // absence (on the old monolith) caused the 396MB->38MB truncation.
     try {
-      for (const [q, e] of Object.entries(JSON.parse(_diskFs.readFileSync(file, "utf8"))))
+      for (const [q, e] of Object.entries(_decodeShard(_diskFs.readFileSync(file))))
         if (e && now - e.t < _ttlFor(q)) merged[q] = e;
     } catch (err) {
       if (!(err && err.code === "ENOENT")) { stillDirty.add(s); continue; }  // exists but unreadable -> keep it
@@ -354,8 +380,10 @@ function _flushDisk() {
     if (!Object.keys(merged).length) continue;   // nothing to persist for this shard
     try {
       const tmp = `${file}.${process.pid}.tmp`;
-      _diskFs.writeFileSync(tmp, JSON.stringify(merged));
+      _diskFs.writeFileSync(tmp, _diskZlib.gzipSync(Buffer.from(JSON.stringify(merged))));  // ~7x smaller on disk
       _diskFs.renameSync(tmp, file);
+      // This shard is now persisted compressed -- drop any legacy plain .json for it.
+      try { _diskFs.unlinkSync(_legacyShardFile(s)); } catch { /* none */ }
     } catch { stillDirty.add(s); try { _diskFs.unlinkSync(`${file}.${process.pid}.tmp`); } catch {} }
   }
   _dirty.clear();
@@ -378,7 +406,7 @@ function _flushDisk() {
 export function _flushGqlDisk() { _flushDisk(); }
 export function _resetGqlDisk() {
   clearTimeout(_diskTimer); _dirty.clear(); _migrate = false; _flushRetries = 0;
-  _diskReady = _diskStore = _diskFile = _diskDir = _diskFs = _diskPath = null;
+  _diskReady = _diskStore = _diskFile = _diskDir = _diskFs = _diskPath = _diskZlib = null;
 }
 
 // Absolute time (ms) the WCL point budget resets, learned from a 429's

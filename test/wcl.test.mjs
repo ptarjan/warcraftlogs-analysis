@@ -200,7 +200,7 @@ test("disk cache: an unreadable shard is preserved, not clobbered", async () => 
   const q = "query{ collide }";
   try {
     fs.mkdirSync(dir, { recursive: true });
-    const shardFile = path.join(dir, `${_shardId(q)}.json`);
+    const shardFile = path.join(dir, `${_shardId(q)}.json.gz`);  // the real write target
     fs.writeFileSync(shardFile, "{ this is not valid json");   // a corrupt/unreadable shard
     clearGqlCache(); _resetGqlDisk();
     globalThis.fetch = mockFetch([TOKEN, ["/api/v2/client", { json: { data: { v: 1 } } }]]);
@@ -230,11 +230,48 @@ test("disk cache: migrates a legacy monolith into shards, then removes it", asyn
     assert.deepEqual(await gql(reportQ), { kept: true }, "served from the legacy monolith");
     _flushGqlDisk();
     assert.equal(fs.existsSync(file), false, "monolith removed after migration");
-    assert.ok(fs.readdirSync(dir).some((f) => f.endsWith(".json")), "entry written into a shard");
+    assert.ok(fs.readdirSync(dir).some((f) => f.endsWith(".json.gz")), "entry written into a gzipped shard");
     // A fresh run serves it from the shard, no monolith, no network.
     clearGqlCache(); _resetGqlDisk();
     globalThis.fetch = () => { throw new Error("must come from the shard"); };
     assert.deepEqual(await gql(reportQ), { kept: true });
+  } finally {
+    delete process.env.WCL_GQL_CACHE; delete process.env.WCL_GQL_CACHE_FILE; _resetGqlDisk();
+    try { fs.rmSync(file, { force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+});
+
+// Shards are gzipped on disk (~7x smaller), and a legacy PLAIN .json shard is still
+// read and then rewritten compressed (the .endsWith(".json") sniff + dual-format read).
+test("disk cache: shards are gzipped; legacy plain shards are read and recompressed", async () => {
+  const { gql, clearGqlCache, _flushGqlDisk, _resetGqlDisk, _shardId } = await import("../docs/wcl.js");
+  const file = path.join(os.tmpdir(), `wcl-gzip-${process.pid}.json`);
+  const dir = `${file}.shards`;
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* none */ }
+  process.env.WCL_GQL_CACHE = "1";
+  process.env.WCL_GQL_CACHE_FILE = file;
+  const q = "query{ gzip-me }";
+  try {
+    // A fetched query persists as a gzipped .json.gz shard (gzip magic 1f 8b).
+    clearGqlCache(); _resetGqlDisk();
+    globalThis.fetch = mockFetch([TOKEN, ["/api/v2/client", { json: { data: { v: 7 } } }]]);
+    await gql(q); _flushGqlDisk();
+    const gzPath = path.join(dir, `${_shardId(q)}.json.gz`);
+    const bytes = fs.readFileSync(gzPath);
+    assert.ok(bytes[0] === 0x1f && bytes[1] === 0x8b, "shard is gzip-compressed");
+
+    // A legacy PLAIN .json shard (pre-compression code) is still read...
+    clearGqlCache(); _resetGqlDisk();
+    const legacyQ = "query{ legacy-plain }";
+    fs.writeFileSync(path.join(dir, `${_shardId(legacyQ)}.json`),
+      JSON.stringify({ [legacyQ]: { t: Date.now(), d: { v: 9 } } }));
+    globalThis.fetch = () => { throw new Error("must read the legacy plain shard, not fetch"); };
+    assert.deepEqual(await gql(legacyQ), { v: 9 }, "legacy plain .json shard is read");
+    // ...and on flush it's recompressed to .json.gz, the plain one removed.
+    _flushGqlDisk();
+    assert.ok(fs.existsSync(path.join(dir, `${_shardId(legacyQ)}.json.gz`)), "rewritten as .json.gz");
+    assert.equal(fs.existsSync(path.join(dir, `${_shardId(legacyQ)}.json`)), false, "legacy .json removed");
   } finally {
     delete process.env.WCL_GQL_CACHE; delete process.env.WCL_GQL_CACHE_FILE; _resetGqlDisk();
     try { fs.rmSync(file, { force: true }); } catch { /* ignore */ }
