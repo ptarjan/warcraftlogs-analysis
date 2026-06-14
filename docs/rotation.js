@@ -102,6 +102,11 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
   const allCastRate = {};
   for (const x of rawCasts) allCastRate[x.abilityGameID] = (allCastRate[x.abilityGameID] || 0) + 1;
   for (const k of Object.keys(allCastRate)) allCastRate[k] *= cpm;
+  // Fight-relative cast timestamps per ability id -- kept (only for the "you" path)
+  // so the buff-cooldown lever can measure the damage uplift in the window after each
+  // cast of an under-pressed buff WITHOUT re-fetching casts (they're already here).
+  const castTimesById = {};
+  for (const x of rawCasts) (castTimesById[x.abilityGameID] ||= []).push(x.timestamp - s);
 
   const casts = rawCasts
     .filter((x) => id2name[x.abilityGameID])
@@ -140,13 +145,21 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
   // You: per-hit detail for the top damage abilities (bounded for API cost).
   const top = abils.slice(0, opts.topN || 4);
   const hits = [];
+  // Damage TIMELINE for the buff-window measurement, built from the SAME top-ability
+  // events we already paginate here (no extra fetch -- riding existing data, which
+  // keeps the one-fetch-per-report rule). A damage BUFF lifts these (your biggest
+  // abilities) in the window after each cast; that uplift both classifies the buff
+  // (vs a defensive, which lifts nothing) and sizes the missed-cast cost.
+  const dmgTimeline = [];
   for (const a of top) {
     const evs = await paginateEvents(code, fight, m.sourceID, eventTable(), a.guid, s, e);
     if (evs.length) {
       const ph = perHit(evs);
       hits.push({ name: a.name, ...ph, procPerMin: ph.procBig / (dur / 60 || 1) });
+      for (const ev of evs) dmgTimeline.push({ t: ev.timestamp - s, amount: ev.amount || 0 });
     }
   }
+  dmgTimeline.sort((p, q2) => p.t - q2.t);
   // Per-ability total damage (name -> total), so the cooldown lever can size a
   // missed cooldown by its MEASURED damage-per-cast rather than guessing.
   const dmgTotals = Object.fromEntries(abils.map((a) => [a.name, a.total]));
@@ -161,7 +174,7 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
   const petDmg = await petDamage(code, fight, m.sourceID);
   const petShare = (m.total + petDmg) > 0 ? petDmg / (m.total + petDmg) : 0;
   return { opener: openerSequence(casts), hits, dur, castRate, allCastRate, dmgTotals, total: m.total,
-           sourceID: m.sourceID, name2id, dots, dotUp, petShare };
+           sourceID: m.sourceID, name2id, dots, dotUp, petShare, castTimesById, dmgTimeline };
 }
 
 // Median casts/min per ability across the field's kills (absent in a kill = 0),
@@ -258,6 +271,82 @@ export function castUsageGaps(youRate, fieldRate, dur, { band = 1.5, minField = 
     out.push({ id, you: yr, field: fr, youPerFight: yr * mins, fieldPerFight: fr * mins, gap: fr - yr });
   }
   return out.sort((a, b) => b.gap - a.gap);
+}
+
+// Windowed damage UPLIFT after each cast of one ability -- the data-derived test
+// for "is this a damage BUFF?". A pure buff (Weapons of Order, Recklessness, Avatar)
+// has NO direct damage of its own, so the cast/cooldown levers (built from the damage
+// table) can't see it AND can't size it. But a real damage buff makes EVERYTHING ELSE
+// you do hit harder, so the player's OWN throughput in the N seconds after each cast
+// rises above their baseline. A defensive/utility cooldown (Fortifying Brew, Die by
+// the Sword) produces no such rise. Measuring that uplift therefore BOTH classifies
+// (fire only on real uplift) and sizes (the in-window extra throughput is the buff's
+// value). Class-agnostic: nothing about the ability is named; the signal is the
+// player's own damage timeline. Pure -> testable.
+//   castTimes: ms timestamps of THIS ability's casts (fight-relative or absolute, any)
+//   dmgEvents: ALL of the player's damage events, each { t, amount } (same time base)
+//   window:    seconds after a cast to attribute to the buff
+// Returns { uplift, inRate, baseRate, casts, windowSec } where uplift is the fractional
+// rise of in-window throughput over the out-of-window baseline (0.3 = 30% more). The
+// baseline EXCLUDES the windows themselves so a buff that's up most of the fight still
+// shows a real contrast. null when there's too little to judge.
+export function buffWindowUplift(castTimes, dmgEvents, { window = 8, minCasts = 2 } = {}) {
+  const casts = (castTimes || []).filter((t) => t != null).sort((a, b) => a - b);
+  if (casts.length < minCasts || !(dmgEvents || []).length) return null;
+  const winMs = window * 1000;
+  // Mark each event in/out of ANY cast's window, and accumulate covered time. Windows
+  // can overlap (back-to-back casts); union the covered duration so rates are honest.
+  let inDmg = 0, outDmg = 0;
+  for (const ev of dmgEvents) {
+    const t = ev.t, amt = ev.amount || 0;
+    if (!(amt > 0)) continue;
+    let covered = false;
+    for (const c of casts) { if (t >= c && t < c + winMs) { covered = true; break; } if (c > t) break; }
+    if (covered) inDmg += amt; else outDmg += amt;
+  }
+  // Union of [c, c+winMs] intervals -> total in-window seconds (clamped to the event span).
+  const lo = dmgEvents[0].t, hi = dmgEvents[dmgEvents.length - 1].t;
+  let inMs = 0, curS = null, curE = null;
+  for (const c of casts) {
+    const s = Math.max(c, lo), e = Math.min(c + winMs, hi);
+    if (e <= s) continue;
+    if (curS == null) { curS = s; curE = e; continue; }
+    if (s <= curE) curE = Math.max(curE, e);
+    else { inMs += curE - curS; curS = s; curE = e; }
+  }
+  if (curS != null) inMs += curE - curS;
+  const totMs = hi - lo;
+  const outMs = totMs - inMs;
+  if (inMs <= 0 || outMs <= 0) return null;               // can't contrast (buff covers whole fight)
+  const inRate = inDmg / (inMs / 1000);
+  const baseRate = outDmg / (outMs / 1000);
+  if (!(baseRate > 0)) return null;
+  return { uplift: inRate / baseRate - 1, inRate, baseRate, casts: casts.length, windowSec: window };
+}
+
+// Size a missed BUFF cooldown from its MEASURED windowed uplift -- the sibling of
+// cooldownGaps/petShareGap for a pure buff that deals no direct damage. A castUsageGaps
+// entry tells us how many casts you're MISSING vs the field; buffWindowUplift tells us
+// how much extra throughput each cast's window is worth. The buff-attributable damage
+// per cast is the in-window EXCESS over baseline (inRate-baseRate) x window seconds;
+// each missed cast is that much throughput left on the table. % = missed x perCast /
+// total. Gated HARD against false positives (a defensive has ~0 uplift; a non-deficit
+// can't be "missed"): require real uplift AND a real cast deficit, bail otherwise.
+// Pure -> testable.
+//   gap:       a castUsageGaps entry { youPerFight, fieldPerFight, ... }
+//   upl:       a buffWindowUplift result (or null)
+//   yourTotal: your total damage this fight
+export function buffCdGap(gap, upl, yourTotal, { minUplift = 0.08, minMissed = 1 } = {}) {
+  if (!gap || !upl || !(yourTotal > 0)) return null;
+  if (!(upl.uplift >= minUplift)) return null;            // not a damage buff (defensive/utility)
+  const missed = (gap.fieldPerFight || 0) - (gap.youPerFight || 0);
+  if (missed < minMissed) return null;                    // not really under-pressed
+  const perCast = (upl.inRate - upl.baseRate) * upl.windowSec;  // buff-attributable dmg/cast
+  if (!(perCast > 0)) return null;
+  const pct = Math.round((100 * missed * perCast) / yourTotal);
+  if (pct < 1) return null;
+  return { missed, perCast, pct, uplift: upl.uplift,
+           youPerFight: gap.youPerFight, fieldPerFight: gap.fieldPerFight };
 }
 
 // Per-cast DAMAGE gaps vs the field, ABILITY-SPECIFIC -- the home of a big
@@ -443,28 +532,46 @@ export async function rotationFindings(name, server, region, className, specName
   // Resolve names via Wowhead for just the top few divergent ids (bounded + cached).
   const fieldAllRate = fieldCastRates(peers.map((p) => p.allCastRate || {}));
   let cdUsage = [];
+  let buffCds = [];
   if (peers.length) {
     const [fs, fe] = await fightWindow(best.code, best.fight);
     const yourTotal = you.total || Object.values(you.dmgTotals || {}).reduce((a, b) => a + b, 0) || 1;
     const gaps = castUsageGaps(you.allCastRate || {}, fieldAllRate, you.dur).slice(0, 5);
-    cdUsage = (await mapLimit(gaps, 3, async (g) => {
+    // The buff-window measurement reads the player's OWN top-ability damage TIMELINE
+    // (already paginated in analyzeKill -- no new fetch, no dupe). A buff deals no
+    // direct damage; its value shows only as a rise in this timeline after each cast.
+    const timeline = you.dmgTimeline || [];
+    const raw = await mapLimit(gaps, 3, async (g) => {
       const id = Number(g.id);
-      // Keep ONLY damage cooldowns YOU actually cast: a targeted DamageDone check
-      // drops taunts/defensives/utility (Provoke, Fortifying Brew) and never-cast
-      // talents (Empty the Cellar -- the talent lever's job) -- all deal no damage
-      // under your source, so "use it on cooldown" can never be a false positive.
-      // The same events SIZE the gap: missed casts x your damage-per-cast / total.
+      // A targeted DamageDone check tells us whether this cooldown deals direct damage.
       let dmg = [];
       try { dmg = await paginateEvents(best.code, best.fight, you.sourceID, eventTable(), id, fs, fe); } catch (e) { return null; }
-      if (!dmg.length) return null;
       let nm = null;
       try { const t = await spellTooltip(id); nm = t && t.name; } catch (e) { return null; }
       if (!nm || underNames.has(nm) || cooldowns.some((c) => c.name === nm)) return null;
-      const abilityDmg = dmg.reduce((sm, x) => sm + (x.amount || 0), 0);
-      const dpc = g.youPerFight >= 1 ? abilityDmg / g.youPerFight : null;
-      const pct = dpc != null ? Math.round((100 * (g.fieldPerFight - g.youPerFight) * dpc) / yourTotal) : null;
-      return { name: nm, youPerFight: g.youPerFight, fieldPerFight: g.fieldPerFight, id, pct };
-    })).filter(Boolean).slice(0, 3);
+      if (dmg.length) {
+        // DIRECT-DAMAGE cooldown: size from your own damage-per-cast (existing lever).
+        // Defensives/utility/never-cast talents deal no damage and fall through below.
+        const abilityDmg = dmg.reduce((sm, x) => sm + (x.amount || 0), 0);
+        const dpc = g.youPerFight >= 1 ? abilityDmg / g.youPerFight : null;
+        const pct = dpc != null ? Math.round((100 * (g.fieldPerFight - g.youPerFight) * dpc) / yourTotal) : null;
+        return { kind: "cd", name: nm, youPerFight: g.youPerFight, fieldPerFight: g.fieldPerFight, id, pct };
+      }
+      // NO direct damage -> candidate BUFF (Weapons of Order, Recklessness, Avatar) OR
+      // a defensive/utility (Fortifying Brew, Die by the Sword). The windowed-uplift
+      // test tells them apart from the DATA: a real buff lifts your other damage in the
+      // window after each cast; a defensive doesn't. buffCdGap fires ONLY on real uplift
+      // AND a real deficit -- so a defensive can never be a false positive.
+      const castTimes = (you.castTimesById || {})[id];
+      if (!castTimes || castTimes.length < 2 || !timeline.length) return null;
+      const upl = buffWindowUplift(castTimes, timeline);
+      const sized = buffCdGap(g, upl, yourTotal);
+      if (!sized) return null;
+      return { kind: "buff", name: nm, id, ...sized };
+    });
+    const found = raw.filter(Boolean);
+    cdUsage = found.filter((x) => x.kind === "cd").slice(0, 3);
+    buffCds = found.filter((x) => x.kind === "buff").slice(0, 2);
   }
   // Measured total damaging-ability casts/min, you vs field -- the direct "are
   // you pressing as often as they are" gap (sizes the press-faster lever).
@@ -532,7 +639,7 @@ export async function rotationFindings(name, server, region, className, specName
   const petGap = (you.petShare != null && fieldPetShare != null) ? petShareGap(you.petShare, fieldPetShare) : null;
   return {
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener,
-    usage, cooldowns, cdUsage, perCast, dotGaps, petGap, castGap, fieldPeers: peers.length, talent, abilityIds,
+    usage, cooldowns, cdUsage, buffCds, perCast, dotGaps, petGap, castGap, fieldPeers: peers.length, talent, abilityIds,
     heroMatched: yourHero && peers.length ? (peers.every((p) => p.hero === yourHero) ? yourHero : null) : null,
     proc: { name: biggest ? biggest.name : null, isReal, youPerMin: biggest ? biggest.procPerMin : 0, fieldPerMin: fieldProc, youEmp, fieldEmp },
   };
@@ -676,6 +783,22 @@ export function rotationLevers(rot) {
         `COOLDOWN: you cast ${wowheadSpell(cd.id, cd.name)} ${cd.youPerFight.toFixed(0)}x/kill vs the field's ` +
         `${cd.fieldPerFight.toFixed(0)}x -- ~${cd.pct}% of your ${throughputWord()}. Use it on cooldown; it's a button you're ` +
         `skipping, not gear.`));
+    }
+  }
+  // BUFF COOLDOWN: a damage-buff cooldown (Weapons of Order, Recklessness, Avatar)
+  // you press LESS than the field. These deal NO direct damage, so cooldownGaps/cdUsage
+  // can't see OR size them -- but a real damage buff lifts your OTHER damage in the
+  // window after each cast, which is exactly what we measured (buffWindowUplift) and
+  // sized (buffCdGap): missed casts x the window's extra throughput. A defensive/utility
+  // cooldown produces no uplift, so it never reaches here -- the "never recommend a
+  // defensive" guarantee is DATA-DERIVED, not a hard-coded ability list. Measured.
+  for (const b of ((rot && rot.buffCds) || [])) {
+    if (b.pct && b.pct >= 1) {
+      out.push(finding("Rotation", DPS(b.pct),
+        `BUFF COOLDOWN: you cast ${wowheadSpell(b.id, b.name)} ${b.youPerFight.toFixed(0)}x/kill vs the field's ` +
+        `${b.fieldPerFight.toFixed(0)}x -- your ${throughputWord()} rises ~${Math.round(b.uplift * 100)}% in the window after each cast, ` +
+        `so missing it costs ~${b.pct}% of your ${throughputWord()}. Use it on cooldown (line it up with your burst); ` +
+        `it's a buff you're skipping, not gear.`, "measured"));
     }
   }
   // PET DAMAGE: a pet-heavy spec whose pets do less of its damage than the field's
