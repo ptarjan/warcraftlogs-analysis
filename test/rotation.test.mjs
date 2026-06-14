@@ -5,7 +5,101 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, dotUptimeGaps, petShareGap } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch } = await import("../docs/rotation.js");
+
+test("selfBuffMatch: the CAUSAL gate -- a buff that auras YOU passes, a taunt does not", () => {
+  // The player's self-buffs this kill (core.buffUptimes shape: name -> { pct, guid }).
+  // Recklessness applies its own aura (cast id == aura id 1719); Avatar 107574 too.
+  const selfBuffs = {
+    Recklessness: { pct: 18, guid: 1719 },
+    Avatar: { pct: 22, guid: 107574 },
+    "Battle Shout": { pct: 100, guid: 6673 },
+  };
+  // A real damage buff: matches by aura id (== cast id) -> passes.
+  assert.equal(selfBuffMatch(1719, "Recklessness", selfBuffs), true);
+  assert.equal(selfBuffMatch(107574, "Avatar", selfBuffs), true);
+  // Name fallback: a CD whose cast id differs from its aura id still matches by name.
+  assert.equal(selfBuffMatch(999999, "Avatar", selfBuffs), true);
+  // PROVOKE (a taunt): no self-buff aura on the player -> REJECTED. This is the whole
+  // fix -- the reverted lever recommended Provoke off a correlational uplift; with the
+  // causal gate it can never qualify because casting it grants you no aura.
+  assert.equal(selfBuffMatch(1161, "Provoke", selfBuffs), false);
+  // Fortifying Brew / any other defensive the player did NOT self-buff with -> rejected.
+  assert.equal(selfBuffMatch(115203, "Fortifying Brew", selfBuffs), false);
+  // No buff data at all -> reject (fail closed, never a false positive).
+  assert.equal(selfBuffMatch(1719, "Recklessness", {}), false);
+  assert.equal(selfBuffMatch(1719, "Recklessness", null), false);
+});
+
+test("buffWindowUplift: measures damage rise in the window after a buff cast", () => {
+  const window = 8;
+  const evs = [];
+  for (let t = 0; t < 200000; t += 1000) evs.push({ t, amount: 100 });
+  for (const c of [0, 100000]) for (let dt = 0; dt < 8000; dt += 1000) evs.push({ t: c + dt, amount: 400 });
+  const upl = buffWindowUplift([0, 100000], evs, { window });
+  assert.ok(upl, "should measure when there are >=2 casts and events");
+  assert.equal(upl.casts, 2);
+  assert.ok(upl.uplift > 0.5, `real damage buff -> clear positive uplift (got ${upl.uplift})`);
+  assert.ok(upl.inRate > upl.baseRate);
+});
+
+test("buffWindowUplift: ~zero uplift for a DEFENSIVE (no damage rise after the cast)", () => {
+  const evs = [];
+  for (let t = 0; t < 200000; t += 1000) evs.push({ t, amount: 100 });
+  const upl = buffWindowUplift([50000, 150000], evs, { window: 8 });
+  assert.ok(upl, "still measurable");
+  assert.ok(Math.abs(upl.uplift) < 0.05, `a defensive produces no uplift (got ${upl.uplift})`);
+});
+
+test("buffWindowUplift: null when too few casts, no events, or the buff covers the whole fight", () => {
+  assert.equal(buffWindowUplift([0], [{ t: 0, amount: 1 }]), null);
+  assert.equal(buffWindowUplift([0, 1000], []), null);
+  const evs = [{ t: 0, amount: 100 }, { t: 1000, amount: 100 }];
+  assert.equal(buffWindowUplift([0, 500], evs, { window: 8 }), null);
+});
+
+test("buffCdGap: sizes a missed buff (post-gate); silent on no-uplift/non-deficit", () => {
+  const gap = { youPerFight: 1, fieldPerFight: 3 };
+  const upl = { uplift: 1.0, inRate: 800, baseRate: 400, casts: 1, windowSec: 8 };
+  const g = buffCdGap(gap, upl, 64000);
+  assert.ok(g, "fires on a real buff with a real deficit");
+  assert.equal(g.missed, 2);
+  assert.equal(g.pct, 10);
+  // A self-buff that lifts ~nothing -> below minUplift floor, silent.
+  assert.equal(buffCdGap(gap, { uplift: 0.01, inRate: 404, baseRate: 400, casts: 1, windowSec: 8 }, 64000), null);
+  // No real deficit (you use it as much as the field) -> silent.
+  assert.equal(buffCdGap({ youPerFight: 3, fieldPerFight: 3 }, upl, 64000), null);
+  assert.equal(buffCdGap({ youPerFight: 2, fieldPerFight: 3 }, upl, 100000000), null);
+  assert.equal(buffCdGap(null, upl, 64000), null);
+  assert.equal(buffCdGap(gap, null, 64000), null);
+  assert.equal(buffCdGap(gap, upl, 0), null);
+});
+
+test("BUFF-COOLDOWN end-to-end gate: a candidate with strong uplift but NO self-buff is REJECTED", () => {
+  // This encodes the Provoke lesson at the gate level. A taunt pressed at pull/burst
+  // shows a STRONG windowed uplift (correlation) AND a real cast deficit -- buffCdGap
+  // alone would size it. The self-buff gate must reject it because casting it granted
+  // the player no aura. Order: selfBuffMatch THEN buffWindowUplift/buffCdGap.
+  const provokeId = 1161;
+  const selfBuffs = { Recklessness: { pct: 18, guid: 1719 } };  // Provoke is NOT here
+  // Build a timeline where damage spikes right after each "Provoke" cast (burst windows).
+  const evs = [];
+  for (let t = 0; t < 200000; t += 1000) evs.push({ t, amount: 100 });
+  for (const c of [0, 100000]) for (let dt = 0; dt < 8000; dt += 1000) evs.push({ t: c + dt, amount: 500 });
+  evs.sort((a, b) => a.t - b.t);
+  const gap = { id: provokeId, youPerFight: 1, fieldPerFight: 4 };
+
+  // The CAUSAL gate fires first and rejects -> we never even size it.
+  const passes = selfBuffMatch(provokeId, "Provoke", selfBuffs);
+  assert.equal(passes, false, "Provoke grants no self-buff -> rejected before sizing");
+
+  // Sanity: had we (wrongly) skipped the gate, the correlational sizer WOULD have fired,
+  // proving the gate -- not the uplift -- is what prevents the false positive.
+  const upl = buffWindowUplift([0, 100000], evs, { window: 8 });
+  const sizedIfUngated = buffCdGap(gap, upl, 200000);
+  assert.ok(sizedIfUngated && sizedIfUngated.pct >= 1,
+    "without the gate the correlational uplift sizes it -> exactly the Provoke FP the gate stops");
+});
 
 test("petShareGap: flags a pet spec under the field's pet share; silent for non-pet/matched", () => {
   // Unholy DK: your pets 27% of damage, field 38%. gain = (1-.27)/(1-.38) ~= 1.177.
