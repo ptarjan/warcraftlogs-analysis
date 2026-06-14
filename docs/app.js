@@ -14,6 +14,7 @@ import * as rotation from "./rotation.js";
 import * as talents from "./talents.js";
 import * as topparse from "./topparse.js";
 import * as gear from "./gear.js";
+import * as healing from "./healing.js";
 import * as prescribe from "./prescribe.js";
 
 /** Look up a known element. Typed loosely (any) on purpose -- this is DOM glue;
@@ -492,6 +493,19 @@ const SUPPORTING = [
   ["Gear audit", (p, log) => gear.run(log, p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority)],
 ];
 
+// The supporting cards for this run. Healers get a "Healing efficiency" card
+// (overhealing + mana -- the levers they actually control, since raw HPS is
+// damage-bound); damage specs don't. Built AFTER detection so we know the role.
+function supportingFor(isHealerRun) {
+  if (!isHealerRun) return SUPPORTING;
+  const list = SUPPORTING.slice();
+  const healingCard = ["Healing efficiency",
+    (p, log) => healing.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)];
+  const after = list.findIndex(([t]) => /^Rotation/.test(t));   // sits next to rotation
+  list.splice(after >= 0 ? after + 1 : list.length, 0, healingCard);
+  return list;
+}
+
 function buildHero(name, server, region) {
   const h = document.createElement("section"); h.className = "hero";
   const who = document.createElement("div"); who.className = "who";
@@ -630,17 +644,23 @@ async function runAnalysis({ name, server, region, serverLabel }) {
   setCardState(rxCard, "busy");
   cur = rxCard; note("Crunching your kills and your peers…", "muted");
   const rxLines = [];
-  const supRecs = SUPPORTING.map(([title]) => {
-    const card = makeCard(title, { collapsed: true });
-    setCardState(card, "busy");
-    return { card, title, lines: [] };
-  });
+  // Built once the role is known (after detection) so the card set is role-aware;
+  // declared here so the catch below can clear any still-spinning cards.
+  let sections = SUPPORTING, supRecs = [];
 
   try {
     const ctx = await detectContext(name, server, region);
     // Healers are measured on HEALING, everyone else on DAMAGE -- set before
     // detectPriority so the stat sample is drawn from the right-metric peers.
     setRunMetric(metricForSpec(ctx.className, ctx.specName));
+    // The supporting card set is role-aware (healers get a Healing efficiency
+    // card), so it's built here -- once the run metric/role is known.
+    sections = supportingFor(metricForSpec(ctx.className, ctx.specName) === "hps");
+    supRecs = sections.map(([title]) => {
+      const card = makeCard(title, { collapsed: true });
+      setCardState(card, "busy");
+      return { card, title, lines: [] };
+    });
     const priority = await detectPriority(ctx.className, ctx.specName, ctx.difficulty, ctx.killed[0].encounter.id);
     snap.pills = [
       [`${ctx.specName} ${ctx.className}`, false],
@@ -655,7 +675,7 @@ async function runAnalysis({ name, server, region, serverLabel }) {
     // its own card; the card's spinner disappears the moment it finishes. (gql()
     // coalesces/caches identical queries, so concurrent sections share
     // overlapping requests rather than multiplying the API load.)
-    const settled = await Promise.allSettled(SUPPORTING.map(([, runFn], i) => {
+    const settled = await Promise.allSettled(sections.map(([, runFn], i) => {
       const { card, lines } = supRecs[i];
       return Promise.resolve(runFn(p, recLog(card, lines))).then(
         () => setCardState(card, "done"),

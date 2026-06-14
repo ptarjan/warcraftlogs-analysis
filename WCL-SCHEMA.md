@@ -22,8 +22,10 @@ are valid.
   - `metric` enums: `dps` (CharacterRankingMetricType / CharacterPageRankingMetricType).
 - `worldData.encounter(id).characterRankings(difficulty, className, specName, metric, page)` → JSON.
 - `reportData.report(code).…`
-  - `table(fightIDs, dataType, sourceID?, hostilityType?)` → JSON. `dataType`: TableDataType (`DamageDone`, `Casts`, `Buffs`, `Debuffs`). `hostilityType`: `Enemies`.
-  - `events(fightIDs, dataType, limit, sourceID?, abilityID?, startTime?, endTime?)` → `ReportEventPaginator { data, nextPageTimestamp }`. `dataType`: EventDataType (`Casts`, `DamageDone`, `CombatantInfo`).
+  - `table(fightIDs, dataType, sourceID?, hostilityType?)` → JSON. `dataType`: TableDataType (`DamageDone`, `Healing`, `Casts`, `Buffs`, `Debuffs`, … `Resources`). `hostilityType`: `Enemies`.
+    - **The `Healing` table JSON carries overheal** (verified live 2026-06): the UNFILTERED table's actor `entries[]` have an `overheal` field (effective `total` EXCLUDES it) — but their `abilities[]` do NOT. For PER-ABILITY overheal use the **sourceID-FILTERED** Healing table, whose `entries[]` ARE the abilities, each with `name`/`total`/`overheal` (`core.playerAbilities`/`healingBreakdown`). `DamageDone` has no overheal. `core.metricsFromTables` reads entry `overheal`/`overhealPct` defaulting absent→0, so a DPS run is unaffected. (Healer OVERHEALING lever.)
+    - **Mana**: `events(dataType:Casts, includeResources:true)` rides a `classResources:[{amount,max,type,cost}]` snapshot on each cast — mana is `type:0` (`core.manaStats` → end-of-fight %, low-water, OOM). The dedicated `events(dataType:Resources)` returns only discrete resource-change events (`resourceChange`/`waste`/`maxResourceAmount`), less useful for a mana-over-time read.
+  - `events(fightIDs, dataType, limit, sourceID?, abilityID?, startTime?, endTime?, includeResources?)` → `ReportEventPaginator { data, nextPageTimestamp }`. `dataType`: EventDataType — verified to include `Casts`, `DamageDone`, `Healing`, `CombatantInfo`, **`Resources`** (full enum: All/Buffs/Casts/CombatantInfo/DamageDone/DamageTaken/Deaths/Debuffs/Dispels/Healing/Interrupts/Resources/Summons/Threat). `includeResources:Boolean` rides a resource snapshot on other event types (mana = resource type 0). Used for the healer MANA lever.
   - `fights(fightIDs) { startTime, endTime }` → `[ReportFight]` (also has `kill`, `difficulty`, `size`).
   - `fights { … }` with NO `fightIDs` → ALL pulls in the report (the progression
     flow's backbone). Verified-present `ReportFight` fields (live, 2026-06):

@@ -7,7 +7,8 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { DPS, COMP, INFO, finding, fieldDelta } = await import("../docs/core.js");          // shared Finding currency
+const { DPS, COMP, INFO, finding, fieldDelta, setRunMetric } = await import("../docs/core.js");          // shared Finding currency
+const { rotationLevers } = await import("../docs/rotation.js");
 
 test("finding tags its basis: estimate by default, measured on opt-in", () => {
   assert.equal(finding("Gear", DPS(2), "x").basis, "est");          // levers must opt IN to "measured"
@@ -136,6 +137,43 @@ test("executionLevers: no press-faster when you out-cast the field (idle heurist
   const rot = { castGap: { you: 69, field: 65, pct: 0 } };
   const out = executionLevers(execd, rot, 22);
   assert.ok(!out.some((r) => /PRESS FASTER/.test(r.text)), "no press-faster lever when out-casting the field");
+});
+
+test("HEALER: press-faster is suppressed (idle GCDs are correct play), but latency/movement keep firing", () => {
+  // A healer with a real cast deficit AND idle time would get "PRESS FASTER" on a
+  // damage run -- but holding a global rather than dumping an overheal is right, so
+  // it's suppressed. The movement/uptime + input-latency levers still apply.
+  const execd = { pressExcess: 2.0, rangeExcess: 2.0, worstRange: ["Boss"], overshootExcess: 40 };
+  const rot = { castGap: { you: 16, field: 28, pct: 44 } };
+  try {
+    setRunMetric("hps");
+    const out = executionLevers(execd, rot, 60);
+    assert.ok(!out.some((r) => /PRESS FASTER/.test(r.text)), "no press-faster for a healer");
+    assert.ok(out.some((r) => /INPUT LATENCY/.test(r.text)), "latency lever still fires");
+    assert.ok(out.some((r) => /MOVEMENT/i.test(r.text)), "movement/uptime lever still fires");
+  } finally { setRunMetric("dps"); }
+  // Same inputs on a DPS run DO produce press-faster (regression guard).
+  assert.ok(executionLevers(execd, rot, 60).some((r) => /PRESS FASTER/.test(r.text)));
+});
+
+test("HEALER: rotationLevers drops the reactive 'press more' + empowerment, keeps cooldown + talent", () => {
+  const rot = {
+    abilityIds: {},
+    usage: { under: [{ name: "Vivify", you: 11, field: 30, gap: 19 }], over: [] },
+    talent: null,                                  // no talent data -> plain under-use (the reactive case)
+    cooldowns: [{ name: "Rewind", you: 0.4, field: 1.1, youCasts: 1, fieldCasts: 2.2, pct: 4 }],
+    cdUsage: [], perCast: [
+      { name: "Vivify", youEmp: 0.1, fieldEmp: 0.4, pct: 6 }],   // would-be empowerment
+  };
+  try {
+    setRunMetric("hps");
+    const out = rotationLevers(rot);
+    assert.ok(!out.some((r) => /^ROTATION: press/.test(r.text)), "no reactive 'press more heals'");
+    assert.ok(!out.some((r) => /EMPOWERMENT/.test(r.text)), "no empowerment lever for a healer");
+    assert.ok(out.some((r) => /COOLDOWN: .*Rewind/.test(r.text)), "healing-cooldown lever kept (a valid HPS rec)");
+  } finally { setRunMetric("dps"); }
+  // DPS run: the reactive press lever fires (regression guard).
+  assert.ok(rotationLevers(rot).some((r) => /^ROTATION: press/.test(r.text)));
 });
 
 test("executionLevers: a genuine cast deficit still fires press-faster", () => {

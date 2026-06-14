@@ -8,7 +8,7 @@
 import {
   ENCHANTABLE_SLOTS, DIFFICULTY, characterZone, characterEncounter, playerMetrics,
   ilvlPeers, PEER_SAMPLE, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry, bestRank, bestKill,
-  DPS, INFO, finding, fieldDelta, metricUnit, throughputWord, runIsHealer,
+  DPS, INFO, finding, fieldDelta, metricUnit, throughputWord, runIsHealer, healingBreakdown, manaStats,
 } from "./core.js";
 import { timelineFindings } from "./timeline.js";
 import { gearFindings, gearLevers, itemInstance, sourceText } from "./gear.js";
@@ -16,6 +16,7 @@ import { wowheadSpell, wowheadItem, wclReport } from "./links.js";
 import { rotationFindings, rotationLevers, castable } from "./rotation.js";
 import { talentFindings, talentLevers } from "./talents.js";
 import { topParseFindings, topParseLevers, RAID_DAMAGE } from "./topparse.js";
+import { healingLevers } from "./healing.js";
 
 const SLOT_NAME = ENCHANTABLE_SLOTS;
 
@@ -181,6 +182,9 @@ async function fieldGearConsumables(name, server, region, encounter, difficulty,
     enchBySlot, trinkets, flasks, foods, potions, augRunes, oils, guids, deltas, topDeltas, statDelta, statValue, gemDelta, compDeltas,
     statPct: statPcts.length ? median(statPcts) : null, n: peers.length,
     dpsMed: peers.length ? median(peers.map((p) => p.m.dps)) : null, // measured field DPS
+    // Field overheal % (median over the SAME peers) -- the baseline the healer
+    // OVERHEALING lever measures your spill against. 0 for a damage field (harmless).
+    overhealMed: peers.length ? median(peers.map((p) => p.m.overhealPct)) : null,
   };
 }
 
@@ -330,7 +334,13 @@ export function executionLevers(execd, rot, peerGapPct = null, activePct = null)
   // 99.5%-active tank and a 99.2%-active DPS alike, without special-casing roles.
   const noIdle = activePct != null && activePct >= 98;
   const outpacesField = cg && cg.field > 0 && cg.you >= cg.field;
-  if (!noIdle && (execd.pressExcess >= 1.0 || speedPct >= 3) && !(speedPct < 3 && outpacesField)) {
+  // HEALERS: never "press faster". A healer's idle GCDs are correct play -- you
+  // can't heal damage that didn't happen, so holding a global rather than dumping
+  // an overheal is right. The idle time is absorbed by the damage-bound remainder;
+  // the actual healer levers are efficiency (overhealing) + mana (see healing.js).
+  // latency + movement/uptime levers below still apply (a healer out of range is
+  // really losing healing), so only this PRESS-FASTER push is suppressed.
+  if (!runIsHealer() && !noIdle && (execd.pressExcess >= 1.0 || speedPct >= 3) && !(speedPct < 3 && outpacesField)) {
     const castEst = Math.round(speedPct / 2);
     const headroomCap = (peerGapPct && peerGapPct > 0) ? Math.max(1, Math.ceil(peerGapPct * 0.6)) : Infinity;
     const pct = Math.min(Math.max(idlePct, castEst) || 1, headroomCap, 12);
@@ -608,7 +618,13 @@ function renderPrescription(log, d) {
     // damage-per-cast (the gear/setup fixes), not activity.
     const hasPress = yours.some((r) => /PRESS FASTER/.test(r.text));
     const buildNote = hasBuild ? " (plus a talent swap)" : "";
-    log(`VERDICT: your biggest character levers are the ${setupFixes.length} gear/setup fix${setupFixes.length > 1 ? "es" : ""} below${buildNote}${hasPress ? " + pressing faster" : ""}. The big gap is ${compList0.length ? "comp + " : ""}${hasPress ? "reps" : "damage-per-cast (stats/gear), not activity"}, not a rotation overhaul.`);
+    // Metric-aware: a healer's residual gap is healing efficiency + damage-bound
+    // throughput, never "damage-per-cast". (Same class of fix as the HPS metric-word
+    // routing; "damage-per-cast" would leak a damage word into an HPS report.)
+    const residualWord = hasPress ? "reps" : runIsHealer()
+      ? "healing efficiency + throughput (stats/gear/comp), not activity"
+      : "damage-per-cast (stats/gear), not activity";
+    log(`VERDICT: your biggest character levers are the ${setupFixes.length} gear/setup fix${setupFixes.length > 1 ? "es" : ""} below${buildNote}${hasPress ? " + pressing faster" : ""}. The big gap is ${compList0.length ? "comp + " : ""}${residualWord}, not a rotation overhaul.`);
   } else {
     log(`VERDICT: build, gear, enchants, and rotation all match the field -- there's NO setup or talent fix to make. Your gap is ${compList0.length ? "comp + " : ""}execution (press faster / uptime). Tighten your play; there's no gear/talent shortcut.`);
   }
@@ -798,6 +814,14 @@ export async function run(log, name, server, region, className = "Monk", specNam
     // Setup from your CURRENT kill (reuse the benchmark fetch when they're the same).
     const cm = sameKill ? you : await playerMetrics(curCode, curFight, name, specName, className);
     if (cm) my = await mySetup(curCode, curFight, cm.sourceID, cm.gear, priority, className);
+    // HEALERS: enrich the benchmark metrics with per-ability overheal (the
+    // sourceID-filtered Healing table -- reuses rotation's fetch) and mana over the
+    // fight, so healingLevers can name your worst spill + read your mana. One extra
+    // (mana) query, healer-only -- a damage run skips this entirely.
+    if (runIsHealer() && you) {
+      try { const hb = await healingBreakdown(code, fight, you.sourceID); you.overhealBy = hb.overhealBy; you.dmgBy = hb.effBy; } catch (e) { /* keep entry-level overheal% */ }
+      try { you.mana = await manaStats(code, fight, you.sourceID); } catch (e) { /* no mana data */ }
+    }
   } catch (e) { skipped.push("your gear/consumables"); }
 
   const field = await soft("the peer field (consumables/enchants/stat gap)",
@@ -834,6 +858,9 @@ export async function run(log, name, server, region, className = "Monk", specNam
     ...trinketRx,
     ...gearLevers(gf, priority, field && field.statValue, field && field.gemDelta),
     ...(my ? statGapLever(gf, my, field, priority) : []),
+    // Healer-specific efficiency levers (overhealing, mana) -- self-silent for a
+    // damage run (runIsHealer false, overheal 0). Measured from your benchmark kill.
+    ...healingLevers(you, field),
     ...rotationLevers(rot),
     ...talentLevers(tal),
     ...topParseLevers(tp, field && field.compDeltas),

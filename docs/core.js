@@ -181,6 +181,14 @@ function metricsFromTables(dmg, casts, name, specName) {
   for (const a of (ce ? ce.abilities : [])) castCounts[a.name] = a.total;
   const dmgBy = {};
   for (const a of e.abilities) dmgBy[a.name] = a.total;
+  // Overhealing: the Healing table carries `overheal` per actor AND per ability
+  // (effective `total` excludes it); the DamageDone table has no such field, so it
+  // reads `undefined -> 0` and every DPS consumer is unaffected (byte-identical).
+  // overhealPct = spilled / (effective + spilled) -- the wasted fraction of output,
+  // the flagship healer efficiency signal. No new query: rides reportCore's table.
+  const overheal = e.overheal || 0;
+  const overhealBy = {};
+  for (const a of e.abilities) overhealBy[a.name] = a.overheal || 0;
   const totalCasts = Object.values(castCounts).reduce((s, v) => s + v, 0);
   return {
     name: e.name, ilvl: e.itemLevel, dur,
@@ -190,6 +198,8 @@ function metricsFromTables(dmg, casts, name, specName) {
     // per-target damage totals (for damage-routing / cleave-funnel analysis)
     dmgTargets: e.targets || [],
     casts: castCounts, dmgBy: dmgBy,
+    overheal, overhealBy,
+    overhealPct: (e.total + overheal) > 0 ? 100 * overheal / (e.total + overheal) : 0,
     castsPerMin: dur ? totalCasts / (dur / 60) : 0,
     sourceID: e.id, gear: e.gear || [],
   };
@@ -233,6 +243,41 @@ export async function playerAbilities(code, fight, sourceId) {
   const t = (await gql(q)).reportData.report.table.data;
   return (t.entries || []).filter((a) => a.guid != null && a.total > 0)
     .sort((a, b) => b.total - a.total);
+}
+
+// Per-ability OVERHEAL for a healer, keyed by ability name. The UNFILTERED reportCore
+// Healing table gives entry-level overheal but its per-ability objects DON'T carry it;
+// the sourceID-FILTERED Healing table's entries ARE the abilities, each with `total`
+// (effective) AND `overheal`. Reuses playerAbilities' fetch (metric-aware -> Healing
+// for a healer), so it dedupes with the rotation analysis. Healer-only (the DamageDone
+// table has no overheal -> all zeros). Returns { overhealBy, effBy } by ability name.
+export async function healingBreakdown(code, fight, sourceId) {
+  const abs = await playerAbilities(code, fight, sourceId);
+  const overhealBy = {}, effBy = {};
+  for (const a of abs) { overhealBy[a.name] = a.overheal || 0; effBy[a.name] = a.total || 0; }
+  return { overhealBy, effBy };
+}
+
+// Healer MANA over the fight, from cast events carrying a resource snapshot
+// (`includeResources` rides current mana on every Casts event; mana = class resource
+// type 0). Returns { endPct, minPct, oom } -- end-of-fight mana %, the low-water mark,
+// and ms into the fight you first hit ~empty (<=5%), or null. A separate query from the
+// shared loader (includeResources would bloat every spec's Casts fetch), so it's
+// healer-only; one page covers a healer's casts. null when there's no mana data.
+export async function manaStats(code, fight, sourceId) {
+  const [s, e] = await fightWindow(code, fight);
+  const q = `query { reportData { report(code:"${code}") { events(
+    fightIDs:${fight}, sourceID:${sourceId}, dataType:Casts, includeResources:true,
+    limit:10000, startTime:${s}, endTime:${e}) { data } } } }`;
+  const rows = (await gql(q)).reportData.report.events.data;
+  const series = rows.map((x) => {
+    const m = (x.classResources || []).find((r) => r.type === 0);   // type 0 = mana
+    return m && m.max ? { t: x.timestamp - s, pct: 100 * m.amount / m.max } : null;
+  }).filter(Boolean);
+  if (series.length < 3) return null;
+  const last = series[series.length - 1];
+  const oom = series.find((r) => r.pct <= 5);
+  return { endPct: last.pct, minPct: Math.min(...series.map((r) => r.pct)), oom: oom ? oom.t : null };
 }
 
 // A player's DoT/debuff UPTIME% on the PRIMARY (boss) target, per ability id.

@@ -558,21 +558,27 @@ export async function run(log, name, server, region, className = "Monk",
     log(`  -> biggest single-hit ability: ${fnd.biggest.name}`);
   }
 
-  log("");
-  if (!fnd.proc.isReal) {
-    log("=== BIG HITS ARE CRIT-DRIVEN, NOT A PROC ===");
-    log("  Your outsized hits are crits, not a missed empowerment button. More big");
-    log("  hits = more crit + raid damage buffs (comp), not a rotation change.");
-  } else {
-    const p = fnd.proc;
-    log(`=== EMPOWERMENT (${p.name}, high-damage casts) ===`);
-    if (p.youEmp != null && p.fieldEmp != null) {
-      log(`  empowered casts:  you ${Math.round(p.youEmp * 100)}%   peers ${Math.round(p.fieldEmp * 100)}%`);
-      log(p.fieldEmp - p.youEmp >= 0.12
-        ? "  -> Fewer than peers -- land your hardest hit in its empower/amp window more often."
-        : "  -> About the same as peers. Your big hits land in their window as often; the per-cast gap is stats/comp/fight-amp, not timing.");
+  // Empowerment / "big hits are crits" is a DAMAGE framing -- for a healer there's
+  // no empower window to chase, and a big cooldown heal's outsized cluster can look
+  // like a proc. Skip it on an HPS run; the healer's efficiency evidence lives in
+  // the Healing efficiency card (healing.js), and cooldown USAGE is below.
+  if (!runIsHealer()) {
+    log("");
+    if (!fnd.proc.isReal) {
+      log("=== BIG HITS ARE CRIT-DRIVEN, NOT A PROC ===");
+      log("  Your outsized hits are crits, not a missed empowerment button. More big");
+      log("  hits = more crit + raid damage buffs (comp), not a rotation change.");
     } else {
-      log(`  proc hits/min:  you ${p.youPerMin.toFixed(1)}   peers ${p.fieldPerMin == null ? "?" : p.fieldPerMin.toFixed(1)}`);
+      const p = fnd.proc;
+      log(`=== EMPOWERMENT (${p.name}, high-damage casts) ===`);
+      if (p.youEmp != null && p.fieldEmp != null) {
+        log(`  empowered casts:  you ${Math.round(p.youEmp * 100)}%   peers ${Math.round(p.fieldEmp * 100)}%`);
+        log(p.fieldEmp - p.youEmp >= 0.12
+          ? "  -> Fewer than peers -- land your hardest hit in its empower/amp window more often."
+          : "  -> About the same as peers. Your big hits land in their window as often; the per-cast gap is stats/comp/fight-amp, not timing.");
+      } else {
+        log(`  proc hits/min:  you ${p.youPerMin.toFixed(1)}   peers ${p.fieldPerMin == null ? "?" : p.fieldPerMin.toFixed(1)}`);
+      }
     }
   }
 
@@ -588,7 +594,11 @@ export async function run(log, name, server, region, className = "Monk",
   // Drop over-press findings that are really a hero-tree/build difference (you
   // press a button the field replaced) rather than a rotation error.
   const over = realOveruse(u.over, fnd.heroMatched);
-  if (under.length || over.length) {
+  // HEALERS: the raw "press X more / less" cast-rate diff is the reactive misframe
+  // (you cast to match incoming damage, not to a target rate) -- suppress it. The
+  // valid healer rotation signal is cooldown USAGE (printed via the prescription's
+  // COOLDOWN items) + the Healing efficiency card.
+  if (!runIsHealer() && (under.length || over.length)) {
     log("");
     log(`=== ABILITY USAGE vs PEERS (casts/min, ${fnd.fieldPeers} peers` +
         `${fnd.heroMatched ? `, all on ${fnd.heroMatched}` : ""}) ===`);
@@ -642,7 +652,13 @@ export function rotationLevers(rot) {
       // pool can skew to a different hero tree (a Guardian on Elune's Chosen vs
       // Druid-of-the-Claw peers who press Ravage). A skipped damage talent the field
       // takes is the missing-talent branch above, not "press it more".
-      const underAbilities = u.under.filter((a) => castable(a.name, rot && rot.talent));
+      // HEALERS: suppress the reactive "press more heals" rec. Healing is reactive
+      // -- you cast to match incoming damage, so "the field presses Vivify 30/min vs
+      // your 11, press it more" is a misframe (casting more heals into less damage
+      // just overheals). A genuine build gap (missing-talent/talented-unused above)
+      // still fires; under-used healing COOLDOWNS fire below ("use Rewind more" is a
+      // real HPS rec). Only this raw cast-rate "press more" is wrong for a healer.
+      const underAbilities = runIsHealer() ? [] : u.under.filter((a) => castable(a.name, rot && rot.talent));
       if (underAbilities.length) {
         const under = underAbilities.slice(0, 2).map((a) => `${link(a.name)} (peers ${f(a.field, 1)}/min vs your ${f(a.you, 1)})`);
         const wrongButton = realOver.length > 0;
@@ -705,7 +721,11 @@ export function rotationLevers(rot) {
   // of that -- and the advice ("land your hardest hit inside its window") is the
   // same whether the window is a self-combo or a target debuff. Sized by the
   // per-cast gap, but gated so it can't fire on a uniform stat/amp gap.
-  const emp = ((rot && rot.perCast) || []).find(
+  // HEALERS: no empowerment lever. "Land your hardest hit in its high-damage window"
+  // is a damage-mechanic concept; a big cooldown heal's outsized cluster can also
+  // false-trigger the underlying proc detection. A healer's efficiency lever is
+  // overhealing (healing.js), not empowerment timing.
+  const emp = !runIsHealer() && ((rot && rot.perCast) || []).find(
     (pc) => pc.youEmp != null && pc.fieldEmp != null && pc.pct >= 1 &&
             pc.fieldEmp >= 0.2 && pc.fieldEmp - pc.youEmp >= 0.12);
   if (emp) {
