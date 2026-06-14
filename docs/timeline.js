@@ -136,6 +136,7 @@ function printBossComparison(log, c) {
   // out-of-melee row only when something's actually off-target. Class-agnostic.
   const splitShown = Math.max(c.you.rangeLostPerMin, c.peer.rangeLostPerMin) >= 0.1;
   const meleeShown = Math.max(c.you.autoDownPct, c.peer.autoDownPct) >= 0.1;
+  /** @type {Array<[string, string, string, boolean]>} */
   const rows = [
     ["lost GCD time /min", "lostPerMin", "s", true],
     ["  - out of range/moving /min", "rangeLostPerMin", "s", splitShown],

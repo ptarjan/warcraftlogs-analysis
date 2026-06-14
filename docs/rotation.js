@@ -436,7 +436,7 @@ export async function rotationFindings(name, server, region, className, specName
     // lever can decide WHY it's behind: a lower empowered share -> timing (empower
     // it more); equal shares -> uniform per-cast stats (leave it in the remainder).
     for (const pc of perCast) {
-      if (pc.name === biggest.name) { pc.youEmp = youEmp; pc.fieldEmp = fieldEmp; }
+      if (pc.name === biggest.name) Object.assign(pc, { youEmp, fieldEmp });
     }
   }
   // Your talented abilities, so the prescription can tell a skipped talent from a
