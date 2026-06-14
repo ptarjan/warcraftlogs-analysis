@@ -46,7 +46,7 @@ test("pickBenchmarkKill: median-parse kill, not an outlier survival kill", () =>
   assert.equal(banded.boss, "A");
   assert.equal(pickBenchmarkKill([]), null);
 });
-const { embellishmentRx, gemLever, statScore, gearLevers } = await import("../docs/gear.js");          // gear-domain lever
+const { embellishmentRx, gemLever, statScore, gearLevers, dedupeUniqueSwaps } = await import("../docs/gear.js");          // gear-domain lever
 
 test("gearLevers: many same-stat swaps collapse into ONE legible re-itemize line", () => {
   const sw = (slot, gain) => ({ slot, gain, fromId: 1, fromName: `${slot}-old`, toId: 2, toName: `${slot}-new` });
@@ -59,6 +59,24 @@ test("gearLevers: many same-stat swaps collapse into ONE legible re-itemize line
   assert.equal(reit.length, 1, "5 swaps -> one grouped line");
   for (const s of ["Neck", "Ring1", "Ring2", "Feet", "Back"]) assert.match(reit[0].text, new RegExp(s));  // every exact swap kept
   assert.ok(!many.some((x) => /via Neck/.test(x.text)), "no separate per-slot swap lines");
+});
+
+test("dedupeUniqueSwaps: a unique ring can't be recommended for both ring slots", () => {
+  // Both rings independently pick the field-favored Omission of Light (+160). You
+  // can only wear one -- keep the bigger-gain slot, drop the duplicate.
+  const swaps = [
+    { slot: "Ring1", toId: 251093, toName: "Omission of Light", gain: 160, unique: true },
+    { slot: "Ring2", toId: 251093, toName: "Omission of Light", gain: 120, unique: true },
+    { slot: "Feet", toId: 250026, toName: "Rootslippers", gain: 73, unique: true },
+  ];
+  const out = dedupeUniqueSwaps(swaps);
+  assert.deepEqual(out.map((s) => s.slot), ["Ring1", "Feet"]);   // Ring2 (smaller gain) dropped
+  // Non-unique items may legitimately fill two slots (e.g. a profession base item).
+  const nonUnique = [
+    { slot: "Ring1", toId: 9, toName: "Plain Band", gain: 50, unique: false },
+    { slot: "Ring2", toId: 9, toName: "Plain Band", gain: 50, unique: false },
+  ];
+  assert.equal(dedupeUniqueSwaps(nonUnique).length, 2);
 });
 
 test("statScore: bigger stat gains rank above smaller ones (not a flat band)", () => {

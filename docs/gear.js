@@ -11,6 +11,23 @@ import { wowheadItem } from "./links.js";
 // reads as abbreviated rather than a name cut off mid-word ("Swiftsweepers of Ra-de").
 const trunc = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + "…" : s);
 
+// A unique-equipped item fills only ONE slot, but each ring/trinket slot picks its
+// best alternative independently -- so both rings can land on the same field-favored
+// ring. You can't wear two; keep the bigger-gain slot and drop the duplicate, else
+// the list reads "replace Ring1 AND Ring2 with Omission of Light", which is impossible.
+// Non-unique items can legitimately fill two slots, so they're untouched.
+export function dedupeUniqueSwaps(swaps) {
+  const bestGain = new Map();
+  for (const sw of swaps) if (sw.unique) bestGain.set(sw.toId, Math.max(bestGain.get(sw.toId) || 0, sw.gain));
+  const used = new Set();
+  return swaps.filter((sw) => {
+    if (!sw.unique) return true;
+    if (used.has(sw.toId) || sw.gain < bestGain.get(sw.toId)) return false;
+    used.add(sw.toId);
+    return true;
+  });
+}
+
 // Up to n unique top-ranked candidates across the given encounters -- via the
 // shared core.topField so gear and talents select the same players (their
 // per-peer fetches dedupe).
@@ -243,7 +260,7 @@ export async function gearFindings(name, server, region, difficulty, className, 
         // require real adoption (>=3 of the field) to skip off-meta noise
         if ((cst[priority] || 0) - yoursPri >= 30 && cnt >= 3) {
           if (!bestAlt || cst[priority] > bestAlt.gain) {
-            bestAlt = { name: cst.name, gain: cst[priority], count: cnt, source: cst.source, dropChance: cst.dropChance, id: candId };
+            bestAlt = { name: cst.name, gain: cst[priority], count: cnt, source: cst.source, dropChance: cst.dropChance, id: candId, unique: cst.unique };
           }
         }
       }
@@ -253,7 +270,7 @@ export async function gearFindings(name, server, region, difficulty, className, 
       swaps.push({
         slot: SLOT[s], fromName: ist.name, fromId: g.id,         // your current item
         toName: bestAlt.name, toId: bestAlt.id,                  // the field's item to swap to
-        gain: bestAlt.gain, count: bestAlt.count, total: slotTotal,
+        gain: bestAlt.gain, count: bestAlt.count, total: slotTotal, unique: bestAlt.unique,
         source: bestAlt.source, dropChance: bestAlt.dropChance, instance,
       });
     }
@@ -300,7 +317,7 @@ export async function gearFindings(name, server, region, difficulty, className, 
   // embellishment -- not also a "swap to a drop here" line for the same slot.
   // (A crafted embellished piece is itemized to your stat anyway.)
   const embPlanSlots = new Set([...yourCombo, ...recommended.map((r) => r[0])]);
-  const reconciledSwaps = swaps.filter((sw) => !embPlanSlots.has(sw.slot));
+  const reconciledSwaps = dedupeUniqueSwaps(swaps.filter((sw) => !embPlanSlots.has(sw.slot)));
 
   const myGems = you.gear.flatMap((g) => (g.gems || []).map((gm) => gm.id)).filter(Boolean);
   const gemCount = new Map();
