@@ -195,7 +195,10 @@ export function fieldCastRates(peerRates) {
 // out rarely-cast noise; `ratio` requires a real gap (default: 2x).
 export function usageDivergence(youRate, fieldRate, { floor = 0.5, ratio = 2 } = {}) {
   const names = new Set([...Object.keys(youRate || {}), ...Object.keys(fieldRate || {})]);
-  const under = [], over = [];
+  /** @type {{name:string,you:number,field:number,gap:number,dmgPct?:number}[]} */
+  const under = [];
+  /** @type {{name:string,you:number,field:number,gap:number,dmgPct?:number}[]} */
+  const over = [];
   for (const n of names) {
     const y = (youRate || {})[n] || 0, fl = (fieldRate || {})[n] || 0;
     if (fl >= floor && fl >= y * ratio && fl - y >= floor) under.push({ name: n, you: y, field: fl, gap: fl - y });
