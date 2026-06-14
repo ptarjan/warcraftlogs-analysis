@@ -310,6 +310,8 @@ export async function rotationFindings(name, server, region, className, specName
   try {
     talent = await talentedAbilities(best.code, best.fight, you.sourceID);
   } catch (e) { /* no talent data -> levers treat under-use as a rotation fix */ }
+  // (The card + lever filter usage.under through castable() so they never tell you
+  // to "press more" a button you didn't talent.)
   // Merged ability name -> Wowhead spell id (yours + the field's), so the
   // prescription can link every ability it names (under/over-press, proc, the
   // never-pressed field ability). Yours wins on collision.
