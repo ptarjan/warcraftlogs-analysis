@@ -263,6 +263,111 @@ export async function fightEvents(code, fight, sourceId, start, end) {
   return { casts: casts.filter((e) => !e.fake), autos };
 }
 
+// --------------------------------------------------------------------- //
+// Pull/progression fetchers (the raid-night flow -- see progression.js)
+// --------------------------------------------------------------------- //
+// ONE bare fights() query for the WHOLE report: every pull's metadata in a single
+// request -- the cheap backbone for trend/wall/kill detection and who's present.
+// `fresh` bypasses the cache for LIVE polling (an in-progress report's fight list
+// grows); finished reports use the default permanent cache. Single canonical query
+// string so it memoizes. Per-pull TABLES still go through reportCore (immutable).
+export async function reportFights(code, { fresh = false } = {}) {
+  const q = `query { reportData { report(code:"${clean(code)}") { fights {
+    id startTime endTime name kill fightPercentage bossPercentage difficulty size
+    encounterID lastPhase averageItemLevel friendlyPlayers } } } }`;
+  return ((await gql(q, 6, { fresh })).reportData.report.fights) || [];
+}
+
+// All death events across a SET of pulls in ONE request (deaths are low-volume, so
+// a whole night fits well under the 10k page limit; paginate just in case). No
+// sourceID -- we want every raider's death. Each event carries `fight` so we bucket
+// by pull client-side. `killingAbilityGameID` is the killing blow; `targetID` the
+// victim (resolve to a name via reportRoster).
+export async function reportDeaths(code, fightIDs, { fresh = false } = {}) {
+  const ids = `[${(fightIDs || []).join(",")}]`;
+  const out = [];
+  let cursor = null;
+  for (;;) {
+    const stArg = cursor != null ? `, startTime: ${cursor}` : "";
+    const q = `query { reportData { report(code:"${clean(code)}") { events(
+      fightIDs:${ids}, dataType:Deaths, limit:10000${stArg}) { data nextPageTimestamp } } } }`;
+    const ev = (await gql(q, 6, { fresh })).reportData.report.events;
+    out.push(...(ev.data || []));
+    if (!ev.nextPageTimestamp) break;
+    cursor = ev.nextPageTimestamp;
+  }
+  return out;
+}
+
+// Report-local actor id -> { name, type, subType } map, so death/roster ids resolve
+// to player names + class (subType is the class for a Player actor). One light
+// query per report.
+export async function reportRoster(code) {
+  const q = `query { reportData { report(code:"${clean(code)}") {
+    masterData { actors { id name type subType } } } } }`;
+  const actors = (((await gql(q)).reportData.report.masterData) || {}).actors || [];
+  const byId = new Map();
+  for (const a of actors) byId.set(a.id, a);
+  return byId;
+}
+
+// Median field KILL time (ms) for an encounter -- the reference for sizing a DPS
+// check (how long the field takes to kill, vs how long the group survives at the
+// wall). Top parses are all kills, so their `duration` is the kill time; metric is
+// the run metric (kill time is the same regardless, but the query needs one).
+export async function encounterKillTimes(encounterId, difficulty) {
+  const q = `query { worldData { encounter(id:${encounterId}) { characterRankings(
+    difficulty:${difficulty}, metric:${_metric}, page:1) } } }`;
+  const cr = (await gql(q)).worldData.encounter.characterRankings;
+  const ranks = (cr && typeof cr === "object" ? (cr.rankings || []) : []);
+  return ranks.map((r) => r.duration).filter((d) => d > 0);
+}
+
+// Report codes where this character pulled a given boss, NEWEST first -- for the
+// "whole progression" (multi-night) view. Kill-rankings only list nights the boss
+// DIED, so we also walk recentReports to catch wipe-only progression nights (the
+// caller filters those to reports that actually contain the encounter).
+export async function reportsForBoss(name, server, region, encounterId, difficulty, { maxReports = 20 } = {}) {
+  const seen = new Set(), out = [];
+  const er = await characterEncounter(name, server, region, encounterId, difficulty);
+  for (const rk of ((er && er.ranks) || [])) {
+    const code = rk.report && rk.report.code;
+    if (code && !seen.has(code)) { seen.add(code); out.push({ code, startTime: rk.startTime || 0, killed: true }); }
+  }
+  try {
+    const q = `query { characterData { character(
+      name:"${cName(name)}", serverSlug:"${slug(clean(server))}", serverRegion:"${cRegion(region)}") {
+      recentReports(limit:${maxReports}) { data { code startTime } } } } }`;
+    const rr = ((((await gql(q)).characterData.character || {}).recentReports) || {}).data || [];
+    for (const r of rr) if (r.code && !seen.has(r.code)) { seen.add(r.code); out.push({ code: r.code, startTime: r.startTime || 0, killed: false }); }
+  } catch { /* best effort -- kill reports alone still work */ }
+  return out.sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
+}
+
+// A character's recent reports (raid nights), newest first -- for the progression
+// flow's "pick a recent raid" quick-picks. Best-effort; [] on any hiccup.
+export async function recentReportsFor(name, server, region, limit = 12) {
+  try {
+    const q = `query { characterData { character(
+      name:"${cName(name)}", serverSlug:"${slug(clean(server))}", serverRegion:"${cRegion(region)}") {
+      recentReports(limit:${limit}) { data { code startTime title zone { name } } } } } }`;
+    const c = (await gql(q)).characterData.character;
+    const data = (((c && c.recentReports) || {}).data) || [];
+    return data.filter((r) => r && r.code).sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
+  } catch { return []; }
+}
+
+// Parse a WCL report reference -- a full URL, a "?code=..&fight=.." link, or a bare
+// report code -- into { code, fight }. `fight` is the optional fight id ("last" or a
+// number) from the URL fragment; null if absent.
+export function parseReportRef(input) {
+  const s = String(input || "").trim();
+  const m = s.match(/reports\/(?:a:)?([A-Za-z0-9]{10,})/) || s.match(/[?&]code=([A-Za-z0-9]{10,})/) || s.match(/^([A-Za-z0-9]{10,})$/);
+  const code = m ? m[1] : "";
+  const fm = s.match(/[#&?]fight=(\d+|last)/);
+  return { code, fight: fm ? fm[1] : null };
+}
+
 // Self-buff uptime % keyed by buff name (match by keyword to compare).
 export async function buffUptimes(code, fight, sourceId) {
   const q = `query { reportData { report(code:"${code}") {

@@ -42,6 +42,24 @@ payoff; the list is sorted **biggest-DPS-first by the impact actually shown**.
 - **One fetch per report.** All report reads go through `core.reportCore` (one
   bundled, memoized query per `report+fight`); `test/loader.test.mjs` fails if any
   table/event is fetched twice across a full run. Don't add a parallel fetch path.
+- **Second flow: raid progression** (`progression.js`, the "Raid progression" tab).
+  Analyzes a whole report's PULLS to tell the GROUP what to change to kill the boss
+  (wipes/deaths/phase/DPS-gate, not one character's peer gap). Same compute/render
+  split: `progressionFindings(code,…)` computes, `run()` streams. Reuses the cache +
+  the `finding()` model, but owns its OWN sorted list and Score constructors
+  (`BLOCK`/`GATE`) and `dim`s (`Survival`/`DPSCheck`/`Mechanic`/`Roster`) — it does
+  NOT feed `prescribe`. Budget-bounded: `reportFights` (1, all pull metadata) +
+  `reportDeaths` (1, batched across pulls) + `reportRoster` (1) + `reportCore` on
+  only the deepest+recent pulls. NEVER fetch tables per pull. Same hard rules apply:
+  derive ability/boss names from data (`spellTooltip`/roster), no hard-coded enrage
+  (size the DPS check from the field's own kill time), require a wipe cause to recur
+  across ≥2 pulls before naming it.
+- **Live report caching is the ONE exception to permanent report caching.** A
+  live report's fight LIST grows mid-raid; `_isImmutable` keys off query text and
+  can't tell live from finished, so `gql(q, retries, {fresh:true})` bypasses every
+  read cache (and skips persisting) for the poll. Only `reportFights`/`reportDeaths`
+  thread `fresh`; ended pulls' TABLES are immutable and stay cached. Don't widen
+  `_isImmutable` — it's load-bearing for the "logged kills never change" model.
 - camelCase all derived fields. Snake_case only for OAuth/HTTP wire formats.
 - **Verify every WCL GraphQL field/arg against the schema — don't guess.** Before
   adding or changing a query, check `WCL-SCHEMA.md` (our verified query surface +

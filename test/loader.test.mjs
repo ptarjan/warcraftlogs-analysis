@@ -54,6 +54,9 @@ function unitsOf(q) {
     if (fid && dt) units.add(`${code}:${fid}:${dt}${sid ? ":src" + sid : ""}${ab ? ":ab" + ab : ""}`);
   }
   for (const m of q.matchAll(/fights\s*\(\s*fightIDs:\s*\[?(\d+)/g)) units.add(`${code}:${m[1]}:fights`);
+  // The progression flow's report-wide fight list: fights() with NO fightIDs. One
+  // canonical accessor (reportFights), so two of these on a report = a dupe.
+  if (/fights\s*\{/.test(q)) units.add(`${code}:all:fights`);
   return units;
 }
 

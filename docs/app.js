@@ -2,10 +2,12 @@
 // UI wiring: pick character/region/server, auto-detect the rest, then render
 // the result as a web report -- the prioritized list of changes up top, with
 // the supporting analyses as collapsible cards below.
-import { detectContext, detectPriority, DIFFICULTY, raidTeammates, slug, metricForSpec, setRunMetric, metricUnit } from "./core.js";
+import { detectContext, detectPriority, DIFFICULTY, raidTeammates, slug, metricForSpec, setRunMetric, metricUnit,
+  parseReportRef, reportFights, recentReportsFor, encountersIn } from "./core.js";
 import { isAuthed, beginLogin, handleRedirectCallback, logout } from "./auth.js";
 import { NeedsAuth, myCharacters, primeRateReset, fmtRateWait } from "./wcl.js";
 import { paramsFromSearch, shareSearch, encodeSnapshot, decodeSnapshot, snapshotFromHash } from "./share.js";
+import * as progression from "./progression.js";
 import * as overview from "./overview.js";
 import * as timeline from "./timeline.js";
 import * as rotation from "./rotation.js";
@@ -20,6 +22,11 @@ import * as prescribe from "./prescribe.js";
 const $ = (id) => document.getElementById(id);
 const out = $("out"), statusEl = $("status"), goBtn = $("go"), form = $("form");
 const regionSel = $("region"), serverSel = $("server"), authEl = $("auth");
+const modebar = $("modebar"), progForm = $("progform"), progPicker = $("progpicker");
+
+// Which flow is active: "player" (the per-character DPS list) or "progression"
+// (the raid-night pull analyzer). The mode toggle (modebar) flips it when connected.
+let mode = "player";
 
 // Escape user-supplied text before it goes into innerHTML (e.g. a character name
 // from a URL param shown in the connect prompt).
@@ -119,15 +126,32 @@ function charButton({ name, server, region, label, extra, cls = "charbtn" }) {
 
 let pickerRun = 0; // guards against a stale async teammates append after a re-render
 
+// Show only the active flow's input. The modebar appears once connected; the
+// player form/picker and the progression form/picker are mutually exclusive.
+function applyMode() {
+  const authed = isAuthed();
+  if (modebar) modebar.style.display = authed ? "" : "none";
+  const showPlayer = authed && mode === "player";
+  const showProg = authed && mode === "progression";
+  form.style.display = showPlayer ? "" : "none";
+  const picker = $("picker"); if (picker && !showPlayer) picker.style.display = "none";
+  if (progForm) progForm.style.display = showProg ? "" : "none";
+  if (progPicker && !showProg) progPicker.style.display = "none";
+  if (modebar) for (const t of modebar.querySelectorAll(".modetab")) t.classList.toggle("active", t.dataset.mode === mode);
+}
+function setMode(m) { mode = m; applyMode(); renderMode(); }
+if (modebar) for (const t of modebar.querySelectorAll(".modetab")) t.onclick = () => setMode(t.dataset.mode);
+
 async function renderMode() {
   const picker = $("picker");
   if (!isAuthed()) {
-    form.style.display = "none";
+    applyMode();
     if (picker) renderConnectPrompt(picker);
     return;
   }
+  applyMode();
+  if (mode === "progression") { renderProgPicker(); return; }
   // Connected: the form analyzes any character; the picker is a shortcut to yours.
-  form.style.display = "";
   if (!picker) return;
   const run = ++pickerRun;
   let chars = [];
@@ -233,6 +257,7 @@ function runResume(c) {
     runResume(resume);
     return;
   }
+  if (progDeepLink()) return;          // ?report= link -> raid-progression flow
   if (!(await deepLink())) renderMode();
 })();
 
@@ -557,6 +582,7 @@ async function maybeRenderShared() {
 }
 function goBack() {
   setRunning(false);
+  stopPolling();             // stop any live progression refresh
   activeHero = null;
   out.innerHTML = ""; cur = null;
   // Drop the deep-link params so a reload doesn't immediately re-run the analysis.
@@ -674,6 +700,193 @@ async function runAnalysis({ name, server, region, serverLabel }) {
     setRunning(false);
   }
 }
+
+// --------------------------------------------------------------------------- //
+// Raid PROGRESSION flow: analyze a report's pulls and stream the group's "what to
+// change to kill the boss" list. Auto-reloads live as new pulls land.
+// --------------------------------------------------------------------------- //
+const fmtDate = (ms) => { try { return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" }); } catch { return ""; } };
+
+// Recent raid nights as quick-picks (best-effort), plus the paste-a-URL form.
+async function renderProgPicker() {
+  if (!progPicker) return;
+  const run = ++pickerRun;
+  progPicker.style.display = "";
+  progPicker.innerHTML = "";
+  const h = document.createElement("div");
+  h.className = "picker-h";
+  h.textContent = "Recent raid nights — or paste a report URL above";
+  progPicker.appendChild(h);
+  let chars = [];
+  try { chars = await myCharacters(); } catch { chars = []; }
+  if (run !== pickerRun) return;
+  let reps = [];
+  if (chars.length) { try { reps = await recentReportsFor(chars[0].name, chars[0].server, chars[0].region, 12); } catch { reps = []; } }
+  if (run !== pickerRun) return;
+  if (!reps.length) {
+    const m = document.createElement("div"); m.className = "muted";
+    m.textContent = "Paste a Warcraft Logs report URL above to analyze a night of pulls.";
+    progPicker.appendChild(m); return;
+  }
+  const grid = document.createElement("div");
+  grid.className = "picker-grid";
+  for (const rp of reps) {
+    const b = document.createElement("button"); b.type = "button"; b.className = "charbtn";
+    const cn = document.createElement("span"); cn.className = "cn"; cn.textContent = rp.title || (rp.zone && rp.zone.name) || "Raid night";
+    const cs = document.createElement("span"); cs.className = "cs";
+    cs.textContent = [fmtDate(rp.startTime), rp.zone && rp.zone.name].filter(Boolean).join(" · ");
+    b.append(cn, cs);
+    b.onclick = () => runProgression({ code: rp.code, live: false });
+    grid.appendChild(b);
+  }
+  progPicker.appendChild(grid);
+}
+
+// A progression-specific hero: report link + a status line (boss/pulls/wall) and a
+// row for the encounter chooser and the live indicator.
+function buildProgHero(code) {
+  const h = document.createElement("section"); h.className = "hero";
+  const who = document.createElement("div"); who.className = "who";
+  who.textContent = "Raid progression ";
+  const small = document.createElement("small");
+  const a = document.createElement("a");
+  a.href = `https://www.warcraftlogs.com/reports/${code}`; a.target = "_blank"; a.rel = "noopener";
+  a.textContent = `report ${code}`;
+  small.appendChild(a); who.appendChild(small);
+  const det = document.createElement("div"); det.className = "detecting";
+  det.textContent = "Reading pulls…";
+  const encbar = document.createElement("div"); encbar.className = "encbar";
+  h.append(who, det, encbar); out.appendChild(h);
+  return {
+    el: h, det, encbar,
+    setStatus(r) {
+      if (!r) { det.textContent = ""; return; }
+      const wall = r.wall ? ` · wall ~${r.wall.rem}% left${r.multiPhase ? ` (P${r.wall.phase})` : ""}` : "";
+      const best = r.deepest ? ` · best ${Math.round(r.bestRemaining)}% left` : (r.killed ? " · KILLED ✓" : "");
+      det.textContent = `${DIFFICULTY[r.difficulty] || ""} ${r.boss} · ${r.nPulls} pulls${best}${wall}`.trim();
+    },
+  };
+}
+
+// The encounter chooser chips (when a report has more than one boss) + the live dot.
+function buildEncBar(hero, encs, chosen, live) {
+  hero.encbar.innerHTML = "";
+  if (encs.length > 1) {
+    for (const e of encs) {
+      const c = document.createElement("button"); c.type = "button";
+      c.className = "encchip" + (e.encounterID === chosen ? " active" : "");
+      c.textContent = `${e.name} (${e.pulls})`;
+      c.onclick = () => { progCtx.encounterId = e.encounterID; renderProgFull(); };
+      hero.encbar.appendChild(c);
+    }
+  }
+  if (live) {
+    const lf = document.createElement("span"); lf.className = "liveflag";
+    const dot = document.createElement("span"); dot.className = "dot";
+    lf.append(dot, document.createTextNode("Live — auto-reloading every 45s"));
+    hero.encbar.appendChild(lf);
+  }
+}
+
+let progCtx = null;       // { code, encounterId, live }
+let progPoll = null;      // pending setTimeout for the next live refresh
+let progLiveOn = false;
+
+function stopPolling() { if (progPoll) { clearTimeout(progPoll); progPoll = null; } progLiveOn = false; }
+function progBusy(on) {
+  const gp = $("goprog"), ps = $("progstatus");
+  if (gp) { gp.disabled = on; gp.textContent = on ? "Analyzing…" : "Analyze pulls"; }
+  if (ps) ps.innerHTML = on ? '<span class="spin"></span>analyzing…' : "";
+}
+
+// One render pass: refresh the fight list (fresh on a live poll so the cache the
+// analysis reads is current), build the chooser, then stream the analysis into the
+// primary card. Returns the result (or null).
+async function renderProgOnce(hero) {
+  const { code, encounterId, live } = progCtx;
+  let fights = [];
+  try { fights = await reportFights(code, { fresh: live }); } catch (e) { /* analysis will surface the error */ }
+  const encs = encountersIn(fights);
+  const chosen = encounterId || (encs[0] && encs[0].encounterID) || null;
+  buildEncBar(hero, encs, chosen, live);
+  const card = makeCard("What to change to kill it", { primary: true, prose: false });
+  setCardState(card, "busy"); cur = card;
+  try {
+    // fresh:false -- the fight list was just refreshed above (its fresh write
+    // updates the in-memory cache); ended pulls' deaths/tables are immutable.
+    const r = await progression.run(makeLog(card), { code }, { encounterId: chosen, fresh: false });
+    setCardState(card, "done");
+    hero.setStatus(r);
+    return r;
+  } catch (err) {
+    setCardState(card, "error");
+    if (err instanceof NeedsAuth) throw err;
+    note(`${err.message || err}`, "err");
+    return null;
+  }
+}
+
+// Full (re)render of the progression report -- also the live-poll body.
+async function renderProgFull() {
+  if (progPoll) { clearTimeout(progPoll); progPoll = null; }
+  out.innerHTML = ""; cur = null;
+  addBackBar();
+  window.scrollTo(0, 0);
+  const hero = buildProgHero(progCtx.code); activeHero = hero;
+  progBusy(true);
+  let r = null;
+  try { r = await renderProgOnce(hero); }
+  catch (err) {
+    if (err instanceof NeedsAuth) {
+      stopPolling(); logout(); renderAuth();
+      note(err.message || "Reconnect to Warcraft Logs to continue.", "err");
+      progBusy(false); return;
+    }
+  }
+  progBusy(false);
+  statusEl.textContent = "Done.";
+  // Live: keep refreshing until the boss dies (or the user stops / leaves).
+  if (progLiveOn && !(r && r.killed)) progPoll = setTimeout(() => { if (progLiveOn) renderProgFull(); }, 45000);
+  if (progLiveOn && r && r.killed) { stopPolling(); hero.det.textContent += " — killed, live updates stopped ✓"; }
+}
+
+// Entry: run the progression analyzer for a report (from the form, a quick-pick,
+// or a deep link). `live` starts the auto-reload poll.
+async function runProgression({ code, encounterId = null, live = false }) {
+  if (!code) return;
+  stopPolling();
+  progLiveOn = live;
+  progCtx = { code, encounterId, live };
+  try { history.replaceState(null, "", location.pathname + `?report=${encodeURIComponent(code)}` + (encounterId ? `&enc=${encounterId}` : "") + (live ? "&live=1" : "")); } catch (e) { /* ignore */ }
+  primeRateReset();
+  if (modebar) modebar.style.display = "none";
+  if (progForm) progForm.style.display = "none";
+  if (progPicker) progPicker.style.display = "none";
+  const intro = document.getElementById("intro"); if (intro) intro.style.display = "none";
+  await renderProgFull();
+}
+
+// ?report=CODE[&enc=ID][&live=1] deep link -> run the progression flow.
+function progDeepLink() {
+  const p = new URLSearchParams(location.search);
+  const raw = (p.get("report") || "").trim();
+  if (!raw) return false;
+  mode = "progression";
+  const { code } = parseReportRef(raw);
+  if (!code) return false;
+  if (!isAuthed()) return false;   // can't run until connected; the prompt resumes the mode
+  const enc = parseInt(p.get("enc") || "", 10);
+  runProgression({ code, encounterId: Number.isFinite(enc) ? enc : null, live: p.get("live") === "1" });
+  return true;
+}
+
+if (progForm) progForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const { code } = parseReportRef(($("report").value || "").trim());
+  const live = !!($("live") && $("live").checked);
+  if (!code) { out.innerHTML = ""; cur = makeCard("Error"); note("Paste a Warcraft Logs report URL or code.", "err"); return; }
+  runProgression({ code, live });
+});
 
 // Search form: analyze ANY character once connected (yours or a friend's).
 // Shown only when connected; the Connect prompt replaces it otherwise.

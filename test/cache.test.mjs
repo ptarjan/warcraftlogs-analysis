@@ -40,3 +40,26 @@ test("a fetched query is served from the cache on the next reload (no 2nd fetch)
   globalThis.fetch = async () => { throw new Error("must NOT hit the network on reload"); };
   assert.deepEqual(await gql(q), { n: 42 }, "served from the persistent cache, no fetch");
 });
+
+test("gql({fresh}) bypasses every read cache and re-fetches (live-report poll)", async () => {
+  const { gql, clearGqlCache } = await import("../docs/wcl.js");
+  clearGqlCache();
+  const q = "query{ live-report }";
+  let n = 0;
+  globalThis.fetch = (() => {
+    const f = async (url) => {
+      if (String(url).includes("oauth/token")) return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ access_token: "tok", expires_in: 3600 }) };
+      n++;
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ data: { n } }), text: async () => "" };
+    };
+    return f;
+  })();
+  // A normal call caches; a second normal call is served from cache (no re-fetch).
+  assert.deepEqual(await gql(q), { n: 1 });
+  assert.deepEqual(await gql(q), { n: 1 }, "cached");
+  // fresh:true ignores the cache and hits the network again (the live fight list grew).
+  assert.deepEqual(await gql(q, 6, { fresh: true }), { n: 2 }, "fresh bypasses the cache");
+  // It also does NOT poison the cache for a later non-fresh reader -- but DOES make
+  // the latest value visible (we update _gqlCache so downstream sees the new list).
+  assert.deepEqual(await gql(q), { n: 2 }, "latest fresh value is visible to non-fresh readers");
+});

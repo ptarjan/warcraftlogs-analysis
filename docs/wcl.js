@@ -315,30 +315,42 @@ export async function rateLimit() {
   } catch (e) { return null; }
 }
 
-export async function gql(query, retries = 6) {
+// `fresh: true` bypasses every read cache (in-memory, inflight, persistent) and
+// does NOT persist the result -- for polling a LIVE report whose fight list is
+// still growing during a raid. The immutability heuristic (_isImmutable) keys off
+// the query TEXT and can't tell a live report from a finished one, so the
+// caller signals freshness instead. Only the report-wide fight-list / deaths
+// poll uses it; per-pull TABLES (an ended pull) stay permanently cached as before.
+// We still update _gqlCache with the latest result so same-tick non-fresh readers
+// downstream see the new fight list rather than a stale one.
+export async function gql(query, retries = 6, { fresh = false } = {}) {
   await initDisk();                 // seeds _gqlCache from disk on first call (Node)
-  if (_gqlCache.has(query)) return _gqlCache.get(query);
-  if (_gqlInflight.has(query)) return _gqlInflight.get(query);
+  if (!fresh) {
+    if (_gqlCache.has(query)) return _gqlCache.get(query);
+    if (_gqlInflight.has(query)) return _gqlInflight.get(query);
+  }
   // Build the work as ONE promise before awaiting -- the persistent read is now
   // async (IndexedDB), so doing it outside the inflight map would let concurrent
   // callers all miss the cache and double-fetch. Set inflight synchronously.
   const p = (async () => {
-    if (PERSIST) {
+    if (!fresh && PERSIST) {
       const stored = await _cacheRead(query);
       if (stored !== undefined) return stored; // cross-reload hit -- no network
     }
-    const fresh = await _gqlRun(query, retries);
-    diskPut(query, fresh);              // Node CLI disk cache (no-op in the browser)
-    if (PERSIST) _cacheWrite(query, fresh); // browser IndexedDB cache (1h TTL), fire-and-forget
-    return fresh;
+    const data = await _gqlRun(query, retries);
+    if (!fresh) {
+      diskPut(query, data);              // Node CLI disk cache (no-op in the browser)
+      if (PERSIST) _cacheWrite(query, data); // browser IndexedDB cache (1h TTL), fire-and-forget
+    }
+    return data;
   })();
-  _gqlInflight.set(query, p);
+  if (!fresh) _gqlInflight.set(query, p);
   try {
     const data = await p;
     _gqlCache.set(query, data);
     return data;
   } finally {
-    _gqlInflight.delete(query);
+    if (!fresh) _gqlInflight.delete(query);
   }
 }
 

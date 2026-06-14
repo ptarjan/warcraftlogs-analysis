@@ -25,7 +25,24 @@ are valid.
   - `table(fightIDs, dataType, sourceID?, hostilityType?)` → JSON. `dataType`: TableDataType (`DamageDone`, `Casts`, `Buffs`, `Debuffs`). `hostilityType`: `Enemies`.
   - `events(fightIDs, dataType, limit, sourceID?, abilityID?, startTime?, endTime?)` → `ReportEventPaginator { data, nextPageTimestamp }`. `dataType`: EventDataType (`Casts`, `DamageDone`, `CombatantInfo`).
   - `fights(fightIDs) { startTime, endTime }` → `[ReportFight]` (also has `kill`, `difficulty`, `size`).
-  - `masterData { actors { name, server, type } }` → `[ReportActor]`.
+  - `fights { … }` with NO `fightIDs` → ALL pulls in the report (the progression
+    flow's backbone). Verified-present `ReportFight` fields (live, 2026-06):
+    `id, name, kill, fightPercentage, bossPercentage, lastPhase, encounterID,
+    friendlyPlayers ([Int] actor ids), averageItemLevel, difficulty, size,
+    startTime, endTime`. `fightPercentage`/`bossPercentage` are boss health
+    REMAINING (0 = kill); `lastPhase` is the phase reached.
+  - `events(fightIDs:[Int], dataType:Deaths, limit:10000)` → death events across
+    MANY pulls in one request; each row carries `fight` so you bucket per-pull.
+    Verified Death-event fields: `timestamp, type, sourceID, targetID,
+    abilityGameID, fight, killerID, killingAbilityGameID` (killing blow = last).
+  - `masterData { actors { id, name, server, type, subType } }` → `[ReportActor]`.
+    For a Player, `subType` is the CLASS (e.g. "Paladin"); `id` matches event
+    `targetID`/`sourceID`.
+- `characterData.character(...).recentReports(limit) { data { code startTime title zone { name } } }`
+  → recent raid nights (the progression picker; works on the client/CLI token too).
+- `worldData.encounter(id).characterRankings(difficulty, metric, page)` with NO
+  className/specName → top parses across all specs; their `duration` (ms) is the
+  field KILL time (the DPS-check reference — no hard-coded enrage).
 - `userData.currentUser.characters` → `[Character]` (user API + view-user-profile scope).
 - `rateLimitData { pointsResetIn }` (also `limitPerHour`, `pointsSpentThisHour`).
 

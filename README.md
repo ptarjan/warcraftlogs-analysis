@@ -51,6 +51,29 @@ obvious answers turned out to be wrong; these are the comparisons that survived:
 - **Prescription** — aggregates all of the above into one ordered to-do list,
   each item with a rough DPS-impact estimate. This is the one to read.
 
+## Raid progression (a second flow)
+
+Same data, same caches — a different question. The **Raid progression** tab (top
+of the page, once connected) analyzes a whole **night of pulls** on a boss and
+hands the *group* a few actionable, named changes to get the kill — driven by
+**wipes, deaths, phase progress, and the DPS gate**, not one character's peer gap.
+
+- **Input:** paste a Warcraft Logs **report URL** (or pick a recent raid night).
+- **What it finds:** the **wall** (where recent wipes keep ending — phase +
+  boss-% bucket), the **recurring killing-blow mechanic** and who keeps dying to
+  it (named), repeat-dying players, and — when the raid is damage-light and not
+  death-capped — a **DPS check** sized from an estimated boss HP vs the field's
+  own kill time (no hard-coded enrage), naming the lowest contributors.
+- **Backtest:** it reads every pull to show the trend toward a kill, and flags a
+  **roster change** that coincided with deeper progress.
+- **Live:** tick **Auto-reload** during raid — it re-polls the report's fight
+  list every 45s (the only cache-bypassing query; ended pulls' tables stay
+  cached) and re-suggests as pulls land, stopping when the boss dies.
+
+Budget-bounded by design: ~6 WCL requests for a 30–60-pull night (one fight-list,
+one batched deaths query, one roster, and damage tables on only the deepest +
+most-recent pulls). Code: `docs/progression.js`.
+
 ## Deploy (free)
 
 You need one *public* WCL client for the browser, and (optionally) a free
@@ -117,6 +140,10 @@ export WCL_CLIENT_ID=...  WCL_CLIENT_SECRET=...
 node cli.mjs "Hadryan" proudmoore US                 # class/spec/difficulty auto-detected
 node cli.mjs "Hadryan" proudmoore US --only prescribe
 node cli.mjs "Name" server EU --class Monk --spec Brewmaster --difficulty 4   # override detection
+
+# Raid progression: backtest a night of pulls from the terminal
+node progression-cli.mjs "https://www.warcraftlogs.com/reports/aBcD1234"
+node progression-cli.mjs aBcD1234 --enc 2902                 # pin a specific encounter id
 ```
 
 Class, spec, difficulty, and gear priority are **auto-detected from your logs**
