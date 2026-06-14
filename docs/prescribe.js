@@ -7,7 +7,7 @@
 // need its own peer aggregates, then sorts + splits + renders.
 import {
   ENCHANTABLE_SLOTS, DIFFICULTY, characterZone, characterEncounter, playerMetrics,
-  ilvlPeers, PEER_SAMPLE, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry, bestRank, bestKill,
+  ilvlPeers, PEER_SAMPLE, secondaryStats, buffUptimes, bossDebuffs, median, f, detectPriority, mapLimit, topEntry, bestRank, bestKill,
   DPS, INFO, finding, fieldDelta, metricUnit, throughputWord, runIsHealer, healingBreakdown, manaStats,
 } from "./core.js";
 import { timelineFindings } from "./timeline.js";
@@ -170,8 +170,9 @@ async function fieldGearConsumables(name, server, region, encounter, difficulty,
   }
   // Raid-comp amp values from the SAME ilvl field: peers who had each self-buff vs
   // not. A measured floor (confounded -- a raid that brings an Aug also plays well),
-  // null where there's no counterfactual -> the curated estimate stands. Boss-side
-  // debuffs (Chaos Brand, Mystic Touch) aren't fetched per peer, so they keep the est.
+  // null where there's no counterfactual -> the lever is shown UNSIZED, never guessed.
+  // Boss-side debuffs (Chaos Brand, Mystic Touch) live on the ENEMY, not in a peer's
+  // buff table -- they're measured separately + on demand (bossDebuffDeltas).
   const compDeltas = {};
   for (const e of RAID_DAMAGE) {
     if (e.on !== "self") continue;
@@ -186,6 +187,33 @@ async function fieldGearConsumables(name, server, region, encounter, difficulty,
     // OVERHEALING lever measures your spill against. 0 for a damage field (harmless).
     overhealMed: peers.length ? median(peers.map((p) => p.m.overhealPct)) : null,
   };
+}
+
+// Boss-debuff comp value (Chaos Brand, Mystic Touch), MEASURED from the field the
+// same way the self-buff deltas are -- but the debuff sits on the ENEMY, not in a
+// peer's buff table, so it needs a per-peer Debuffs fetch (bossDebuffs). Only called
+// for boss debuffs you're actually MISSING (usually none -- most raids bring a DH /
+// Monk), so the extra request is paid ONLY when there's a lever to size. Re-uses the
+// cached ilvlPeers + playerMetrics (free); only bossDebuffs is a new request per peer.
+// Returns { key: fieldDelta } for the debuffs that split the field; absent (-> stays
+// UNSIZED) when the field is near-universal on it (no with/without counterfactual).
+async function bossDebuffDeltas(name, server, region, encounter, difficulty, className, specName, debuffs) {
+  if (!debuffs.length) return {};
+  const cands = await ilvlPeers(name, server, region, encounter, difficulty, className, specName);
+  const peers = (await mapLimit(cands, 5, async (r) => {
+    const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
+    if (!m || !(m.dps > 0)) return null;
+    const db = await bossDebuffs(r.report.code, r.report.fightID);
+    return { dps: m.dps, db };
+  })).filter(Boolean);
+  const dps = peers.map((p) => p.dps);
+  const out = {};
+  for (const e of debuffs) {
+    const has = peers.map((p) => Object.entries(p.db || {}).some(([nm, b]) => e.match.test(nm) && b.pct > 1));
+    const d = fieldDelta(dps, has);
+    if (d) out[e.key] = d;
+  }
+  return out;
 }
 
 async function mySetup(code, fight, sourceId, gear, priority = "crit", className = "Monk") {
@@ -839,6 +867,19 @@ export async function run(log, name, server, region, className = "Monk", specNam
   catch (e) { skipped.push("top-parse comparison"); }
   try { tal = await talentFindings(name, server, region, className, specName, difficulty); }
   catch (e) { skipped.push("talents"); }
+  // Size the BOSS-debuff comp levers (Chaos Brand / Mystic Touch) from the field too,
+  // but only the ones you're actually MISSING (so we pay the per-peer Debuffs fetch
+  // only when there's a lever to size -- usually none). Merges into field.compDeltas
+  // so topParseLevers picks it up; a debuff the field is near-universal on still has
+  // no split -> stays UNSIZED rather than guessed.
+  // Skip the per-peer fetch on a healer run: Chaos Brand / Mystic Touch are
+  // damage-TAKEN debuffs, so they can't size a healer's HPS (the delta would just
+  // measure ~0) -- not worth the budget; the lever stays an unsized roster note.
+  const missingBoss = (tp && tp.comp && !runIsHealer() ? tp.comp.missing : []).filter((e) => e.on === "boss");
+  if (missingBoss.length && field) {
+    const bd = await soft("boss-debuff comp", bossDebuffDeltas(name, server, region, gearBoss.encounter, difficulty, className, specName, missingBoss));
+    if (bd) Object.assign(field.compDeltas = field.compDeltas || {}, bd);
+  }
 
   // Fold every domain's levers into ONE list of findings, then sort biggest-DPS
   // first. impact is a real number, so the order can't disagree with the shown

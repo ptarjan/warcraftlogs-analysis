@@ -82,6 +82,15 @@ test("topParseLevers: comp magnitude is MEASURED from the field, never a curated
   assert.equal(augLev.impact, 0, "unmeasurable comp claims 0 of the gap, not a guess");
   assert.equal(augLev.label, "info");
   assert.match(augLev.text, /unmeasured|no with\/without split/i);
+
+  // A BOSS debuff (Chaos Brand) is sized the SAME way once measured (prescribe now
+  // fetches per-peer boss debuffs on demand and merges the delta into compDeltas).
+  const bossTp = { comp: { missing: [RAID_DAMAGE.find((e) => e.key === "chaosbrand")] }, routing: null, potions: null };
+  const bossLev = topParseLevers(bossTp, { chaosbrand: { pct: 5, nHave: 6, nNot: 5 } })[0];
+  assert.equal(bossLev.impact, 5, "boss-debuff comp sized from the measured field delta");
+  assert.equal(bossLev.basis, "measured");
+  // Unmeasured (near-universal field) -> still unsized, never guessed.
+  assert.equal(topParseLevers(bossTp, {})[0].impact, 0);
 });
 
 test("topParseLevers: damage-ROUTING lever is suppressed for healers (HPS run)", () => {
