@@ -284,6 +284,18 @@ export async function primeRateReset() {
   } catch (e) { /* best-effort */ }
 }
 
+// Live WCL quota snapshot for pacing/visibility: hourly point limit, points spent
+// this hour, remaining, and seconds to reset. Goes via _gqlRun (NOT gql) so it's
+// never cached -- a cached quota reading would be stale and useless. null on error.
+export async function rateLimit() {
+  try {
+    const d = (await _gqlRun("query { rateLimitData { limitPerHour pointsSpentThisHour pointsResetIn } }", 1)).rateLimitData;
+    if (!d) return null;
+    const limit = d.limitPerHour || 0, spent = d.pointsSpentThisHour || 0;
+    return { limit, spent, remaining: Math.max(0, limit - spent), resetIn: d.pointsResetIn || 0 };
+  } catch (e) { return null; }
+}
+
 export async function gql(query, retries = 6) {
   await initDisk();                 // seeds _gqlCache from disk on first call (Node)
   if (_gqlCache.has(query)) return _gqlCache.get(query);

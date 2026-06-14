@@ -364,11 +364,17 @@ export async function detectContext(name, server, region) {
     if (killed.length) { found = { difficulty: d, zr: c.zoneRankings, killed }; break; }
   }
   if (!found) throw new Error(`No ranked kills found for ${name}-${server} (${region}).`);
-  let cs = null;
+  // Prefer a DPS/tank spec over a healing one: a player who flexes heal+DPS (e.g.
+  // a Holy/Shadow Priest) should be analyzed on their DPS spec, not skipped as a
+  // healer. Only fall back to a healer spec if that's ALL they ever play.
+  let cs = null, healerCs = null;
   for (const r of found.killed) {
-    cs = await classSpecFromKill(name, server, region, r.encounter.id, found.difficulty);
-    if (cs && cs.specName) break;
+    const got = await classSpecFromKill(name, server, region, r.encounter.id, found.difficulty);
+    if (!got || !got.specName) continue;
+    if (!isHealer(got.specName)) { cs = got; break; }
+    healerCs = healerCs || got;
   }
+  cs = cs || healerCs;
   if (!cs || !cs.specName) throw new Error("Couldn't determine class/spec from your kills.");
   return { ...found, className: cs.className, specName: cs.specName };
 }
