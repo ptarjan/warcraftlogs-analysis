@@ -105,7 +105,11 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
       const evs = await paginateEvents(code, fight, m.sourceID, eventTable(), id, s, e);
       procPerMin = perHit(evs).procBig / (dur / 60 || 1);
     }
-    return { opener: openerSequence(casts), procPerMin, castRate, allCastRate, name2id };
+    // Return the per-ability damage TOTALS + cast rates too (no extra fetch -- they
+    // ride on the playerMetrics table already loaded). The per-cast-damage lever
+    // medians these across peers to see how hard the FIELD's same ability hits.
+    return { opener: openerSequence(casts), procPerMin, castRate, allCastRate, name2id,
+             dmgBy: m.dmgBy, total: m.total, dur };
   }
 
   // You: per-hit detail for the top damage abilities (bounded for API cost).
@@ -197,6 +201,42 @@ export function castUsageGaps(youRate, fieldRate, dur, { band = 1.5, minField = 
     out.push({ id, you: yr, field: fr, youPerFight: yr * mins, fieldPerFight: fr * mins, gap: fr - yr });
   }
   return out.sort((a, b) => b.gap - a.gap);
+}
+
+// Per-cast DAMAGE gaps vs the field, ABILITY-SPECIFIC -- the home of a big
+// playstyle remainder that ISN'T a missing cast (you press the button as often as
+// the field) but a WEAK one. When the field's same ability hits much harder per
+// cast than yours AND by more than their OVERALL damage edge (the comp+stats
+// baseline), only that ability is behind -- which can't be crit or comp (those
+// lift everything ~evenly), so you're landing it OUTSIDE its empowerment window
+// (the combo/buff/proc that powers your biggest hit -- e.g. an empowered Tiger
+// Palm). Class-agnostic: the abilities, per-cast damage, and the baseline all come
+// from the data; nothing about the spec is named. Sized by the ability-specific
+// per-cast excess (above the comp/stats baseline) valued at YOUR cast count, then
+// damped (single-kill crit RNG, and you can't empower 100% of casts).
+//   yourAb:       name -> { total, casts } (your damage + cast count this fight)
+//   fieldAb:      name -> median field damage-per-cast
+//   overallRatio: field median total / your total (the comp+stats baseline)
+export function perCastGaps(yourAb, fieldAb, overallRatio, yourTotal,
+    { minCasts = 3, minRatio = 1.5, overFactor = 1.25, damp = 0.5 } = {}) {
+  const out = [];
+  const base = overallRatio > 0 ? overallRatio : 1;
+  for (const [name, y] of Object.entries(yourAb || {})) {
+    const fpc = fieldAb[name];
+    if (fpc == null || !y.casts || y.casts < minCasts || !(y.total > 0)) continue;
+    const youPC = y.total / y.casts;
+    if (!(youPC > 0)) continue;
+    const raw = fpc / youPC;
+    // Must be a real gap (>=minRatio) AND ability-specific (clearly beyond the
+    // overall edge) -- an ability merely riding the field's general advantage is
+    // stats/comp, already covered elsewhere, not an empowerment lever.
+    if (raw < minRatio || raw < base * overFactor) continue;
+    const excessPC = Math.max(0, fpc / base - youPC);   // per-cast damage beyond the comp/stats baseline
+    const pct = Math.round(damp * 100 * excessPC * y.casts / (yourTotal || 1));
+    if (pct < 1) continue;
+    out.push({ name, youPerCast: youPC, fieldPerCast: fpc, raw, pct });
+  }
+  return out.sort((a, b) => b.pct - a.pct);
 }
 
 // Classify the field's top under-used ability against YOUR talents, so we only
@@ -303,6 +343,33 @@ export async function rotationFindings(name, server, region, className, specName
   const sum = (o) => Object.values(o || {}).reduce((a, b) => a + b, 0);
   const youCpm = sum(you.castRate), fieldCpm = sum(fieldRate);
   const castGap = { you: youCpm, field: fieldCpm, pct: fieldCpm > 0 ? Math.round(((fieldCpm - youCpm) / fieldCpm) * 100) : 0 };
+  // Per-cast DAMAGE gaps: your top abilities vs the field's SAME ability. The
+  // field's per-ability totals + cast rates ride on peer fetches we already did
+  // (no new query). overallRatio is the field's general damage edge (comp+stats),
+  // so the lever fires only on abilities behind by MORE than that -- the
+  // ability-specific empowerment gap that hides in the playstyle remainder.
+  let perCast = [];
+  if (peers.length) {
+    const yourMins = you.dur ? you.dur / 60 : 0;
+    const yourAb = {};
+    for (const h of you.hits) {
+      const casts = (you.castRate[h.name] || 0) * yourMins;
+      const total = (you.dmgTotals || {})[h.name] || 0;
+      if (casts > 0 && total > 0) yourAb[h.name] = { total, casts };
+    }
+    const fieldAb = {};
+    for (const nm of Object.keys(yourAb)) {
+      const pcs = peers.map((p) => {
+        const c = ((p.castRate || {})[nm] || 0) * (p.dur ? p.dur / 60 : 0);
+        return c >= 1 && (p.dmgBy || {})[nm] ? p.dmgBy[nm] / c : null;
+      }).filter((x) => x != null);
+      if (pcs.length >= 3) fieldAb[nm] = median(pcs);
+    }
+    const peerTotals = peers.map((p) => p.total).filter((x) => x > 0);
+    const overallRatio = peerTotals.length ? median(peerTotals) / (you.total || 1) : 1;
+    perCast = perCastGaps(yourAb, fieldAb, overallRatio, you.total ||
+      Object.values(you.dmgTotals || {}).reduce((a, b) => a + b, 0));
+  }
   // Your talented abilities, so the prescription can tell a skipped talent from a
   // baseline ability you simply aren't pressing (don't tell people to "respec"
   // for a baseline button). Best-effort: null if CombatantInfo/Raidbots missing.
@@ -318,7 +385,7 @@ export async function rotationFindings(name, server, region, className, specName
   const abilityIds = Object.assign({}, ...peers.map((p) => p.name2id || {}), you.name2id || {});
   return {
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener,
-    usage, cooldowns, cdUsage, castGap, fieldPeers: peers.length, talent, abilityIds,
+    usage, cooldowns, cdUsage, perCast, castGap, fieldPeers: peers.length, talent, abilityIds,
     proc: { name: top.name, isReal, youPerMin: top.procPerMin, fieldPerMin: fieldProc },
   };
 }
@@ -449,6 +516,18 @@ export function rotationLevers(rot) {
         `${cd.fieldPerFight.toFixed(0)}x -- ~${cd.pct}% of your damage. Use it on cooldown; it's a button you're ` +
         `skipping, not gear.`));
     }
+  }
+  // EMPOWERMENT: an ability you press as often as the field but that hits much
+  // weaker per cast (and only THAT ability) -- you're landing it un-empowered.
+  // Measured, the most concrete piece of a tank's big playstyle remainder.
+  const dk = (x) => `${Math.round(x / 1000).toLocaleString()}k`;
+  for (const pc of ((rot && rot.perCast) || []).slice(0, 2)) {
+    if (!pc.pct || pc.pct < 1) continue;
+    out.push(finding("Rotation", DPS(pc.pct),
+      `EMPOWERMENT: your ${link(pc.name)} lands ~${dk(pc.youPerCast)}/cast vs the field's ~${dk(pc.fieldPerCast)} ` +
+      `(${f(pc.raw, 1)}x) at your item level -- and only this ability trails, so it isn't crit or comp (those lift ` +
+      `everything evenly): you're casting it OUTSIDE its empowerment window. Find what powers your biggest hit -- ` +
+      `the combo/buff/proc that sets it up -- and press it only inside that window (verify in a log/guide).`, "measured"));
   }
   if (rot && rot.proc.isReal && rot.proc.fieldPerMin != null &&
       rot.proc.youPerMin < rot.proc.fieldPerMin - 0.4) {

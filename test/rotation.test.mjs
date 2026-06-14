@@ -5,7 +5,33 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps } = await import("../docs/rotation.js");
+
+test("perCastGaps: flags a hard hit you land WEAK -- ability-specific, beyond the comp/stats edge", () => {
+  // The field does 1.4x your total overall (comp+stats). Your Big hits 100k/cast,
+  // the field's lands 220k (2.2x) -- WAY beyond the 1.4x baseline, so it's
+  // ability-specific (un-empowered), not crit/comp. Your Filler matches the field
+  // once its 1.4x edge is removed, so it must NOT fire. Big: 70 casts of 7,000k
+  // total = 100k/cast; excess over baseline = 220k/1.4 - 100k = ~57k; *70 casts /
+  // 10,000k total * 0.5 damp ~= 20%.
+  const yourAb = { Big: { total: 7000000, casts: 70 }, Filler: { total: 3000000, casts: 100 } };
+  const fieldAb = { Big: 220000, Filler: 42000 };   // Filler 42k = 30k*1.4 (just the overall edge)
+  const gaps = perCastGaps(yourAb, fieldAb, 1.4, 10000000);
+  assert.equal(gaps.length, 1, "only the ability behind by MORE than the overall edge fires");
+  assert.equal(gaps[0].name, "Big");
+  assert.equal(gaps[0].pct, 20);
+  assert.ok(gaps[0].raw > 2 && gaps[0].raw < 2.3);
+});
+
+test("perCastGaps: silent when an ability only rides the field's general edge (stats/comp, not empowerment)", () => {
+  // Field is 1.5x you overall; this ability is exactly 1.5x per cast -> not
+  // ability-specific, so it's the comp/stats levers' job, not an empowerment fix.
+  assert.equal(perCastGaps({ A: { total: 1000000, casts: 50 } }, { A: 30000 }, 1.5, 1000000).length, 0);
+});
+
+test("perCastGaps: needs enough casts (a 1-cast sample is too noisy to name)", () => {
+  assert.equal(perCastGaps({ A: { total: 400000, casts: 2 } }, { A: 600000 }, 1.2, 1000000).length, 0);
+});
 
 test("castUsageGaps: flags a buff/pet cooldown the field presses more (by ability id)", () => {
   // 300s fight. Field casts a cooldown id 0.5/min (2.5/kill), you 0.2/min (1/kill).

@@ -99,7 +99,15 @@ none); compare uptime/range to peers on the SAME fight (intermissions).
   BUT it only sees DAMAGE casts (castRate is built from the damage table), so
   **buff/pet cooldowns deal no direct cast damage and stay invisible** (Brewmaster's
   Weapons of Order = buff, Invoke Niuzao = pet). Those need buff-uptime / pet-damage
-  analysis — an OPEN lever, the likely home of a tank's big playstyle remainder.
+  analysis — still an OPEN lever (buff-uptime side).
+- **A big playstyle remainder is often a WEAK cast, not a MISSED one.** `usageDivergence`/
+  `cooldownGaps` catch abilities you press too LITTLE; `perCastGaps` catches one you
+  press as often as the field but that lands much WEAKER per cast (an un-empowered
+  Tiger Palm — pressed outside its combo/buff window). Discriminator is class-agnostic:
+  the ability is behind by MORE than your OVERALL field/you damage ratio, so it can't be
+  crit/comp (those lift everything ~evenly) — it's ability-specific empowerment. Reuses
+  peer damage tables already fetched (no new query). Don't name the empowering mechanic
+  (per-class) — point the player at "what powers your biggest hit".
 - **Trinkets are effect-based** — `gear.js` deliberately skips them from stat
   swaps; `trinketLevers` flags a field-favored trinket you lack, sized by
   CONSENSUS (silent on a split field, where "lots of people run different

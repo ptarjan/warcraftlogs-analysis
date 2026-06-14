@@ -469,8 +469,18 @@ function renderPrescription(log, d) {
   const compList0 = rx.filter(isComp);
   const setupFixes = yours.filter((r) => r.dim === "Gear" || r.dim === "Setup");
   const hasBuild = yours.some((r) => /^TALENTS\/BUILD/.test(r.text));
+  // A rotation lever that ISN'T a build fix: how you play the buttons (an empowered
+  // hit you land weak, a cooldown you skip, a wrong-button mix). When one exists,
+  // "your rotation already matches the field" is FALSE -- name it instead.
+  const rotFix = yours.find((r) => r.dim === "Rotation" && !/^TALENTS\/BUILD/.test(r.text));
+  const rotKind = rotFix ? (/^EMPOWERMENT/.test(rotFix.text) ? "an EMPOWERMENT timing fix (a big hit you land un-buffed)"
+    : /^COOLDOWN/.test(rotFix.text) ? "a COOLDOWN you under-use"
+    : "a ROTATION/priority fix") : null;
   if (hasBuild) {
     log("VERDICT: your biggest lever is a TALENT/BUILD fix -- you're not pressing an ability the field leans on (see #1). Sort that first, then do the free enchant/gear fixes below.");
+  } else if (rotFix) {
+    const extra = setupFixes.length ? ` plus ${setupFixes.length} free gear/setup fix${setupFixes.length > 1 ? "es" : ""}` : "";
+    log(`VERDICT: your gear & build match the field, but your ROTATION doesn't -- your biggest character lever is ${rotKind} (see the list)${extra}. The gap is HOW you play the same gear, not a setup overhaul${compList0.length ? " (comp aside)" : ""}.`);
   } else if (setupFixes.length) {
     // Only credit "pressing faster" when a press-faster lever survived -- for a
     // player who already out-casts the field it's suppressed, and the gap is
@@ -534,16 +544,21 @@ function renderPrescription(log, d) {
     if (residual >= 8) {
       // A big remainder at matched ilvl is NOT a gear/sim gap (sims model gear, worth
       // a few % here) and NOT "press faster" -- it's PLAYSTYLE: how you play the same
-      // gear vs the field (cooldown usage, ability frequency/sequencing, target &
-      // uptime). Concrete cooldown/usage gaps now surface as their OWN levers above;
-      // name any remaining rotation divergence we measured.
-      // Only cite abilities the player can actually cast -- the peer pool can skew
-      // to a different hero tree (don't tell a Guardian the gap is "press Ravage"
-      // when their build doesn't have it; that's a respec lever, not playstyle).
+      // gear vs the field. The two concrete forms now surface as their OWN levers
+      // above: a missed CAST (cooldown/ability you under-press) and a weak CAST
+      // (empowerment -- pressing your biggest hit outside its buff/combo window).
+      // Point at whichever we measured; what's LEFT is per-cast damage we can't pin
+      // to one ability (uniform crit/stat scaling + buff uptime), not "sequencing".
+      // Only cite under-pressed abilities the player can actually cast -- the peer
+      // pool can skew to a different hero tree (don't tell a Guardian the gap is
+      // "press Ravage" when their build lacks it; that's a respec lever).
       const under = ((rot && rot.usage && rot.usage.under) || []).filter((a) => castable(a.name, rot && rot.talent));
-      const cite = under.length
+      const pc = (rot && rot.perCast) || [];
+      const cite = pc.length
+        ? ` We can see the biggest piece: your ${pc[0].name} lands ${f(pc[0].raw, 1)}x weaker per cast than the field's (see the EMPOWERMENT item above) -- the rest is per-cast damage spread across abilities (crit/stat scaling + buff uptime), not a sim to run.`
+        : under.length
         ? ` We can see part of it: you press ${under.slice(0, 2).map((a) => `${a.name} ${f(a.you, 1)}/min vs ${f(a.field, 1)}`).join(", ")}.`
-        : ` Cooldown/ability-usage gaps we could measure are listed above; the rest is sequencing and target/uptime we don't yet break down — not a sim to run.`;
+        : ` The cooldown/ability gaps we could measure are listed above; the rest is per-cast damage (crit/stat scaling + buff uptime) we can't pin to one ability -- not a sim to run.`;
       rtext = `PLAYSTYLE (~${r}%): the biggest chunk, and it's NOT gear (a sim would value your gear swaps at a few %) and NOT "press faster" -- it's how you play the same gear the field plays.${cite}`;
     } else if (underPress) {
       rtext = `THE REMAINDER (~${r}%): not a setup item -- it's GCD uptime and hitting your priority on more pulls (see the measured cast/idle gaps above). That's where the rest of your gap lives.`;
