@@ -240,7 +240,11 @@ function runResume(c) {
 // Rendering: cards instead of a terminal. Modules still emit text via log();
 // here we turn that stream into headings, prose, data blocks, and action cards.
 // --------------------------------------------------------------------------- //
-const scroll = () => window.scrollTo(0, document.body.scrollHeight);
+// No-op: the old terminal-style "follow output to the bottom" is wrong now that
+// the payoff ("What to change") sits at the TOP and the supporting cards (mostly
+// collapsed) stream below -- it just dumped you at the bottom in empty space.
+// We land on the primary card when the run finishes instead (see runAnalysis).
+const scroll = () => {};
 let cur = null; // fallback card for the global log()/note() (errors, validation)
 
 // Every card has the SAME shape -- a header (title + a status indicator) and a
@@ -578,6 +582,7 @@ async function runAnalysis({ name, server, region, serverLabel }) {
   const intro = document.getElementById("intro");
   if (intro) intro.style.display = "none";
   addBackBar();
+  window.scrollTo(0, 0);   // start the report at the top (hero + the primary card)
   const hero = buildHero(name, serverLabel || server, region);
   activeHero = hero;
   // Build the whole report up front so every card appears at once, each already
@@ -637,6 +642,9 @@ async function runAnalysis({ name, server, region, serverLabel }) {
     try {
       await prescribe.run(recLog(rxCard, rxLines), p.name, p.server, p.region, p.cls, p.spec, p.difficulty, p.priority);
       setCardState(rxCard, "done");
+      // Land on the payoff: bring "What to change" into view (it filled last, and
+      // the user may have scrolled through the supporting cards while waiting).
+      try { rxCard.el.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (e) { /* ignore */ }
     } catch (err) {
       setCardState(rxCard, "error");
       if (err instanceof NeedsAuth) throw err;
