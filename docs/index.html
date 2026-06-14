@@ -186,9 +186,13 @@
      --- subsection ---, "-> takeaway", trailing "<-- annotation", space-aligned
      data). We map all of it to one readout language with semantic color, so a
      card never flips between dark code panels and sans prose. */
-  .readout { overflow-x: auto; min-width: 0; -webkit-overflow-scrolling: touch; color: #b3bdd2;
+  .readout { min-width: 0; color: #b3bdd2;
     font: 12.5px/1.7 ui-monospace, SFMono-Regular, Menlo, "Liberation Mono", monospace; }
-  .readout > div { white-space: pre; }                 /* preserve column alignment */
+  /* pre-WRAP, not pre: keep the column alignment of narrow rows, but WRAP an
+     over-wide line (long trinket/enchant lists) to the card width instead of
+     forcing the whole readout to scroll horizontally. overflow-wrap breaks any
+     single token too long to fit. Applies to every section's readout. */
+  .readout > div { white-space: pre-wrap; overflow-wrap: anywhere; }
   .r-gap { height: 9px; }
   .readout .r-head, .readout .r-sub, .readout .r-call { white-space: normal; }
   .r-head { margin: 17px 0 8px; padding-top: 13px; border-top: 1px solid var(--edge);
