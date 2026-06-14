@@ -3,7 +3,7 @@
 // vs ilvl-matched peers on the SAME boss (phase/intermission aware).
 import { gql } from "./wcl.js";
 import {
-  characterZone, characterEncounter, playerMetrics, ilvlPeers, PEER_SAMPLE, median, f, mapLimit,
+  characterZone, characterEncounter, playerMetrics, ilvlPeers, PEER_SAMPLE, median, f, mapLimit, collectUpTo,
   fightWindow, fightEvents,
 } from "./core.js";
 
@@ -78,12 +78,12 @@ async function fightMetrics(code, fight, sourceId, className = "Monk") {
 
 async function peerMetricsFor(name, server, region, encounter, difficulty, className, specName) {
   const cands = await ilvlPeers(name, server, region, encounter, difficulty, className, specName);
-  // fightMetrics paginates events (heavy), so a smaller concurrency cap.
-  const results = await mapLimit(cands, 4, async (r) => {
+  // fightMetrics paginates events (heavy), so a smaller concurrency cap. Stop once
+  // PEER_SAMPLE succeed -- fetch the candidate buffer only to backfill failures.
+  return collectUpTo(cands, PEER_SAMPLE, 4, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
     return m ? fightMetrics(r.report.code, r.report.fightID, m.sourceID, className) : null;
   });
-  return results.filter(Boolean).slice(0, PEER_SAMPLE);
 }
 
 // Diagnose all your kills of a boss vs peer median on the SAME boss.

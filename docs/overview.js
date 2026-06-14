@@ -2,7 +2,7 @@
 // Overview + item-level / duration-controlled comparison vs the field.
 import {
   DIFFICULTY, characterZone, characterEncounter, topRankings, playerMetrics,
-  secondaryStats, gearSummary, median, f, padL, padR, mapLimit, bestRank,
+  secondaryStats, gearSummary, median, f, padL, padR, collectUpTo, bestRank,
   ilvlPeers, PEER_SAMPLE, metricUnit, recentKills, runIsHealer,
 } from "./core.js";
 
@@ -28,12 +28,13 @@ export async function overview(log, name, server, region, difficulty) {
 // same candidates, so the reportCore fetches dedupe.
 async function ilvlPeerMetrics(name, server, region, encounter, difficulty, className, specName) {
   const cands = await ilvlPeers(name, server, region, encounter, difficulty, className, specName);
-  const metrics = await mapLimit(cands, 5, async (r) => {
+  // Stop once we have PEER_SAMPLE good peers -- only fetch the candidate buffer to
+  // backfill a failure, instead of fetching all 13 and slicing to 10 (saves points).
+  return collectUpTo(cands, PEER_SAMPLE, 5, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
     if (m) m.rankDur = (r.duration || 0) / 1000;
     return m;
   });
-  return metrics.filter(Boolean).slice(0, PEER_SAMPLE);
 }
 
 // Full controlled comparison for one encounter (uses the best-ilvl kill).

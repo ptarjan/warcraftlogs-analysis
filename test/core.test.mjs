@@ -6,7 +6,23 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { bestRank, isHealer, metricForSpec, setRunMetric, runMetric, metricUnit, runIsHealer, eventTable, DPS } = await import("../docs/core.js");
+const { bestRank, isHealer, metricForSpec, setRunMetric, runMetric, metricUnit, runIsHealer, eventTable, DPS, collectUpTo } = await import("../docs/core.js");
+
+test("collectUpTo: stops once n succeed; only fetches the buffer to backfill failures", async () => {
+  // 13 candidates, all succeed -> reach n=10 in two waves of 5; the 3-candidate
+  // buffer (10,11,12) is never fetched.
+  const ids = Array.from({ length: 13 }, (_, i) => i);
+  const fetched = [];
+  const all = await collectUpTo(ids, 10, 5, async (i) => { fetched.push(i); return `v${i}`; });
+  assert.deepEqual(all, Array.from({ length: 10 }, (_, i) => `v${i}`));
+  assert.ok(![10, 11, 12].some((i) => fetched.includes(i)), "buffer not fetched when the first 10 succeed");
+  // With 2 failures, the buffer IS fetched to backfill back up to 10, order preserved.
+  const f2 = [];
+  const r2 = await collectUpTo(ids, 10, 5, async (i) => { f2.push(i); return (i === 2 || i === 7) ? null : `v${i}`; });
+  assert.equal(r2.length, 10, "backfilled to 10 despite 2 failures");
+  assert.ok(r2.every(Boolean) && !r2.includes("v2") && !r2.includes("v7"), "failures excluded");
+  assert.ok(f2.includes(10) && f2.includes(11), "buffer fetched to backfill");
+});
 
 test("isHealer flags every healing spec, by spec name across classes", () => {
   for (const s of ["Holy", "Discipline", "Restoration", "Mistweaver", "Preservation"])

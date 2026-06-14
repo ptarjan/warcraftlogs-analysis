@@ -7,7 +7,7 @@
 // need its own peer aggregates, then sorts + splits + renders.
 import {
   ENCHANTABLE_SLOTS, DIFFICULTY, characterZone, characterEncounter, playerMetrics,
-  ilvlPeers, PEER_SAMPLE, secondaryStats, buffUptimes, bossDebuffs, median, f, detectPriority, mapLimit, topEntry, bestRank, bestKill,
+  ilvlPeers, PEER_SAMPLE, secondaryStats, buffUptimes, bossDebuffs, median, f, detectPriority, mapLimit, collectUpTo, topEntry, bestRank, bestKill,
   DPS, INFO, finding, fieldDelta, metricUnit, throughputWord, runIsHealer, healingBreakdown, manaStats,
 } from "./core.js";
 import { timelineFindings } from "./timeline.js";
@@ -69,14 +69,15 @@ async function fieldGearConsumables(name, server, region, encounter, difficulty,
   // timeline / rotation use -- one fetch shared, not a divergent copy). Then fetch
   // each peer's gear/buffs/stats concurrently (bounded).
   const cands = await ilvlPeers(name, server, region, encounter, difficulty, className, specName);
-  const peers = (await mapLimit(cands, 5, async (r) => {
+  // Stop once PEER_SAMPLE succeed -- fetch the candidate buffer only to backfill failures.
+  const peers = await collectUpTo(cands, PEER_SAMPLE, 5, async (r) => {
     const code = r.report.code, fight = r.report.fightID;
     const m = await playerMetrics(code, fight, r.name, specName, className);
     if (!m) return null;
     const bf = await buffUptimes(code, fight, m.sourceID);
     const s = await secondaryStats(code, fight, m.sourceID, className);
     return { m, bf, s };
-  })).filter(Boolean).slice(0, PEER_SAMPLE);
+  });
 
   for (const { m, bf, s } of peers) {
     for (const g of m.gear) {

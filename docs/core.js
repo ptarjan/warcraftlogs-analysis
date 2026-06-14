@@ -163,6 +163,22 @@ export async function mapLimit(items, limit, fn) {
   return out;
 }
 
+// Like mapLimit but STOPS once `n` successful (non-null) results are collected,
+// processing `items` in order in waves of `limit`. The peer lists carry a small
+// buffer of extra candidates against failures (private logs etc.); fetching ALL of
+// them then slicing to `n` wastes requests (= WCL points) in the common case where
+// the first `n` succeed. This fetches the buffer ONLY to backfill a failure. Returns
+// the first `n` successful results in item order -- identical to
+// `(await mapLimit(items, limit, fn)).filter(Boolean).slice(0, n)`, just lazier.
+export async function collectUpTo(items, n, limit, fn) {
+  const ok = [];
+  for (let i = 0; i < items.length && ok.length < n; i += limit) {
+    const wave = await mapLimit(items.slice(i, i + limit), limit, (it, j) => fn(it, i + j));
+    for (const r of wave) if (r != null && ok.length < n) ok.push(r);
+  }
+  return ok;
+}
+
 function entry(tableData, name, specName) {
   const entries = tableData.entries || [];
   const lc = String(name || "").toLowerCase();
