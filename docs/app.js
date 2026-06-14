@@ -499,6 +499,7 @@ const SUPPORTING = [
 function supportingFor(isHealerRun) {
   if (!isHealerRun) return SUPPORTING;
   const list = SUPPORTING.slice();
+  /** @type {[string, (p:any, log:(line?:string)=>void)=>any]} */
   const healingCard = ["Healing efficiency",
     (p, log) => healing.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)];
   const after = list.findIndex(([t]) => /^Rotation/.test(t));   // sits next to rotation
