@@ -425,6 +425,29 @@ export function reconcileImpacts(impacts, target) {
   return { scaled: impacts.slice(), residual: target - rawSum };
 }
 
+// What the unexplained remainder most likely IS, so we headline it honestly:
+//  - "elite":      the player already parses top-decile, so the "field" (the TOP
+//                  parses at their ilvl) is an elite sample and the remainder is the
+//                  distance to it -- raid comp + optimal-pull execution, NOT a setup
+//                  or rotation they're getting wrong. NEVER tell a 94th-%ile player
+//                  the gap is "how you play the gear worse" -- it contradicts their
+//                  own percentile and isn't actionable.
+//  - "playstyle":  a big remainder for a NON-elite player -- genuinely how they play
+//                  the same gear the field plays (the tool's whole point).
+//  - "underpress": a small remainder with a real cast deficit -- GCD uptime.
+//  - "small":      a small remainder, no signal -- sim-only tuning + variance.
+// Pure -> unit-testable; the caller turns the kind into prose.
+export function remainderKind(residual, { elite = false, underPress = false } = {}) {
+  if (residual >= 8) return elite ? "elite" : "playstyle";
+  if (underPress) return "underpress";
+  return "small";
+}
+
+// Already top-decile: a big remainder is the gap to the BEST at your ilvl, not a
+// personal deficit. Top decile (90th+) is a conservative "this player isn't the
+// problem" line.
+export const isEliteParse = (medP) => medP != null && medP >= 90;
+
 // THE SYNTHESIS, rendered: one answer anchored on the MEASURED DPS gap (your
 // kill vs the ilvl-matched field vs the top parses -- real numbers, not a sum of
 // per-lever guesses), what that gap is made of, then the change-list split into
@@ -462,6 +485,8 @@ function renderPrescription(log, d) {
     // gainable, and the list below is sized to sum to it.
     const tail = ahead
       ? ". You're already ahead of your item-level bracket -- the top parses are the target."
+      : isEliteParse(d.medP)
+      ? ` -- but the field here is the TOP parses at your item level, and at your ${d.medP}th percentile most of that gap is raid comp + execution on optimal pulls, not a setup you're getting wrong. The fixes below are the concrete part you control.`
       : ` -- and they have your exact item level, so that ${peerGap}% is DPS you could realistically gain. The fixes below are sized to add up to it.`;
     log(`Measured on ${gearBossLink}: you (ilvl ~${d.curIlvl}) do ${k(you.dps)} ${metricUnit()} -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
         (topGap != null ? `, ${topGap}% behind the top parses` : "") + tail);
@@ -543,8 +568,14 @@ function renderPrescription(log, d) {
     // with a real cast deficit is credibly "press a bit faster".
     const underPress = (rot && rot.castGap && rot.castGap.field > rot.castGap.you)
       || (execd && execd.pressExcess >= 1 && !outpaces);
+    const kind = remainderKind(residual, { elite: isEliteParse(d.medP), underPress });
     let rtext;
-    if (residual >= 8) {
+    if (kind === "elite") {
+      // Already top-decile: the remainder is the distance to the BEST parses at your
+      // ilvl, not a setup/rotation you're getting wrong. Say so -- don't manufacture
+      // an 86%-of-your-DPS "playstyle" problem for a 94th-%ile player.
+      rtext = `GAP TO TOP PARSES (~${r}%): you already parse ${d.medP}th percentile -- the "field" here is the BEST players at your item level, and this is the distance to them. The concrete levers above are small because there isn't much on your character to fix; the rest is raid comp + executing on optimal pulls (lust/cooldown windows, perfect target swaps), not gear or a rotation you're getting wrong.`;
+    } else if (kind === "playstyle") {
       // A big remainder at matched ilvl is NOT a gear/sim gap (sims model gear, worth
       // a few % here) and NOT "press faster" -- it's PLAYSTYLE: how you play the same
       // gear vs the field. The two concrete forms now surface as their OWN levers
@@ -563,7 +594,7 @@ function renderPrescription(log, d) {
         ? ` We can see part of it: you press ${under.slice(0, 2).map((a) => `${a.name} ${f(a.you, 1)}/min vs ${f(a.field, 1)}`).join(", ")}.`
         : ` The cooldown/ability gaps we could measure are listed above; the rest is per-cast damage (crit/stat scaling + buff uptime) we can't pin to one ability -- not a sim to run.`;
       rtext = `PLAYSTYLE (~${r}%): the biggest chunk, and it's NOT gear (a sim would value your gear swaps at a few %) and NOT "press faster" -- it's how you play the same gear the field plays.${cite}`;
-    } else if (underPress) {
+    } else if (kind === "underpress") {
       rtext = `THE REMAINDER (~${r}%): not a setup item -- it's GCD uptime and hitting your priority on more pulls (see the measured cast/idle gaps above). That's where the rest of your gap lives.`;
     } else {
       rtext = `THE REMAINDER (~${r}%): small and unattributed -- sim-only tuning (exact trinket/stat effect sizes) and kill-to-kill variance. No single button.`;

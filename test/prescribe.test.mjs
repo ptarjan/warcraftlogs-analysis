@@ -26,7 +26,7 @@ test("fieldDelta measures an attribute's value from the field (have vs not)", ()
   // Too few on one side -> null.
   assert.equal(fieldDelta([110, 100, 100, 100, 100], [true, false, false, false, false]), null);
 });
-const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill } = await import("../docs/prescribe.js");
+const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse } = await import("../docs/prescribe.js");
 
 test("pickBenchmarkKill: median-parse kill, not an outlier survival kill", () => {
   // A tank with a great Imperator parse but a terrible recent Belo'ren kill (a
@@ -200,6 +200,26 @@ test("reconcileImpacts: concrete fixes + residual always sum to the target (the 
   r = reconcileImpacts([3, 2], 0);
   assert.deepEqual(r.scaled, [0, 0]);
   assert.equal(r.residual, 0);
+});
+
+test("isEliteParse: top decile (90th+) marks 'this player isn't the problem'", () => {
+  assert.equal(isEliteParse(94), true);
+  assert.equal(isEliteParse(90), true);
+  assert.equal(isEliteParse(89), false);
+  assert.equal(isEliteParse(50), false);
+  assert.equal(isEliteParse(null), false);   // unknown -> not elite
+});
+
+test("remainderKind: a big remainder for an ELITE player is the gap to top parses, not 'playstyle'", () => {
+  // The bug this guards: a 94th-%ile Frost Mage told 86% of their gap is 'how you
+  // play the gear worse'. For an elite player it's the distance to the BEST parses
+  // at their ilvl (comp + optimal pulls), NOT a personal playstyle deficit.
+  assert.equal(remainderKind(86, { elite: true }), "elite");
+  assert.equal(remainderKind(86, { elite: false }), "playstyle");
+  // Small remainders are unaffected by elite -- still execution/variance.
+  assert.equal(remainderKind(4, { elite: true, underPress: true }), "underpress");
+  assert.equal(remainderKind(4, { elite: true, underPress: false }), "small");
+  assert.equal(remainderKind(4, { elite: false, underPress: true }), "underpress");
 });
 
 test("latencyLever: fires only above the threshold, never below", () => {
