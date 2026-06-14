@@ -13,13 +13,14 @@ function estimateGcd(gapsMs) {
 }
 
 // Pure computation: timeline diagnostic for one actor on one fight.
-async function fightMetrics(code, fight, sourceId, className = "Monk") {
+async function fightMetrics(code, fight, sourceId, className = "Monk", { autoFallback = true } = {}) {
   const [fStart, fEnd] = await fightWindow(code, fight);
   const dur = (fEnd - fStart) / 1000.0;
   // Casts + auto-attacks in one query. Autos anchor the "in range vs not pressing"
   // split (melee=ability 1, Hunters=Auto Shot 75; casters have none -> no autos,
   // so we stop claiming "out of range" -- their gaps are casting/movement).
-  const { casts: castEvents, autos } = await fightEvents(code, fight, sourceId, fStart, fEnd);
+  // autoFallback:false skips the wasted hunter-Auto-Shot retry for known auto-less specs.
+  const { casts: castEvents, autos } = await fightEvents(code, fight, sourceId, fStart, fEnd, { autoFallback });
   const hasAuto = autos.length > 0;
   const autoTs = autos.map((e) => e.timestamp).sort((a, b) => a - b);
   const castTs = castEvents.map((e) => e.timestamp).sort((a, b) => a - b);
@@ -63,7 +64,7 @@ async function fightMetrics(code, fight, sourceId, className = "Monk") {
   }
   const totalLost = lostNotPressing + lostRangeMove;
   return {
-    dur, gcd, swing, nGcds: merged.length,
+    dur, gcd, swing, nGcds: merged.length, hasAuto,
     lostNotPressingS: lostNotPressing / 1000,
     lostRangeMoveS: lostRangeMove / 1000,
     totalLostS: totalLost / 1000,
@@ -76,7 +77,7 @@ async function fightMetrics(code, fight, sourceId, className = "Monk") {
   };
 }
 
-async function peerMetricsFor(name, server, region, encounter, difficulty, className, specName) {
+async function peerMetricsFor(name, server, region, encounter, difficulty, className, specName, youHaveAutos = true) {
   const cands = await ilvlPeers(name, server, region, encounter, difficulty, className, specName);
   // Bundle the peers' timeline events (casts+autos) into ONE request before the loop.
   // sourceID + fight window are free here (they ride the already-prewarmed reportCore),
@@ -93,7 +94,8 @@ async function peerMetricsFor(name, server, region, encounter, difficulty, class
   // PEER_SAMPLE succeed -- fetch the candidate buffer only to backfill failures.
   return collectUpTo(cands, PEER_SAMPLE, 4, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
-    return m ? fightMetrics(r.report.code, r.report.fightID, m.sourceID, className) : null;
+    // Peers share your spec: if YOU have no auto-attacks, skip their Auto-Shot retry.
+    return m ? fightMetrics(r.report.code, r.report.fightID, m.sourceID, className, { autoFallback: youHaveAutos }) : null;
   });
 }
 
@@ -121,9 +123,13 @@ export async function timelineFindings(name, server, region, encounter, difficul
   const yourFms = kept.map((x) => x.fm);
   if (!yourFms.length) return null;
   const activePcts = kept.map((x) => x.activePct).filter((x) => x != null);
+  // Does this spec auto-attack at all? Learned from YOUR kills (with the fallback on).
+  // Peers share your spec, so for an auto-less spec (casters) we skip their Auto-Shot
+  // retry -- otherwise it's one empty fetch per peer per boss.
+  const youHaveAutos = yourFms.some((fm) => fm.hasAuto);
   // The ilvl-matched field -- via the shared core.ilvlPeers, so this can't drift
   // from overview's selection and start double-fetching the same peers.
-  const peers = await peerMetricsFor(name, server, region, encounter, difficulty, className, specName);
+  const peers = await peerMetricsFor(name, server, region, encounter, difficulty, className, specName, youHaveAutos);
   // No ilvl-matched peers -> nothing to compare against. Skip the boss (like the
   // overview's "no item-level-matched peers found") instead of printing NaN deltas
   // and poisoning the cross-boss aggregate with them.

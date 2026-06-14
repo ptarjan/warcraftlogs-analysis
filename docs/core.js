@@ -429,12 +429,17 @@ const _fightEventsBody = (fight, sourceId, start, end) => {
 };
 export const _fightEventsQuery = (code, fight, sourceId, start, end) =>
   `query { reportData { report(code:"${code}") {${_fightEventsBody(fight, sourceId, start, end)} } } }`;
-export async function fightEvents(code, fight, sourceId, start, end) {
+// `autoFallback`: when ability-1 (melee) autos are empty, retry Auto Shot (75) for
+// HUNTERS. Casters have NEITHER, so that retry just fetches an empty set -- one wasted
+// request PER PEER (~80 for a caster analysis). Callers that already know the spec has
+// no autos (the timeline learns it from YOUR kills) pass autoFallback:false to skip it.
+// The MAIN query is unchanged either way, so cached fightEvents stay valid (no orphaning).
+export async function fightEvents(code, fight, sourceId, start, end, { autoFallback = true } = {}) {
   const r = (await gql(_fightEventsQuery(code, fight, sourceId, start, end))).reportData.report;
   let casts = r.casts.data, autos = r.autos.data;
   if (r.casts.nextPageTimestamp) casts = casts.concat(await paginateEvents(code, fight, sourceId, "Casts", null, r.casts.nextPageTimestamp, end));
   if (r.autos.nextPageTimestamp) autos = autos.concat(await paginateEvents(code, fight, sourceId, "DamageDone", 1, r.autos.nextPageTimestamp, end));
-  if (!autos.length) autos = await paginateEvents(code, fight, sourceId, "DamageDone", 75, start, end);
+  if (autoFallback && !autos.length) autos = await paginateEvents(code, fight, sourceId, "DamageDone", 75, start, end);
   return { casts: casts.filter((e) => !e.fake), autos };
 }
 
