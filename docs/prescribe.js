@@ -6,7 +6,7 @@
 // adds the cross-cutting ones (execution, consumables, enchants, stat gap) that
 // need its own peer aggregates, then sorts + splits + renders.
 import {
-  ENCHANTABLE_SLOTS, characterZone, characterEncounter, playerMetrics,
+  ENCHANTABLE_SLOTS, DIFFICULTY, characterZone, characterEncounter, playerMetrics,
   collectPeers, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry, bestRank,
   DPS, INFO, finding, isHealer,
 } from "./core.js";
@@ -294,10 +294,8 @@ function renderPrescription(log, d) {
   const topGap = (tp && tp.dpsGapPct) ? Math.round(tp.dpsGapPct) : null;
 
   log("");
-  log("=".repeat(66));
-  log(`HOW TO PARSE BETTER -- ${d.name}-${d.server} (${d.specName} ${d.className}), ilvl ~${d.curIlvl}`);
-  log("=".repeat(66));
-  if (d.medP != null) log(`You parse ${d.medP}th percentile overall (median of ${d.nBosses} bosses; best ${d.bestP}th on ${d.topParse.encounter.name}).`);
+  log(`=== How to parse better — ${d.name}-${d.server} (${d.specName} ${d.className}), ilvl ~${d.curIlvl} ===`);
+  if (d.medP != null) log(`You parse ${d.medP}th percentile on ${d.difficultyName} (median of the ${d.nBosses} current-tier ${d.difficultyName} boss${d.nBosses === 1 ? "" : "es"} you've killed; best ${d.bestP}th on ${d.topParse.encounter.name}).`);
   if (d.skipped && d.skipped.length) {
     log(`NOTE: partial list -- couldn't load ${d.skipped.join(", ")} (likely the WCL rate limit). This isn't the full picture; re-run when the budget resets for the rest.`);
   }
@@ -327,7 +325,7 @@ function renderPrescription(log, d) {
   if (tp && tp.routing && (tp.routing.top - tp.routing.you) >= 5) facts.push(`Routing -- ${f(tp.routing.you, 0)}% of your damage hits adds vs the top parses' ${f(tp.routing.top, 0)}%`);
   if (tp && tp.buffGaps) { const g = tp.buffGaps.find((x) => x.comp); if (g) facts.push(`Comp -- you're missing ${g.name} (${f(g.you, 0)}% vs ${f(g.top, 0)}% uptime; raid-dependent)`); }
   if (gf && gf.swaps.length) facts.push(`Gear -- ${gf.swaps.length} ${priority}-itemized upgrade${gf.swaps.length > 1 ? "s" : ""} the field runs (DPS value needs a sim)`);
-  if (facts.length) { log("What the gap is made of (measured):"); for (const ff of facts) log(`  ${ff}`); }
+  if (facts.length) { log("--- What the gap is made of (measured) ---"); for (const ff of facts) log(`  ${ff}`); }
   log(`(Field = top-ranked players at your item level; top parses = the rank-1 kills.)`);
 
   // Split the list by what's YOURS to do vs raid comp. The whole point is "what
@@ -340,7 +338,7 @@ function renderPrescription(log, d) {
   const line = (r, i) => log(`  ${i + 1}. [${r.label.padStart(9)}]  ${r.text}`);
 
   log("");
-  log("DO THESE TO YOUR CHARACTER NOW (biggest first; gear/rotation % are sim estimates, the rest measured):");
+  log("--- Do these to your character now (biggest first; gear/rotation % are sim estimates, the rest measured) ---");
   if (!youList.length) {
     log("  You match your peers on gear, enchants, consumables, stats, and execution. The rest is comp + farm kills.");
   }
@@ -348,7 +346,7 @@ function renderPrescription(log, d) {
 
   if (compList.length) {
     log("");
-    log("RAID COMP (real DPS, but a roster/buff gap -- NOT something you change on your character):");
+    log("--- Raid comp (real DPS, but a roster/buff gap — NOT something you change on your character) ---");
     compList.forEach(line);
   }
   log("");
@@ -440,6 +438,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
 
   renderPrescription(log, {
     name, server, className, specName, curIlvl, gearBoss,
+    difficultyName: DIFFICULTY[difficulty] || `difficulty ${difficulty}`,
     medP, bestP, topParse, nBosses: ranks.length,
     you, field, execd, rot, tp, gf, priority, rx, skipped,
   });

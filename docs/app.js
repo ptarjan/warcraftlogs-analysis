@@ -246,7 +246,10 @@ let cur = null; // fallback card for the global log()/note() (errors, validation
 // Every card has the SAME shape -- a header (title + a status indicator) and a
 // body -- whether it's the primary list or a collapsible supporting analysis.
 // Keeping one structure is what makes the cards look uniform.
-function makeCard(title, { primary = false, collapsed = false } = {}) {
+// `prose`: render this card as wrapping sans prose + headings (the prescription),
+// not the monospace column readout the data cards use. Defaults on for the
+// primary card so both live runs and shared snapshots get it.
+function makeCard(title, { primary = false, collapsed = false, prose = primary } = {}) {
   const el = document.createElement(collapsed ? "details" : "section");
   el.className = "card" + (primary ? " primary" : "") + (collapsed ? "" : " open");
   const head = document.createElement(collapsed ? "summary" : "div");
@@ -260,7 +263,7 @@ function makeCard(title, { primary = false, collapsed = false } = {}) {
   body.className = "body";
   el.appendChild(body);
   out.appendChild(el);
-  return { el, head, body, status: null, readout: null };
+  return { el, head, body, status: null, readout: null, prose };
 }
 
 // Per-card processing indicator. Each section shows its own state so that when
@@ -352,6 +355,24 @@ function readoutLine(raw) {
   return d;
 }
 
+// A prose-card line (the prescription): `=== X ===` heading, `--- X ---` sub-
+// heading, else a wrapping sans paragraph (indented if the source line was).
+// No monospace readout -- this card is prose + action rows, never columns.
+function proseLine(h, line) {
+  const t = line.trim();
+  if (t === "") return;
+  let m;
+  if ((m = t.match(/^={3,}\s*(.+?)\s*={3,}$/))) {
+    const d = document.createElement("div"); d.className = "rx-h"; fillText(d, m[1]); return appendBlock(h, d);
+  }
+  if ((m = t.match(/^---\s*(.+?)\s*---$/))) {
+    const d = document.createElement("div"); d.className = "rx-sub"; fillText(d, m[1]); return appendBlock(h, d);
+  }
+  const d = document.createElement("div");
+  d.className = "note" + (/^\s/.test(line) ? " indent" : "");
+  fillText(d, t); return appendBlock(h, d);
+}
+
 // Turn one streamed text line into the right DOM node inside card `h`.
 function logTo(h, line) {
   // Live preview: mirror the latest meaningful line into the collapsed header
@@ -374,6 +395,7 @@ function logTo(h, line) {
     const d = document.createElement("div"); d.className = "note err";
     fillText(d, line.replace(/^\[error]\s*/, "")); return appendBlock(h, d);
   }
+  if (h.prose) return proseLine(h, line);                       // prescription: sans prose, not columns
   if (line.trim() === "") {                                     // blank -> a gap in the readout
     if (h.readout) { const g = document.createElement("div"); g.className = "r-gap"; h.readout.appendChild(g); }
     return;
