@@ -496,16 +496,20 @@ function renderPrescription(log, d) {
   // setup fixes / "tighten your play, there's no shortcut").
   const compList0 = rx.filter(isComp);
   const setupFixes = yours.filter((r) => r.dim === "Gear" || r.dim === "Setup");
-  const hasBuild = yours.some((r) => /^TALENTS\/BUILD/.test(r.text));
-  // A rotation lever that ISN'T a build fix: how you play the buttons (an empowered
-  // hit you land weak, a cooldown you skip, a wrong-button mix). When one exists,
-  // "your rotation already matches the field" is FALSE -- name it instead.
-  const rotFix = yours.find((r) => r.dim === "Rotation" && !/^TALENTS\/BUILD/.test(r.text));
-  const rotKind = rotFix ? (/^EMPOWERMENT/.test(rotFix.text) ? "an EMPOWERMENT timing fix (a big hit you land un-buffed)"
+  // Any talent/build change -- whether "TALENTS/BUILD" (a button you never press
+  // because you skipped its talent) or "TALENTS" (the field runs a meta talent you
+  // don't). Both are a build swap, the same VERDICT.
+  const hasBuild = yours.some((r) => /^TALENTS/.test(r.text));
+  // A rotation lever that's about HOW you play the buttons (an empowered hit you
+  // land weak, a cooldown you skip, a wrong-button mix) -- NOT a talent swap (those
+  // are dim "Rotation" too but read as "TALENTS…"; they're a build change, framed
+  // separately). When a play lever exists, "your rotation already matches" is FALSE.
+  const rotFix = yours.find((r) => r.dim === "Rotation" && !/^TALENTS/.test(r.text));
+  const rotKind = rotFix ? (/^EMPOWERMENT/.test(rotFix.text) ? "an EMPOWERMENT timing fix (landing your hardest hit in its high-damage window)"
     : /^COOLDOWN/.test(rotFix.text) ? "a COOLDOWN you under-use"
     : "a ROTATION/priority fix") : null;
   if (hasBuild) {
-    log("VERDICT: your biggest lever is a TALENT/BUILD fix -- you're not pressing an ability the field leans on (see #1). Sort that first, then do the free enchant/gear fixes below.");
+    log("VERDICT: your biggest character lever is a TALENT/BUILD change -- the field runs a build/talent you don't (see the TALENTS item). Sort that first, then do the free enchant/gear fixes below.");
   } else if (rotFix) {
     const extra = setupFixes.length ? ` plus ${setupFixes.length} free gear/setup fix${setupFixes.length > 1 ? "es" : ""}` : "";
     log(`VERDICT: your gear & build match the field, but your ROTATION doesn't -- your biggest character lever is ${rotKind} (see the list)${extra}. The gap is HOW you play the same gear, not a setup overhaul${compList0.length ? " (comp aside)" : ""}.`);
@@ -577,22 +581,29 @@ function renderPrescription(log, d) {
       rtext = `GAP TO TOP PARSES (~${r}%): you already parse ${d.medP}th percentile -- the "field" here is the BEST players at your item level, and this is the distance to them. The concrete levers above are small because there isn't much on your character to fix; the rest is raid comp + executing on optimal pulls (lust/cooldown windows, perfect target swaps), not gear or a rotation you're getting wrong.`;
     } else if (kind === "playstyle") {
       // A big remainder at matched ilvl is NOT a gear/sim gap (sims model gear, worth
-      // a few % here) and NOT "press faster" -- it's PLAYSTYLE: how you play the same
-      // gear vs the field. The two concrete forms now surface as their OWN levers
-      // above: a missed CAST (cooldown/ability you under-press) and a weak CAST
-      // (empowerment -- pressing your biggest hit outside its buff/combo window).
-      // Point at whichever we measured; what's LEFT is per-cast damage we can't pin
-      // to one ability (uniform crit/stat scaling + buff uptime), not "sequencing".
-      // Only cite under-pressed abilities the player can actually cast -- the peer
-      // pool can skew to a different hero tree (don't tell a Guardian the gap is
-      // "press Ravage" when their build lacks it; that's a respec lever).
+      // a few % here) and NOT "press faster" -- it's PLAYSTYLE. The concrete pieces
+      // surface as their OWN levers above (a missed CAST you under-press; your big
+      // hit landing in its high-damage window less). For the rest, we DIRECTLY check
+      // empowerment with a measured fact: what share of your biggest hit lands
+      // empowered vs the field. If yours trails -> point at it; if it MATCHES, say so
+      // plainly -- the gap is per-cast damage (crit/stats + comp re-attribution and
+      // this boss's damage-taken windows), NOT a button. Never hand-wave "sequencing".
+      // Only cite under-pressed abilities the player can actually cast (the peer pool
+      // can skew to a different hero tree -- that's a respec lever, not playstyle).
       const under = ((rot && rot.usage && rot.usage.under) || []).filter((a) => castable(a.name, rot && rot.talent));
-      const pc = (rot && rot.perCast) || [];
-      const cite = pc.length
-        ? ` We can see the biggest piece: your ${pc[0].name} lands ${f(pc[0].raw, 1)}x weaker per cast than the field's (see the EMPOWERMENT item above) -- the rest is per-cast damage spread across abilities (crit/stat scaling + buff uptime), not a sim to run.`
+      const pr = rot && rot.proc;
+      const ep = (n) => `${Math.round(n * 100)}%`;
+      // Only cite empowered shares when the ability HAS a meaningful empowered
+      // version in the field (fieldEmp > ~5%); a uniform-hit ability (no empowered
+      // form) would print a meaningless "0% vs 0%".
+      const hasEmp = pr && pr.youEmp != null && pr.fieldEmp != null && pr.fieldEmp >= 0.05;
+      const cite = hasEmp && pr.fieldEmp - pr.youEmp >= 0.12
+        ? ` We can see the biggest piece: only ${ep(pr.youEmp)} of your ${pr.name} casts land empowered vs the field's ${ep(pr.fieldEmp)} (see the EMPOWERMENT item) -- the rest is per-cast damage (crit/stats + comp & fight amps).`
+        : hasEmp
+        ? ` We checked the obvious culprit: your ${pr.name} lands empowered ${pr.youEmp >= pr.fieldEmp ? "as often as" : "nearly as often as"} the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}), so it's NOT timing -- the gap is per-cast damage (crit/stat scaling, plus comp re-attribution and this boss's damage-taken windows you don't fully control).`
         : under.length
         ? ` We can see part of it: you press ${under.slice(0, 2).map((a) => `${a.name} ${f(a.you, 1)}/min vs ${f(a.field, 1)}`).join(", ")}.`
-        : ` The cooldown/ability gaps we could measure are listed above; the rest is per-cast damage (crit/stat scaling + buff uptime) we can't pin to one ability -- not a sim to run.`;
+        : ` The cooldown/ability gaps we could measure are listed above; the rest is per-cast damage (crit/stats + comp & fight amps) we can't pin to one ability.`;
       rtext = `PLAYSTYLE (~${r}%): the biggest chunk, and it's NOT gear (a sim would value your gear swaps at a few %) and NOT "press faster" -- it's how you play the same gear the field plays.${cite}`;
     } else if (kind === "underpress") {
       rtext = `THE REMAINDER (~${r}%): not a setup item -- it's GCD uptime and hitting your priority on more pulls (see the measured cast/idle gaps above). That's where the rest of your gap lives.`;

@@ -100,14 +100,20 @@ none); compare uptime/range to peers on the SAME fight (intermissions).
   **buff/pet cooldowns deal no direct cast damage and stay invisible** (Brewmaster's
   Weapons of Order = buff, Invoke Niuzao = pet). Those need buff-uptime / pet-damage
   analysis — still an OPEN lever (buff-uptime side).
-- **A big playstyle remainder is often a WEAK cast, not a MISSED one.** `usageDivergence`/
-  `cooldownGaps` catch abilities you press too LITTLE; `perCastGaps` catches one you
-  press as often as the field but that lands much WEAKER per cast (an un-empowered
-  Tiger Palm — pressed outside its combo/buff window). Discriminator is class-agnostic:
-  the ability is behind by MORE than your OVERALL field/you damage ratio, so it can't be
-  crit/comp (those lift everything ~evenly) — it's ability-specific empowerment. Reuses
-  peer damage tables already fetched (no new query). Don't name the empowering mechanic
-  (per-class) — point the player at "what powers your biggest hit".
+- **A playstyle remainder can be a WEAK cast, not a MISSED one — but per-cast DAMAGE
+  is too confounded to prove it.** A hard hit landing weaker than the field's same
+  ability looks like an empowerment-timing miss, but comp re-attribution (Aug/PI),
+  a boss's damage-taken debuff (e.g. Crown of the Cosmos), and stat scaling ALL make
+  the field's per-cast bigger with nothing you did wrong. `perCastGaps` only SIZES the
+  gap; it must NEVER be the claim. The real, unconfounded test is `empoweredShare`:
+  what fraction of your hardest hit lands above 1.5× your OWN median (the empowered/
+  in-window version) vs the field's same fraction. It's a within-player fraction, so
+  a flat amp lifts both clusters and cancels. The EMPOWERMENT lever fires ONLY when
+  your share trails the field's (≥12pp); when they match (or you're ahead), say so —
+  the gap is per-cast stats/comp/fight-amp, NOT timing. (Hadryan empowers Tiger Palm
+  40% vs the field's 22% → no lever; his gap is the boss debuff + comp + crit.) The
+  advice is mechanic-agnostic ("land your hardest hit in its high-damage window",
+  self-combo OR boss debuff) — never name the per-class mechanic.
 - **Trinkets are effect-based** — `gear.js` deliberately skips them from stat
   swaps; `trinketLevers` flags a field-favored trinket you lack, sized by
   CONSENSUS (silent on a split field, where "lots of people run different

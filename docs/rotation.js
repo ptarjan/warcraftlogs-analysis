@@ -33,6 +33,24 @@ export function openerSequence(casts, windowMs = 20000, n = 8) {
   return casts.filter((c) => c.t - t0 <= windowMs).slice(0, n).map((c) => c.name);
 }
 
+// What FRACTION of an ability's casts land "empowered" -- the high-damage version
+// of a bimodal hit (a Tiger Palm set up by its combo vs a bare one). Each player is
+// measured against their OWN median, so it's comparable across gear: the empowered
+// version is the minority that lands well above the routine (bare) hit, which sits
+// at the median. A hit > `factor`x your median counts as empowered. Crits are
+// EXCLUDED (a crit ~doubles any hit -- that's stats, not a missed button). Returns
+// null with too few hits to judge. Lets us SHOW "you land X% empowered vs the
+// field's Y%" and only claim an empowerment lever when your share actually trails --
+// and because it's a within-player fraction, a flat amp (comp, or a boss's
+// damage-taken debuff) lifts both clusters and leaves the share unchanged.
+export function empoweredShare(nonCritAmounts, { minHits = 6, factor = 1.5 } = {}) {
+  const s = [...nonCritAmounts].sort((a, b) => a - b);
+  if (s.length < minHits) return null;
+  const med = s[Math.floor(s.length / 2)];
+  if (!(med > 0)) return null;
+  return nonCritAmounts.filter((a) => a > med * factor).length / nonCritAmounts.length;
+}
+
 // --- data layer: everything reads from the shared core loader (reportCore,
 // fightWindow, fightEvents, paginateEvents) so a kill's tables/events are fetched
 // once across rotation, diagnose, and analyze. -------------------------------
@@ -61,6 +79,7 @@ function perHit(events) {
     max: s.length ? s[s.length - 1] : 0,
     critPct: s.length ? (100 * crits) / s.length : 0,
     procBig: empoweredCount(nonCrit),   // outsized NON-crit hits = a real proc
+    empShare: empoweredShare(nonCrit),  // fraction of casts that land empowered (null if too few)
   };
 }
 
@@ -100,16 +119,18 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
 
   if (opts.onlyAbility) {
     const id = name2id[opts.onlyAbility];
-    let procPerMin = 0;
+    let procPerMin = 0, empShare = null;
     if (id) {
       const evs = await paginateEvents(code, fight, m.sourceID, eventTable(), id, s, e);
-      procPerMin = perHit(evs).procBig / (dur / 60 || 1);
+      const ph = perHit(evs);
+      procPerMin = ph.procBig / (dur / 60 || 1);
+      empShare = ph.empShare;             // field's empowered-cast share for this ability
     }
     // Return the per-ability damage TOTALS + cast rates too (no extra fetch -- they
     // ride on the playerMetrics table already loaded). The per-cast-damage lever
     // medians these across peers to see how hard the FIELD's same ability hits.
     // sourceID lets the caller resolve this peer's hero tree (same-tree matching).
-    return { opener: openerSequence(casts), procPerMin, castRate, allCastRate, name2id,
+    return { opener: openerSequence(casts), procPerMin, empShare, castRate, allCastRate, name2id,
              dmgBy: m.dmgBy, total: m.total, dur, sourceID: m.sourceID };
   }
 
@@ -310,13 +331,16 @@ export async function rotationFindings(name, server, region, className, specName
   const you = await analyzeKill(name, best.code, best.fight, specName, className, { topN: 5 });
   if (!you || !you.hits.length) return null;
 
+  // The empowerment candidate is your HARDEST hitter (biggest per-cast) -- the hit
+  // whose strength matters most, and the one a missed buff/combo window most hurts.
+  // We measure the FIELD's empowered share of THIS ability so "your big hit lands
+  // weak" can only fire on real under-empowerment, never on a uniform stat gap.
   const biggest = [...you.hits].sort((a, b) => b.med - a.med)[0];
-  const top = [...you.hits].sort((a, b) => b.procBig - a.procBig)[0];
-  const isReal = top.procBig >= 2;            // outsized NON-crit cluster = real proc
+  const isReal = biggest.procBig >= 2;        // outsized NON-crit cluster = a real empowered version
 
   // The ilvl-matched field, via the shared core.ilvlPeers (same set overview /
-  // timeline / prescribe use, so the fetches dedupe). It feeds the proc rate, the
-  // opener, AND the ability-usage comparison.
+  // timeline / prescribe use, so the fetches dedupe). It feeds the empowered-share
+  // + proc rate of your biggest hit, the opener, AND the ability-usage comparison.
   const cands = await ilvlPeers(name, server, region, boss, difficulty, className, specName);
   // Your hero tree, so we can compare you only to peers who run the SAME one --
   // two hero trees swap whole buttons, and a mixed field makes the cast-rate diff
@@ -327,7 +351,7 @@ export async function rotationFindings(name, server, region, className, specName
   const analyzed = (await mapLimit(cands, 4, async (r) => {
     try {
       const a = await analyzeKill(r.name, r.report.code, r.report.fightID, specName, className,
-                                  { onlyAbility: top.name });
+                                  { onlyAbility: biggest.name });
       if (!a) return null;
       const hero = yourHero ? await heroTreeOf(r.report.code, r.report.fightID, a.sourceID).catch(() => null) : null;
       return { ...a, hero };
@@ -335,6 +359,13 @@ export async function rotationFindings(name, server, region, className, specName
   })).filter(Boolean);
   const peers = sameHeroPeers(analyzed, yourHero).slice(0, 5);
   const fieldProc = (isReal && peers.length) ? median(peers.map((a) => a.procPerMin)) : null;
+  // Field's empowered-cast share of your biggest hit (median over peers who had
+  // enough hits to judge). Pairs with your own share to SHOW the comparison and to
+  // gate the empowerment lever -- equal shares means the gap is per-cast stats, not
+  // timing, so we stay silent.
+  const empShares = peers.map((p) => p.empShare).filter((x) => x != null);
+  const fieldEmp = (isReal && empShares.length >= 3) ? median(empShares) : null;
+  const youEmp = biggest.empShare;
   const fieldOpener = peers.length ? peers[0].opener : null;
   const fieldRate = fieldCastRates(peers.map((p) => p.castRate || {}));
   const usage = usageDivergence(you.castRate || {}, fieldRate);
@@ -401,6 +432,12 @@ export async function rotationFindings(name, server, region, className, specName
     const overallRatio = peerTotals.length ? median(peerTotals) / (you.total || 1) : 1;
     perCast = perCastGaps(yourAb, fieldAb, overallRatio, you.total ||
       Object.values(you.dmgTotals || {}).reduce((a, b) => a + b, 0));
+    // Tag the biggest-hit's per-cast gap with the empowered-share comparison, so the
+    // lever can decide WHY it's behind: a lower empowered share -> timing (empower
+    // it more); equal shares -> uniform per-cast stats (leave it in the remainder).
+    for (const pc of perCast) {
+      if (pc.name === biggest.name) { pc.youEmp = youEmp; pc.fieldEmp = fieldEmp; }
+    }
   }
   // Your talented abilities, so the prescription can tell a skipped talent from a
   // baseline ability you simply aren't pressing (don't tell people to "respec"
@@ -419,7 +456,7 @@ export async function rotationFindings(name, server, region, className, specName
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener,
     usage, cooldowns, cdUsage, perCast, castGap, fieldPeers: peers.length, talent, abilityIds,
     heroMatched: yourHero && peers.length ? (peers.every((p) => p.hero === yourHero) ? yourHero : null) : null,
-    proc: { name: top.name, isReal, youPerMin: top.procPerMin, fieldPerMin: fieldProc },
+    proc: { name: biggest.name, isReal, youPerMin: biggest.procPerMin, fieldPerMin: fieldProc, youEmp, fieldEmp },
   };
 }
 
@@ -447,12 +484,15 @@ export async function run(log, name, server, region, className = "Monk",
     log("  hits = more crit + raid damage buffs (comp), not a rotation change.");
   } else {
     const p = fnd.proc;
-    log(`=== EMPOWERMENT PROC (${p.name}, non-crit big hits) ===`);
-    log(`  proc hits/min:  you ${p.youPerMin.toFixed(1)}   peers ${p.fieldPerMin == null ? "?" : p.fieldPerMin.toFixed(1)}`);
-    if (p.fieldPerMin != null)
-      log(p.youPerMin >= p.fieldPerMin - 0.4
-        ? "  -> About the same as peers. Good."
-        : "  -> Fewer than peers -- you're under-generating/using the proc.");
+    log(`=== EMPOWERMENT (${p.name}, high-damage casts) ===`);
+    if (p.youEmp != null && p.fieldEmp != null) {
+      log(`  empowered casts:  you ${Math.round(p.youEmp * 100)}%   peers ${Math.round(p.fieldEmp * 100)}%`);
+      log(p.fieldEmp - p.youEmp >= 0.12
+        ? "  -> Fewer than peers -- land your hardest hit in its empower/amp window more often."
+        : "  -> About the same as peers. Your big hits land in their window as often; the per-cast gap is stats/comp/fight-amp, not timing.");
+    } else {
+      log(`  proc hits/min:  you ${p.youPerMin.toFixed(1)}   peers ${p.fieldPerMin == null ? "?" : p.fieldPerMin.toFixed(1)}`);
+    }
   }
 
   log("");
@@ -557,22 +597,24 @@ export function rotationLevers(rot) {
         `skipping, not gear.`));
     }
   }
-  // EMPOWERMENT: an ability you press as often as the field but that hits much
-  // weaker per cast (and only THAT ability) -- you're landing it un-empowered.
-  // Measured, the most concrete piece of a tank's big playstyle remainder.
-  const dk = (x) => `${Math.round(x / 1000).toLocaleString()}k`;
-  for (const pc of ((rot && rot.perCast) || []).slice(0, 2)) {
-    if (!pc.pct || pc.pct < 1) continue;
-    out.push(finding("Rotation", DPS(pc.pct),
-      `EMPOWERMENT: your ${link(pc.name)} lands ~${dk(pc.youPerCast)}/cast vs the field's ~${dk(pc.fieldPerCast)} ` +
-      `(${f(pc.raw, 1)}x) at your item level -- and only this ability trails, so it isn't crit or comp (those lift ` +
-      `everything evenly): you're casting it OUTSIDE its empowerment window. Find what powers your biggest hit -- ` +
-      `the combo/buff/proc that sets it up -- and press it only inside that window (verify in a log/guide).`, "measured"));
-  }
-  if (rot && rot.proc.isReal && rot.proc.fieldPerMin != null &&
-      rot.proc.youPerMin < rot.proc.fieldPerMin - 0.4) {
-    out.push(finding("Rotation", DPS(1, 2), `PROC: you land ${f(rot.proc.youPerMin, 1)} ${link(rot.proc.name)} ` +
-      `procs/min vs your peers' ${f(rot.proc.fieldPerMin, 1)} -- generate/use it more.`));
+  // EMPOWERMENT: your biggest hit lands in its high-damage window LESS than the
+  // field. We only claim this when the EVIDENCE shows it -- your empowered-cast
+  // SHARE actually trails the field's. A per-cast DAMAGE gap alone isn't enough:
+  // it's confounded (comp re-attribution, a boss's damage-taken debuff, stat
+  // scaling all make the field's same ability hit harder without you doing anything
+  // wrong). The empowered SHARE is a within-player fraction, so it's robust to all
+  // of that -- and the advice ("land your hardest hit inside its window") is the
+  // same whether the window is a self-combo or a target debuff. Sized by the
+  // per-cast gap, but gated so it can't fire on a uniform stat/amp gap.
+  const emp = ((rot && rot.perCast) || []).find(
+    (pc) => pc.youEmp != null && pc.fieldEmp != null && pc.pct >= 1 &&
+            pc.fieldEmp >= 0.2 && pc.fieldEmp - pc.youEmp >= 0.12);
+  if (emp) {
+    out.push(finding("Rotation", DPS(emp.pct),
+      `EMPOWERMENT: ${Math.round(emp.youEmp * 100)}% of your ${link(emp.name)} casts land in its high-damage window ` +
+      `vs the field's ${Math.round(emp.fieldEmp * 100)}% -- your weak casts hit for roughly half. ` +
+      `Line your hardest hit up with its empower window (its combo/buff/proc, or the boss's damage-taken window) every time.`,
+      "measured"));
   }
   return out;
 }

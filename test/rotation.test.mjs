@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare } = await import("../docs/rotation.js");
 
 test("realOveruse: an over-press vs a ~0 field is a build difference, not a rotation error", () => {
   // Cross-tree field (heroMatched null): you press Thrash 5.8/min, peers 0.0 --
@@ -51,6 +51,31 @@ test("sameHeroPeers: falls back to the whole field when too few share your tree"
 test("sameHeroPeers: unknown hero tree -> compare to the whole field", () => {
   const peers = [{ name: "a", hero: null }, { name: "b", hero: "X" }];
   assert.equal(sameHeroPeers(peers, null).length, 2);
+});
+
+test("empoweredShare: fraction of non-crit casts landing above 1.5x your own median", () => {
+  // 10 hits: seven ~40k (bare, the median) and three ~100k (empowered). 100k > 1.5x
+  // the 41k median, so empowered share = 3/10.
+  const amts = [38000, 39000, 40000, 41000, 42000, 40000, 39000, 100000, 105000, 98000];
+  assert.equal(empoweredShare(amts), 0.3);
+});
+
+test("empoweredShare: 0 when the ability is uniform (no hit clears 1.5x the median)", () => {
+  // All hits cluster tightly around the median -- no empowered version to land.
+  assert.equal(empoweredShare([40000, 41000, 42000, 39000, 40000, 43000, 41000, 40000]), 0);
+});
+
+test("empoweredShare: null when too few hits to judge", () => {
+  assert.equal(empoweredShare([40000, 100000, 41000]), null);
+});
+
+test("empoweredShare is the gear-robust gate -- two players with the SAME share despite different hit sizes", () => {
+  // A low-gear player (small hits) and a buffed player (big hits) who BOTH land the
+  // empowered version 1/4 of the time read as equal -- the comparison isn't fooled
+  // by a flat damage amp (comp / a boss damage-taken debuff lifts both clusters).
+  const lo = [20000, 21000, 22000, 20000, 21000, 22000, 50000, 51000];   // 2/8 empowered
+  const hi = [40000, 42000, 44000, 40000, 42000, 44000, 100000, 102000]; // 2/8 empowered
+  assert.equal(empoweredShare(lo), empoweredShare(hi));
 });
 
 test("perCastGaps: flags a hard hit you land WEAK -- ability-specific, beyond the comp/stats edge", () => {
