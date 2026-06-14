@@ -393,10 +393,16 @@ export function executionLevers(execd, rot, peerGapPct = null, activePct = null)
     // than the field (e.g. 69 vs 65) -- their idle gaps don't show up as a cast
     // deficit. In that case the deficit citation is false ("your lower cast rate
     // 69 vs 65"), so drop it; the measured idle-time headline stands on its own.
+    // "(the rest is the rotation fix)" only holds when there IS a rotation fix -- i.e.
+    // you under-press something (the deficit splits into raw speed + that fix). When
+    // the deficit is ENTIRELY raw speed (no under-pressed ability, underGap 0), there
+    // is no "rest" and no rotation item to point at -- don't reference one (Mazaltoff:
+    // 71 vs 88 casts/min, no under-use).
+    const hasRotationFix = under.length > 0;
     const cite = (cg && cg.field > 0 && (speedPct >= 3 || cg.you < cg.field))
       ? (speedPct >= 3
-          ? ` You cast ${f(cg.you, 0)} damaging abilities/min vs the field's ${f(cg.field, 0)} -- ~${speedPct}% of that is raw speed (the rest is the rotation fix); the % here estimates the DPS it's worth.`
-          : ` (Your lower cast rate -- ${f(cg.you, 0)} vs ${f(cg.field, 0)}/min -- is mostly the rotation fix above, not raw speed.)`)
+          ? ` You cast ${f(cg.you, 0)} damaging abilities/min vs the field's ${f(cg.field, 0)} -- ~${speedPct}% of that is raw speed${hasRotationFix ? " (the rest is the rotation fix above)" : ""}; the % here estimates the DPS it's worth.`
+          : ` (Your lower cast rate -- ${f(cg.you, 0)} vs ${f(cg.field, 0)}/min -- is ${hasRotationFix ? "mostly the rotation fix above, not raw speed" : "a small raw-speed gap"}.)`)
       : "";
     const cause = latencyHigh
       ? "gaps between GCDs (partly input latency -- see the INPUT LATENCY item)."

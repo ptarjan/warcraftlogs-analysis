@@ -139,6 +139,19 @@ test("executionLevers: press-faster doesn't pipe the raw cast gap into DPS%", ()
   assert.equal(press.impact, 12);                       // capped, not 44
   assert.match(press.text, /raw speed/);                // the measured cast counts are still cited
   assert.match(press.text, /not latency/);              // overshoot low -> "not latency"
+  // No under-pressed ability here -> the whole deficit IS raw speed; don't reference a
+  // "rotation fix" that isn't in the list (Mazaltoff: 71 vs 88 casts/min, no under-use).
+  assert.doesNotMatch(press.text, /rotation fix/);
+});
+
+test("executionLevers: cites 'the rotation fix' only when you actually under-press something", () => {
+  const execd = { pressExcess: 2.0, rangeExcess: 0, worstRange: [], overshootExcess: 0 };
+  // Under-press Mortal Strike (the field presses it 5/min more) -> part of the deficit
+  // is the rotation fix, so the cite may reference it.
+  const rot = { castGap: { you: 20, field: 28, pct: 29 },
+    usage: { under: [{ name: "Mortal Strike", you: 2, field: 7, gap: 5 }], over: [] } };
+  const [press] = executionLevers(execd, rot, 60);
+  assert.match(press.text, /rotation fix/);
 });
 
 test("executionLevers: a never-pressed core ability isn't double-counted as press-faster", () => {
