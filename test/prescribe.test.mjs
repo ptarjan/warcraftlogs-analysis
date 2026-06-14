@@ -8,7 +8,7 @@ import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
 const { DPS, COMP, INFO } = await import("../docs/core.js");          // shared Finding currency
-const { rxHeadline, executionLevers, latencyLever, trinketLevers } = await import("../docs/prescribe.js");
+const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts } = await import("../docs/prescribe.js");
 const { embellishmentRx, gemLever } = await import("../docs/gear.js");          // gear-domain lever
 
 test("executionLevers: press-faster doesn't pipe the raw cast gap into DPS%", () => {
@@ -89,6 +89,28 @@ test("trinketLevers: surfaces a majority field trinket you don't run; silent oth
   // Too small a field sample -> not enough signal, stays silent (no false positive).
   const small = { n: 3, trinkets: new Map([[1001, { name: "X", count: 3 }]]) };
   assert.equal((await trinketLevers(small, { trinketIds: new Set(), trinkets: [] })).length, 0);
+});
+
+test("reconcileImpacts: concrete fixes + residual always sum to the target (the gap)", () => {
+  const sum = (a) => a.reduce((s, v) => s + v, 0);
+  // over-claim: our sims exceed the headroom -> scale DOWN so they can't claim
+  // more DPS than the gap is (this is what shrinks a near-the-field player's list).
+  let r = reconcileImpacts([10, 6, 4], 10);
+  assert.deepEqual(r.scaled, [5, 3, 2]);
+  assert.equal(r.residual, 0);
+  assert.equal(sum(r.scaled) + r.residual, 10);
+  // under-explain: leftover becomes the residual (further-behind -> bigger residual).
+  r = reconcileImpacts([3, 2], 10);
+  assert.deepEqual(r.scaled, [3, 2]);
+  assert.equal(r.residual, 5);
+  assert.equal(sum(r.scaled) + r.residual, 10);
+  // no concrete levers: the whole target is residual.
+  r = reconcileImpacts([], 8);
+  assert.equal(r.residual, 8);
+  // comp already covers the gap (target 0): concrete scale to ~0, no residual.
+  r = reconcileImpacts([3, 2], 0);
+  assert.deepEqual(r.scaled, [0, 0]);
+  assert.equal(r.residual, 0);
 });
 
 test("latencyLever: fires only above the threshold, never below", () => {

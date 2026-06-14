@@ -326,6 +326,28 @@ function statGapLever(gf, my, field, priority) {
   return [];
 }
 
+// A single reconciled percent label, e.g. "~11% DPS" (or "~<1% DPS").
+const pctLabel = (n) => (n >= 0.5 ? `~${Math.round(n)}% ${metricUnit()}` : `~<1% ${metricUnit()}`);
+
+// Reconcile the yours-list to the MEASURED headroom so the column ADDS UP to the
+// gap instead of being a bag of independent guesses. `target` is the part of the
+// measured gap that's plausibly yours (the gap minus comp, which keeps its own
+// estimate and is a footnote). Three cases, all making concrete + residual == target:
+//  - over-claim (our per-lever sims sum to MORE than the headroom): scale them
+//    down so they can't claim more DPS than the gap actually is (this is what
+//    shrinks a near-the-field player's list).
+//  - under-explain: the leftover is an explicit unattributed residual (execution/
+//    sim/variance) -- a player further behind gets a bigger one.
+//  - no concrete levers: the whole target is residual.
+// Pure math -> unit-testable; the framing of the residual is decided by the caller.
+export function reconcileImpacts(impacts, target) {
+  const rawSum = impacts.reduce((s, v) => s + (v || 0), 0);
+  if (rawSum <= 0) return { scaled: impacts.slice(), residual: Math.max(0, target) };
+  if (target <= 0) return { scaled: impacts.map(() => 0), residual: 0 };
+  if (rawSum > target) return { scaled: impacts.map((v) => (v || 0) * target / rawSum), residual: 0 };
+  return { scaled: impacts.slice(), residual: target - rawSum };
+}
+
 // THE SYNTHESIS, rendered: one answer anchored on the MEASURED DPS gap (your
 // kill vs the ilvl-matched field vs the top parses -- real numbers, not a sum of
 // per-lever guesses), what that gap is made of, then the change-list split into
@@ -388,15 +410,56 @@ function renderPrescription(log, d) {
   // the top of the to-do list; it's a clearly-labelled footnote. Each section
   // stays sorted biggest-DPS-first.
   const compList = rx.filter((r) => isComp(r));
-  const youList = rx.filter((r) => !isComp(r));
+  const concrete = rx.filter((r) => r.impact > 0 && !isComp(r));   // sized fixes (sorted desc)
+  const infoList = rx.filter((r) => r.impact === 0 && !isComp(r)); // INFO notes (no DPS, end)
   const line = (r, i) => log(`  ${i + 1}. [${r.label.padStart(9)}]  ${r.text}`);
 
+  // RECONCILE the change-list to the measured gap so it ADDS UP instead of being a
+  // bag of independent guesses. gap = comp + your concrete fixes + an explicit
+  // remainder. A player further behind ends up with bigger fixes / a bigger
+  // remainder; one near the field has the whole list scaled down. Only when we
+  // actually have a measured gap -- otherwise leave the honest sim ranges as-is.
+  const gap = (peerGap != null && peerGap > 0) ? peerGap : 0;
+  const compImpact = compList.reduce((s, r) => s + (r.impact || 0), 0);
+  const renderYou = concrete.map((r) => ({ ...r }));
+  let residual = 0;
+  if (gap > 0) {
+    const target = Math.max(0, gap - compImpact);                 // the plausibly-yours share
+    const { scaled, residual: res } = reconcileImpacts(renderYou.map((r) => r.impact), target);
+    renderYou.forEach((r, i) => { r.impact = scaled[i]; r.label = pctLabel(scaled[i]); });
+    renderYou.sort((a, b) => b.impact - a.impact);
+    residual = res;
+  }
+  // The remainder we can't pin to a specific fix. This is NOT just cosmetic: a big
+  // remainder means the analysis FAILS to explain the measured gap -- usually a
+  // real lever we don't model yet (the trinket lever was hiding here before we
+  // built it), or a mis-measure (wrong benchmark kill, undercounted casts), not
+  // "variance". So frame it by size + signal: under-pressing -> execution; a LARGE
+  // unexplained chunk -> flag the list as incomplete; only a SMALL one is plausibly
+  // sim/variance.
+  if (gap > 0 && residual >= 1) {
+    const underPress = (rot && rot.castGap && rot.castGap.field > rot.castGap.you)
+      || (execd && execd.pressExcess >= 1 && !outpaces);
+    let rtext;
+    if (underPress) {
+      rtext = `THE REMAINDER (~${Math.round(residual)}%): not a setup item -- it's GCD uptime and hitting your priority on more pulls (see the measured cast/idle gaps above). That's where the rest of your gap lives.`;
+    } else if (residual >= 8) {
+      rtext = `UNEXPLAINED (~${Math.round(residual)}%): the analysis can't attribute this much of your gap -- a chunk this big usually means a lever we're NOT measuring (a trinket/proc, a cooldown, a damage source) rather than pure variance. Treat the list above as incomplete; a Droptimizer sim will expose what's missing.`;
+    } else {
+      rtext = `THE REMAINDER (~${Math.round(residual)}%): small and unattributed -- sim-only tuning (exact trinket/stat effect sizes) and kill-to-kill variance. No single button.`;
+    }
+    renderYou.push({ dim: "Execution", impact: residual, label: pctLabel(residual), text: rtext });
+  }
+  const youOut = renderYou.concat(infoList);
+
   log("");
-  log("--- Do these to your character now (biggest first; gear/rotation % are sim estimates, the rest measured) ---");
-  if (!youList.length) {
+  log(gap > 0
+    ? `--- Do these to your character now -- each % is that fix's share of your measured ${gap}% gap; concrete fixes + comp + the remainder sum to it (gear/trinket/rotation are sim estimates) ---`
+    : "--- Do these to your character now (biggest first; gear/rotation % are sim estimates, the rest measured) ---");
+  if (!youOut.length) {
     log("  You match your peers on gear, enchants, consumables, stats, and execution. The rest is comp + farm kills.");
   }
-  youList.forEach(line);
+  youOut.forEach(line);
 
   if (compList.length) {
     log("");
