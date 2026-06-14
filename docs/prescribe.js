@@ -167,12 +167,16 @@ async function aggregateExecution(name, server, region, difficulty, className, s
   const rangeBosses = perBoss
     .map((c) => [c.you.rangeLostPerMin - c.peer.rangeLostPerMin, c.boss, c.yourKills])
     .sort((a, b) => b[0] - a[0]);
+  // Your TYPICAL uptime across bosses -- used to suppress press-faster when you're
+  // already ~always active (one low-uptime fight shouldn't drive "you idle").
+  const activePcts = perBoss.map((c) => c.you.activePct).filter((x) => x != null);
   return {
     nBosses: perBoss.length,
     pressExcess: med("pressLostPerMin"),
     rangeExcess: med("rangeLostPerMin"),
     totalExcess: med("lostPerMin"),
     overshootExcess: med("overshootMs"),
+    activePct: activePcts.length ? median(activePcts) : null,
     worstRange: rangeBosses
       .filter(([d, , kills]) => d > 1.5 && kills >= 2)
       .map(([, b, kills]) => `${b} (${kills} kills)`),
@@ -627,7 +631,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const trinketRx = (field && my) ? await trinketLevers(field, my) : [];
   /** @type {Finding[]} */
   const rx = [
-    ...executionLevers(execd, rot, peerGapPct, you && you.activePct),
+    ...executionLevers(execd, rot, peerGapPct, (execd && execd.activePct != null) ? execd.activePct : (you && you.activePct)),
     ...(field && my ? consumableLevers(field, my) : []),
     ...(field && my ? enchantLevers(field, my) : []),
     ...trinketRx,

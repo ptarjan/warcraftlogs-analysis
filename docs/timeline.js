@@ -102,10 +102,14 @@ export async function timelineFindings(name, server, region, encounter, difficul
   const perKill = await mapLimit(recentRanks.slice(0, KILLS_PER_BOSS), 4, async (rk) => {
     const you = await playerMetrics(rk.report.code, rk.report.fightID, name, specName, className);
     const fm = await fightMetrics(rk.report.code, rk.report.fightID, you.sourceID, className);
-    return fm ? { fm, ilvl: rk.bracketData || 0 } : null;
+    // Carry active% (uptime) alongside the timeline metrics -- the press-faster
+    // lever must be judged against your TYPICAL uptime, not one low-uptime fight.
+    return fm ? { fm, ilvl: rk.bracketData || 0, activePct: you.activePct } : null;
   });
-  const yourFms = perKill.filter(Boolean).map((x) => x.fm);
+  const kept = perKill.filter(Boolean);
+  const yourFms = kept.map((x) => x.fm);
   if (!yourFms.length) return null;
+  const activePcts = kept.map((x) => x.activePct).filter((x) => x != null);
   // The ilvl-matched field -- via the shared core.ilvlPeers, so this can't drift
   // from overview's selection and start double-fetching the same peers.
   const peers = await peerMetricsFor(name, server, region, encounter, difficulty, className, specName);
@@ -114,6 +118,7 @@ export async function timelineFindings(name, server, region, encounter, difficul
   const keys = ["lostPerMin", "rangeLostPerMin", "pressLostPerMin", "autoDownPct", "overshootMs"];
   const you = {}, peer = {};
   for (const k of keys) { you[k] = ymed(k); peer[k] = pmed(k); }
+  you.activePct = activePcts.length ? median(activePcts) : null;
   return { boss: encounter.name, yourKills: yourFms.length, peers: peers.length, you, peer };
 }
 
