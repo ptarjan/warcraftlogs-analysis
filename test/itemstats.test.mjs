@@ -7,6 +7,29 @@ import { installLocalStorage, mockFetch, tooltip } from "./helpers.mjs";
 
 installLocalStorage();
 
+test("statValueScore: prices a swap from the field's measured per-rating value, not the sim constant", async () => {
+  const { statValueScore } = await import("../docs/gear.js");
+  // Field: peers who stack crit do 6% more, across a 3000-rating spread -> 0.002%/
+  // rating. A +260 crit swap is worth ~0.52% -> rounds to ~1%, basis measured.
+  const sv = { pct: 6, perRating: 6 / 3000, nHave: 6, nNot: 5 };
+  const s = statValueScore(260, sv);
+  assert.equal(s.label, "~1% DPS");
+  assert.ok(Math.abs(s.impact - 0.52) < 0.01);
+});
+
+test("statValueScore: caps a single swap at the whole stat-spread value (and 5%)", async () => {
+  const { statValueScore } = await import("../docs/gear.js");
+  // A huge gain can't claim more than the field's measured spread value (4%).
+  const s = statValueScore(99999, { pct: 4, perRating: 1, nHave: 6, nNot: 6 });
+  assert.equal(s.impact, 4);
+});
+
+test("statValueScore: null when the field gave no counterfactual (caller keeps the est)", async () => {
+  const { statValueScore } = await import("../docs/gear.js");
+  assert.equal(statValueScore(200, null), null);
+  assert.equal(statValueScore(200, { pct: 5, perRating: 0 }), null);
+});
+
 test("parses crit/vers, embellished, unique, ilvl from a crafted neck", async () => {
   globalThis.fetch = mockFetch([
     ["wowhead", () => tooltip("Masterwork Sin'dorei Amulet",

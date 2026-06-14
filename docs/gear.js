@@ -478,31 +478,60 @@ export function statScore(gain) {
   return { impact, label: hi > lo ? `~${lo}-${hi}% ${metricUnit()}` : `~${lo}% ${metricUnit()}` };
 }
 
+// MEASURED size for a stat swap: price the rating gained at the field's own value
+// per point, instead of the ~75/point sim constant. `statValue` is from the
+// ilvl-matched field (peers who itemize MORE of the priority stat vs less, at the
+// SAME item level, so it's an itemization choice not gear) -> a measured DPS %
+// across the stat-rating spread (core.fieldDelta), with `perRating` the slope.
+// Confounded (better players itemize better), so it's a measured FLOOR -- same
+// footing as the consumable/stat deltas. Capped at the whole spread's value and at
+// 5% so one swap can't dominate before reconcileImpacts. null when the field gave
+// no counterfactual -> caller falls back to statScore (the sim estimate).
+export function statValueScore(gain, statValue) {
+  if (!statValue || !(statValue.perRating > 0)) return null;
+  const impact = Math.min(5, statValue.pct || 5, Math.max(0, (gain || 0) * statValue.perRating));
+  const r = Math.round(impact);
+  return { impact, label: `~${r >= 1 ? r : "<1"}% ${metricUnit()}` };
+}
+
 // All gear levers as findings: priority-stat drop swaps, re-stats, embellishment.
-export function gearLevers(gf, priority) {
+export function gearLevers(gf, priority, statValue = null) {
   if (!gf) return [];
   const PRI = priority.toUpperCase();
   const out = [];
   const swaps = gf.swaps || [];
+  // Cite the field-measured stat value once (so each swap line stays terse).
+  const mcite = statValue && statValue.perRating > 0
+    ? ` (measured: at your item level, peers who stack ${priority} do ${Math.round(statValue.pct)}% more, n=${statValue.nHave}/${statValue.nNot})`
+    : "";
+  const measured = !!(statValue && statValue.perRating > 0);
   // LEGIBILITY: a low player can have 5+ priority-stat swaps. Five separate
   // "<STAT> via <slot>" lines bury the levers that actually matter (rotation/build).
   // With >=3, collapse them into ONE "re-itemize N slots" task that still names every
-  // exact from->to swap. Impact = sum of the per-swap values (reconcileImpacts
-  // rescales the list to the gap anyway), so the whole re-itemization is one bullet.
+  // exact from->to swap. Impact = sum of the per-swap values (measured from the field
+  // when we have it, else the sim estimate); reconcileImpacts rescales to the gap.
   if (swaps.length >= 3) {
-    const total = swaps.reduce((s, sw) => s + statScore(sw.gain).impact, 0);
+    const total = swaps.reduce((s, sw) => s + (statValueScore(sw.gain, statValue) || statScore(sw.gain)).impact, 0);
     const gain = swaps.reduce((s, sw) => s + (sw.gain || 0), 0);
     const items = swaps.map((sw) => `${sw.slot} ${wowheadItem(sw.fromId, sw.fromName)}→${wowheadItem(sw.toId, sw.toName)}`).join(", ");
     out.push(finding("Gear", { impact: total, label: `~${Math.round(total)}% ${metricUnit()}` },
-      `${PRI}: re-itemize ${swaps.length} slots toward ${priority} (+${gain} ${priority} total -- sim to confirm) -- ${items}.`));
+      `${PRI}: re-itemize ${swaps.length} slots toward ${priority} (+${gain} ${priority} total${measured ? mcite : " -- sim to confirm"}) -- ${items}.`,
+      measured ? "measured" : "est"));
   } else {
     for (const sw of swaps) {
       const from = sourceText(sw.source, sw.instance, sw.dropChance);
-      out.push(finding("Gear", statScore(sw.gain), `${PRI} via ${sw.slot}: replace ${wowheadItem(sw.fromId, sw.fromName)} with ${wowheadItem(sw.toId, sw.toName)} (+${sw.gain} ${priority}${from} -- sim to confirm).`));
+      const mv = statValueScore(sw.gain, statValue);
+      out.push(finding("Gear", mv || statScore(sw.gain),
+        `${PRI} via ${sw.slot}: replace ${wowheadItem(sw.fromId, sw.fromName)} with ${wowheadItem(sw.toId, sw.toName)} (+${sw.gain} ${priority}${from}${mv ? mcite : " -- sim to confirm"}).`,
+        mv ? "measured" : "est"));
     }
   }
   for (const rs of gf.restats) {
-    out.push(finding("Gear", statScore((rs.achievable || 0) - (rs.current || 0)), `${PRI} via ${rs.slot}: ${wowheadItem(rs.itemId, rs.itemName)} is selectable -- recraft to ${rs.achievable} ${priority} (you have ${rs.current}).`));
+    const gain = (rs.achievable || 0) - (rs.current || 0);
+    const mv = statValueScore(gain, statValue);
+    out.push(finding("Gear", mv || statScore(gain),
+      `${PRI} via ${rs.slot}: ${wowheadItem(rs.itemId, rs.itemName)} is selectable -- recraft to ${rs.achievable} ${priority} (you have ${rs.current})${mv ? mcite : ""}.`,
+      mv ? "measured" : "est"));
   }
   const embRx = embellishmentRx(gf);
   if (embRx) out.push(embRx);

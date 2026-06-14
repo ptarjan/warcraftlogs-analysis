@@ -122,6 +122,19 @@ async function fieldGearConsumables(name, server, region, encounter, difficulty,
     augRunes: fieldDelta(dps, mask((lc, b) => b.pct > 50 && lc.includes("augment rune"))),
     oils: fieldDelta(dps, mask((lc, b) => b.pct > 50 && /\boil\b|sharpening|whetstone|weightstone/.test(lc))),
   };
+  // The value of the SPECIFIC field-favored item, for a SWAP (you ran a different
+  // one -- e.g. a defensive flask vs the field's DPS flask). deltas above measure
+  // having ANY (null when everyone flasks); these measure peers on the FIELD'S TOP
+  // item vs not, so a wrong-choice swap can be priced from the field, not guessed.
+  const topMaskDelta = (counter, thr) => {
+    if (!counter.size) return null;
+    const topName = topEntry(counter)[0];
+    return fieldDelta(dps, peers.map((p) => Object.entries(p.bf || {}).some(([nm, b]) => nm === topName && b.pct > thr)));
+  };
+  const topDeltas = {
+    flasks: topMaskDelta(flasks, 50), foods: topMaskDelta(foods, 50),
+    potions: topMaskDelta(potions, 0), augRunes: topMaskDelta(augRunes, 50), oils: topMaskDelta(oils, 50),
+  };
   // Priority-stat value: top-half vs bottom-half of the field's secondary %.
   const secOf = (s) => 100 * s[priority] / (["crit", "haste", "mastery", "vers"].reduce((a, k) => a + s[k], 0) || 1);
   const withStat = peers.map((p, i) => ({ pc: p.s ? secOf(p.s) : null, d: dps[i] })).filter((x) => x.pc != null && x.d > 0);
@@ -130,8 +143,22 @@ async function fieldGearConsumables(name, server, region, encounter, difficulty,
     const medStat = median(withStat.map((x) => x.pc));
     statDelta = fieldDelta(withStat.map((x) => x.d), withStat.map((x) => x.pc >= medStat));
   }
+  // Measured VALUE of the priority stat per RATING POINT, to size gear swaps from
+  // the field instead of the ~75/point sim constant. Same ilvl, so more rating =
+  // an itemization choice, not more gear: split peers at the median priority RATING
+  // and price the DPS gap across the rating spread. Confounded -> a measured floor
+  // (like the consumable deltas). null with no counterfactual -> swaps keep the est.
+  const withRating = peers.map((p, i) => ({ r: p.s ? p.s[priority] : null, d: dps[i] })).filter((x) => x.r != null && x.d > 0);
+  let statValue = null;
+  if (withRating.length >= 8) {
+    const medR = median(withRating.map((x) => x.r));
+    const sd = fieldDelta(withRating.map((x) => x.d), withRating.map((x) => x.r >= medR));
+    const spread = median(withRating.filter((x) => x.r >= medR).map((x) => x.r))
+                 - median(withRating.filter((x) => x.r < medR).map((x) => x.r));
+    if (sd && spread > 0) statValue = { pct: sd.pct, perRating: sd.pct / spread, nHave: sd.nHave, nNot: sd.nNot };
+  }
   return {
-    enchBySlot, trinkets, flasks, foods, potions, augRunes, oils, guids, deltas, statDelta,
+    enchBySlot, trinkets, flasks, foods, potions, augRunes, oils, guids, deltas, topDeltas, statDelta, statValue,
     statPct: statPcts.length ? median(statPcts) : null, n: peers.length,
     dpsMed: peers.length ? median(peers.map((p) => p.m.dps)) : null, // measured field DPS
   };
@@ -329,8 +356,13 @@ function consumableLevers(field, my) {
       out.push(finding("Setup", noneScore, `${cn.label}: ${cn.missText} -- ${counter.get(top)}/${field.n} peers ` +
         `${cn.peerVerb} ${wowheadSpell(field.guids.get(top), top)}${cn.note}.${cite} ${cn.tail}`, basis));
     } else if (mineName !== top) {
-      out.push(finding("Setup", fd ? noneScore : cn.swap,
-        `${cn.label}: ${wowheadSpell(mineGuid, mineName)} -> ${wowheadSpell(field.guids.get(top), top)}.`, basis));
+      // Swap: price the SPECIFIC field-favored item (peers on it vs not), not the
+      // have-any delta -- so "defensive flask -> the DPS flask" reads measured.
+      const td = field.topDeltas && field.topDeltas[cn.field];
+      const swapCite = td ? ` (measured: peers on it do ${Math.round(td.pct)}% more than those without, n=${td.nHave}/${td.nNot})` : "";
+      out.push(finding("Setup", td ? DPS(Math.round(td.pct)) : cn.swap,
+        `${cn.label}: ${wowheadSpell(mineGuid, mineName)} -> ${wowheadSpell(field.guids.get(top), top)}.${swapCite}`,
+        td ? "measured" : "est"));
     }
   }
   return out;
@@ -736,7 +768,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
     ...(field && my ? consumableLevers(field, my) : []),
     ...(field && my ? enchantLevers(field, my) : []),
     ...trinketRx,
-    ...gearLevers(gf, priority),
+    ...gearLevers(gf, priority, field && field.statValue),
     ...(my ? statGapLever(gf, my, field, priority) : []),
     ...rotationLevers(rot),
     ...talentLevers(tal),
