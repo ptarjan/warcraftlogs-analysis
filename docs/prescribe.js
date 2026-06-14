@@ -30,7 +30,22 @@ async function bestIlvlKill(name, server, region, encounterId, difficulty) {
   const er = await characterEncounter(name, server, region, encounterId, difficulty);
   const best = bestRank(er && er.ranks);
   if (!best) return null;
-  return [best.report.code, best.report.fightID, best.bracketData, best.startTime || 0];
+  return [best.report.code, best.report.fightID, best.bracketData, best.startTime || 0, best.rankPercent];
+}
+
+// The kill to MEASURE the DPS gap against the field: the player's MEDIAN-parse kill
+// within 1 ilvl of their top -- representative of TYPICAL performance at current
+// gear. NOT the most-recent one: that can be an outlier (a tank's survival or
+// progression kill where they barely DPS'd), producing an absurd "200% behind" gap
+// that contradicts their own percentile. Median across the per-boss kills drops
+// both the outlier-bad and the cherry-picked-best.
+export function pickBenchmarkKill(kills, band = 1) {
+  if (!kills || !kills.length) return null;
+  const maxIl = Math.max(...kills.map((k) => k.ilvl || 0));
+  const inBand = kills.filter((k) => (k.ilvl || 0) >= maxIl - band);
+  if (!inBand.length) return null;
+  const sorted = [...inBand].sort((a, b) => (a.rankPercent || 0) - (b.rankPercent || 0));
+  return sorted[Math.floor((sorted.length - 1) / 2)];
 }
 
 // "Current gear" = the most RECENT kill within `band` ilvls of your top, NOT the
@@ -581,14 +596,16 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const topParse = ranks.reduce((a, b) => ((a.rankPercent || 0) >= (b.rankPercent || 0) ? a : b));
   const bestP = Math.round(topParse.rankPercent || 0);
 
-  // Current gear = the most RECENT kill near your top ilvl (NOT the single highest-
-  // ilvl one, which can be weeks old and hide enchant/gem fixes you've made since).
+  // The kill we analyze: a REPRESENTATIVE (median-parse) kill near your top ilvl --
+  // not the most-recent (which can be an outlier survival kill -> garbage gap) nor
+  // the highest-ilvl (which can be weeks old -> stale setup). Within 1 ilvl, so gear
+  // is current; the staleness NOTE below flags it if that kill is itself old.
   const kills = [];
   for (const r of ranks) {
     const bk = await bestIlvlKill(name, server, region, r.encounter.id, difficulty);
-    if (bk) kills.push({ ilvl: bk[2] || 0, boss: r, code: bk[0], fight: bk[1], startTime: bk[3] || 0 });
+    if (bk) kills.push({ ilvl: bk[2] || 0, boss: r, code: bk[0], fight: bk[1], startTime: bk[3] || 0, rankPercent: bk[4] });
   }
-  const { ilvl: curIlvl, boss: gearBoss, code, fight, startTime: gearKillStart } = pickCurrentKill(kills);
+  const { ilvl: curIlvl, boss: gearBoss, code, fight, startTime: gearKillStart } = pickBenchmarkKill(kills);
   // How old is that gear snapshot? Enchant/gem/gear/consumable findings reflect THIS
   // kill, so if it's stale, say so -- some may already be fixed.
   const gearAgeDays = gearKillStart ? Math.floor((Date.now() - gearKillStart) / 86400000) : null;

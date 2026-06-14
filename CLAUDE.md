@@ -107,6 +107,17 @@ none); compare uptime/range to peers on the SAME fight (intermissions).
 - **Immutable report data is cached forever** (`_isImmutable`: `report(code:…)`),
   rankings/world/character queries expire weekly — don't assume a cold cost for a
   character analyzed within the tier.
+- **Benchmark the DPS gap on a REPRESENTATIVE kill** (`pickBenchmarkKill` = median
+  parse within 1 ilvl), NOT the most-recent one. A tank's (or anyone's) most-recent
+  kill can be an outlier survival/progression pull where they barely DPS'd →
+  "217% behind" garbage that contradicts their own percentile. A huge unexplained
+  remainder that contradicts the parse % is the tell. (Gear/setup is still read off
+  that same kill, within the ilvl band; the staleness NOTE flags it if it's old.)
+- **The damage/casts TABLES truncate to ~5 abilities/actor.** Full per-ability data
+  needs cast EVENTS (all casts, see `allCastRate`) or a `sourceID`-filtered
+  DamageDone table (returns the full ~15-ability breakdown, unlike the unfiltered
+  one). Pet damage is a separate actor (`petOwner`) and folded into the owner's
+  ranking DPS — isolate it with a `sourceID`-filtered table if you need it alone.
 
 ## Dev workflow
 - **Tests:** `npm test` (zero-dep `node:test`, mocked fetch + localStorage). Add

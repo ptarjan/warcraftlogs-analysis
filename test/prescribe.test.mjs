@@ -26,7 +26,26 @@ test("fieldDelta measures an attribute's value from the field (have vs not)", ()
   // Too few on one side -> null.
   assert.equal(fieldDelta([110, 100, 100, 100, 100], [true, false, false, false, false]), null);
 });
-const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill } = await import("../docs/prescribe.js");
+const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill } = await import("../docs/prescribe.js");
+
+test("pickBenchmarkKill: median-parse kill, not an outlier survival kill", () => {
+  // A tank with a great Imperator parse but a terrible recent Belo'ren kill (a
+  // survival pull). Most-recent would benchmark Belo'ren -> absurd '200% behind';
+  // median-parse picks a representative kill instead.
+  const kills = [
+    { ilvl: 279, rankPercent: 94, boss: "Imperator", startTime: 100 },
+    { ilvl: 279, rankPercent: 70, boss: "Vorasius", startTime: 200 },
+    { ilvl: 279, rankPercent: 30, boss: "Beloren", startTime: 900 },
+  ];
+  assert.equal(pickBenchmarkKill(kills).boss, "Vorasius", "median parse, not the recent outlier");
+  // Outside the ilvl band is excluded even if recent.
+  const banded = pickBenchmarkKill([
+    { ilvl: 279, rankPercent: 90, boss: "A", startTime: 1 },
+    { ilvl: 270, rankPercent: 50, boss: "old-tier", startTime: 9 },
+  ]);
+  assert.equal(banded.boss, "A");
+  assert.equal(pickBenchmarkKill([]), null);
+});
 const { embellishmentRx, gemLever, statScore } = await import("../docs/gear.js");          // gear-domain lever
 
 test("statScore: bigger stat gains rank above smaller ones (not a flat band)", () => {
