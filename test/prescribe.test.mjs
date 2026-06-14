@@ -26,7 +26,7 @@ test("fieldDelta measures an attribute's value from the field (have vs not)", ()
   // Too few on one side -> null.
   assert.equal(fieldDelta([110, 100, 100, 100, 100], [true, false, false, false, false]), null);
 });
-const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse } = await import("../docs/prescribe.js");
+const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, verdictLever } = await import("../docs/prescribe.js");
 
 test("pickBenchmarkKill: median-parse kill, not an outlier survival kill", () => {
   // A tank with a great Imperator parse but a terrible recent Belo'ren kill (a
@@ -251,6 +251,24 @@ test("remainderKind: a big remainder for an ELITE player is the gap to top parse
   assert.equal(remainderKind(4, { elite: true, underPress: true }), "underpress");
   assert.equal(remainderKind(4, { elite: true, underPress: false }), "small");
   assert.equal(remainderKind(4, { elite: false, underPress: true }), "underpress");
+});
+
+test("verdictLever: headlines the ACTUAL biggest lever, not a fixed category precedence", () => {
+  // The bug this guards: a Havoc DH with rotation #1 (8%) and a TALENTS swap #4
+  // (3%) was told "your biggest lever is a TALENT/BUILD change -- sort that first",
+  // contradicting the biggest-first list. The verdict must key off yours[0].
+  const rot = { dim: "Rotation", impact: 8, text: "ROTATION: press X more" };
+  const talent = { dim: "Rotation", impact: 3, text: "TALENTS: take Y" };
+  const gear = { dim: "Gear", impact: 2, text: "GEMS: consolidate" };
+  const uptime = { dim: "Execution", impact: 7, text: "UPTIME: stay in melee" };
+  // Sorted biggest-first (as renderPrescription receives it).
+  assert.equal(verdictLever([rot, uptime, gear, talent]), "rotation");
+  // Talent only wins when it's genuinely the top lever.
+  assert.equal(verdictLever([talent, gear]), "build");
+  // Execution top (uptime/press-faster) is its own verdict, not "everything matches".
+  assert.equal(verdictLever([uptime, gear]), "execution");
+  assert.equal(verdictLever([gear, talent]), "setup");
+  assert.equal(verdictLever([]), "none");
 });
 
 test("latencyLever: fires only above the threshold, never below", () => {

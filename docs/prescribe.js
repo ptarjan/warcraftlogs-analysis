@@ -504,6 +504,21 @@ export const isEliteParse = (medP) => medP != null && medP >= 90;
 // kill vs the ilvl-matched field vs the top parses -- real numbers, not a sum of
 // per-lever guesses), what that gap is made of, then the change-list split into
 // "yours to do" vs raid comp. Pure presentation -- the analysis already happened.
+// Which character lever the VERDICT should headline. `yours` MUST be the
+// actionable findings sorted by impact desc (comp + the playstyle remainder
+// excluded) -- yours[0] is the biggest lever, so the verdict can never claim a
+// lever is "biggest / sort that first" when a bigger one outranks it in the list.
+// A talent swap reads "TALENTS…" but is dim "Rotation", so check its text first.
+export function verdictLever(yours) {
+  const top = yours && yours[0];
+  if (!top) return "none";
+  if (/^TALENTS/.test(top.text)) return "build";
+  if (top.dim === "Rotation") return "rotation";
+  if (top.dim === "Gear" || top.dim === "Setup") return "setup";
+  if (top.dim === "Execution") return "execution";
+  return "none";
+}
+
 function renderPrescription(log, d) {
   const { rx, you, field, tp, execd, rot } = d;
   const isComp = (r) => r.dim === "Comp";                  // raid-dependent, not yours to press
@@ -552,25 +567,37 @@ function renderPrescription(log, d) {
   // because you skipped its talent) or "TALENTS" (the field runs a meta talent you
   // don't). Both are a build swap, the same VERDICT.
   const hasBuild = yours.some((r) => /^TALENTS/.test(r.text));
-  // A rotation lever that's about HOW you play the buttons (an empowered hit you
-  // land weak, a cooldown you skip, a wrong-button mix) -- NOT a talent swap (those
-  // are dim "Rotation" too but read as "TALENTS…"; they're a build change, framed
-  // separately). When a play lever exists, "your rotation already matches" is FALSE.
-  const rotFix = yours.find((r) => r.dim === "Rotation" && !/^TALENTS/.test(r.text));
-  const rotKind = rotFix ? (/^EMPOWERMENT/.test(rotFix.text) ? "an EMPOWERMENT timing fix (landing your hardest hit in its high-damage window)"
-    : /^COOLDOWN/.test(rotFix.text) ? "a COOLDOWN you under-use"
-    : "a ROTATION/priority fix") : null;
-  if (hasBuild) {
-    log("VERDICT: your biggest character lever is a TALENT/BUILD change -- the field runs a build/talent you don't (see the TALENTS item). Sort that first, then do the free enchant/gear fixes below.");
-  } else if (rotFix) {
-    const extra = setupFixes.length ? ` plus ${setupFixes.length} free gear/setup fix${setupFixes.length > 1 ? "es" : ""}` : "";
-    log(`VERDICT: your gear & build match the field, but your ROTATION doesn't -- your biggest character lever is ${rotKind} (see the list)${extra}. The gap is HOW you play the same gear, not a setup overhaul${compList0.length ? " (comp aside)" : ""}.`);
-  } else if (setupFixes.length) {
+  // A talent/build swap reads "TALENTS…" but is dim "Rotation"; tell the play-lever
+  // version apart so verbs ("respec" vs "play differently") never mismatch.
+  const rotKindOf = (r) => /^EMPOWERMENT/.test(r.text) ? "an EMPOWERMENT timing fix (landing your hardest hit in its high-damage window)"
+    : /^COOLDOWN/.test(r.text) ? "a COOLDOWN you under-use"
+    : "a ROTATION/priority fix";
+  // The VERDICT must name the ACTUAL biggest character lever. `yours` is sorted by
+  // impact desc (rx.sort, comp + the playstyle remainder excluded), so yours[0] IS
+  // it. Keying off a fixed category precedence (build > rotation > setup) was the
+  // bug: a 3% talent swap got announced as "your biggest lever -- sort that first"
+  // over an 8% rotation fix, contradicting the biggest-first list right above it.
+  const lever = verdictLever(yours);
+  // Other actionable categories present below the top one, named so the verdict
+  // doesn't falsely claim "your build/gear already matches" when a fix exists.
+  const extras = [];
+  if (lever !== "build" && hasBuild) extras.push("a talent swap");
+  if (lever !== "setup" && setupFixes.length) extras.push(`${setupFixes.length} gear/setup fix${setupFixes.length > 1 ? "es" : ""}`);
+  const thenExtra = extras.length ? ` -- then ${extras.join(" and ")} below` : "";
+  if (lever === "build") {
+    const tail = setupFixes.length ? ", then do the free enchant/gear fixes below" : "";
+    log(`VERDICT: your biggest character lever is a TALENT/BUILD change -- the field runs a build/talent you don't (see the TALENTS item). Sort that first${tail}.`);
+  } else if (lever === "rotation") {
+    log(`VERDICT: your biggest character lever is ${rotKindOf(yours[0])}${thenExtra}. The gap is mostly HOW you play the same gear, not a setup overhaul${compList0.length ? " (comp aside)" : ""}.`);
+  } else if (lever === "execution") {
+    log(`VERDICT: your biggest character lever is EXECUTION (uptime / pressing on time)${thenExtra}. The gap is HOW you play, not a setup overhaul${compList0.length ? " (comp aside)" : ""}.`);
+  } else if (lever === "setup") {
     // Only credit "pressing faster" when a press-faster lever survived -- for a
     // player who already out-casts the field it's suppressed, and the gap is
     // damage-per-cast (the gear/setup fixes), not activity.
     const hasPress = yours.some((r) => /PRESS FASTER/.test(r.text));
-    log(`VERDICT: your build & rotation already match the field -- your character levers are the ${setupFixes.length} gear/setup fix${setupFixes.length > 1 ? "es" : ""} below${hasPress ? " + pressing faster" : ""}. The big gap is ${compList0.length ? "comp + " : ""}${hasPress ? "reps" : "damage-per-cast (stats/gear), not activity"}, not a setup overhaul.`);
+    const buildNote = hasBuild ? " (plus a talent swap)" : "";
+    log(`VERDICT: your biggest character levers are the ${setupFixes.length} gear/setup fix${setupFixes.length > 1 ? "es" : ""} below${buildNote}${hasPress ? " + pressing faster" : ""}. The big gap is ${compList0.length ? "comp + " : ""}${hasPress ? "reps" : "damage-per-cast (stats/gear), not activity"}, not a rotation overhaul.`);
   } else {
     log(`VERDICT: build, gear, enchants, and rotation all match the field -- there's NO setup or talent fix to make. Your gap is ${compList0.length ? "comp + " : ""}execution (press faster / uptime). Tighten your play; there's no gear/talent shortcut.`);
   }
