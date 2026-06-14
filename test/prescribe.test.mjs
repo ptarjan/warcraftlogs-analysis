@@ -62,6 +62,19 @@ test("gearLevers: many same-stat swaps collapse into ONE legible re-itemize line
   assert.ok(!many.some((x) => /via Neck/.test(x.text)), "no separate per-slot swap lines");
 });
 
+test("gearLevers: a MEASURED-zero priority stat suppresses the re-itemize advice", () => {
+  // When the field measures no benefit from stacking this stat at your ilvl (pct
+  // rounds to 0), recommending a re-itemize for "~1%, measured: peers gain 0% more"
+  // is self-contradicting. Drop the swaps/restats; gems/embellishments stay.
+  const sw = (slot, gain) => ({ slot, gain, fromId: 1, fromName: `${slot}-old`, toId: 2, toName: `${slot}-new` });
+  const swaps = ["Neck", "Belt", "Ring1"].map((s) => sw(s, 130));
+  const zero = gearLevers({ swaps, restats: [] }, "haste", { perRating: 0.001, pct: 0.3, nHave: 5, nNot: 5 });
+  assert.ok(!zero.some((x) => /re-itemize|via (Neck|Belt|Ring1)/.test(x.text)), "measured-0% -> no stat-swap advice");
+  // A measurable benefit (pct rounds to >=1%) still produces the re-itemize line.
+  const real = gearLevers({ swaps, restats: [] }, "haste", { perRating: 0.02, pct: 2, nHave: 5, nNot: 5 });
+  assert.ok(real.some((x) => /re-itemize/.test(x.text)), "measured 2% -> re-itemize fires");
+});
+
 test("dedupeUniqueSwaps: a unique ring can't be recommended for both ring slots", () => {
   // Both rings independently pick the field-favored Omission of Light (+160). You
   // can only wear one -- keep the bigger-gain slot, drop the duplicate.
@@ -112,6 +125,19 @@ test("executionLevers: a never-pressed core ability isn't double-counted as pres
   const [press] = executionLevers(execd, rot, 60);
   assert.equal(press.impact, 3);                        // idle proxy, not the cast gap
   assert.match(press.text, /mostly the rotation fix/);
+});
+
+test("executionLevers: movement lever needs a POSITIVE median loss, not worstRange alone", () => {
+  // A player fine on most fights but bad on two has a negative/zero median loss.
+  // Printing "you lose ~-0.5s/min" is misleading noise -- suppress it even though a
+  // worst-boss callout exists.
+  const fine = { pressExcess: 0, rangeExcess: -0.5, worstRange: ["Boss A (3 kills)"], overshootExcess: 0 };
+  assert.ok(!executionLevers(fine, {}, 40).some((x) => /MOVEMENT/.test(x.text)), "negative median -> no movement line");
+  const zero = { pressExcess: 0, rangeExcess: 0, worstRange: [], overshootExcess: 0 };
+  assert.ok(!executionLevers(zero, {}, 40).some((x) => /MOVEMENT/.test(x.text)), "zero median -> no movement line");
+  // A real positive loss still fires.
+  const real = { pressExcess: 0, rangeExcess: 4.4, worstRange: ["Boss A (3 kills)"], overshootExcess: 0 };
+  assert.ok(executionLevers(real, {}, 40).some((x) => /MOVEMENT/.test(x.text)), "positive median -> movement line fires");
 });
 
 test("executionLevers: small gap scales down via the headroom cap", () => {

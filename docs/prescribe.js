@@ -402,7 +402,12 @@ export function executionLevers(execd, rot, peerGapPct = null, activePct = null)
     out.push(finding("Execution", DPS(pct), headline, "measured"));
   }
   out.push(...latencyLever(execd));
-  if (execd.rangeExcess >= 1.0 || execd.worstRange.length) {
+  // Gate on a positive MEDIAN loss, not worstRange alone: a player who's fine on most
+  // fights but bad on two has a negative/zero median -- printing "you lose ~-0.5s/min"
+  // is misleading noise (telling someone who moves LESS than peers to move less). Below
+  // ~0.5s/min the impact rounds to 0% anyway, so it only lengthens the list. worstRange
+  // still enriches the line when it fires.
+  if (execd.rangeExcess >= 0.5) {
     const where = execd.worstRange.length ? " Worst on: " + execd.worstRange.join(", ") + "." : "";
     // Class-agnostic: this is GCD lost to movement / being out of range, which is
     // a melee uptime problem AND a caster/healer one. Avoid melee-only language

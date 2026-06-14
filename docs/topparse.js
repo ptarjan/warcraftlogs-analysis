@@ -196,7 +196,7 @@ export function topParseLevers(tp, compDeltas = null) {
         `Missing ${link} (${e.effect}) — bring ${e.who}. (measured: peers with it do ${Math.round(cd.pct)}% more ${metricUnit()}, n=${cd.nHave}/${cd.nNot}).`, "measured"));
     } else {
       out.push(finding("Comp", INFO,
-        `Missing ${link} (${e.effect}) — bring ${e.who}. (Roster gap; this field gave no with/without split to size it from, so it's unmeasured — not your character to fix.)`, "measured"));
+        `Missing ${link} (${e.effect}) — bring ${e.who}. (unsized — this field gave no with/without split to measure it).`, "measured"));
     }
   }
   // Damage routing: measured extra cleave/funnel the top parses get. This is a

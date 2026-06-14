@@ -508,6 +508,19 @@ export function gearLevers(gf, priority, statValue = null, gemDelta = null) {
     ? ` -- measured: at your item level, peers who stack ${priority} do ${Math.round(statValue.pct)}% more (n=${statValue.nHave}/${statValue.nNot})`
     : "";
   const measured = !!(statValue && statValue.perRating > 0);
+  // HONESTY: if the field MEASURES no benefit from stacking this stat at your ilvl
+  // (pct rounds to 0% -- below our display resolution), don't recommend re-itemizing
+  // for it. A "re-itemize 3 slots for ~1%, measured: peers gain 0% more" line is
+  // self-contradicting and not actionable. Drop the priority-stat swaps/restats (gems
+  // + embellishments use their own measure and stay). reconcileImpacts owns the
+  // remainder. (Only when MEASURED -- an unmeasured sim estimate still shows.)
+  const measuredZero = measured && Math.round(statValue.pct) === 0;
+  if (measuredZero) {
+    const embRx = embellishmentRx(gf);
+    if (embRx) out.push(embRx);
+    out.push(...gemLever(gf, gemDelta));
+    return out;
+  }
   // LEGIBILITY: a low player can have 5+ priority-stat swaps. Five separate
   // "<STAT> via <slot>" lines bury the levers that actually matter (rotation/build).
   // With >=3, collapse them into ONE "re-itemize N slots" task that still names every
