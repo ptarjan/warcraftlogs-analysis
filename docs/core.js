@@ -1,7 +1,8 @@
 // @ts-check
 // Shared constants, formatting helpers, and low-level WCL fetchers.
 // Ported from analyze.py's fetcher layer; imported by the analysis modules.
-import { gql } from "./wcl.js";
+import { gql, isCached, primeQueryCache } from "./wcl.js";
+import { IS_NODE } from "./config.js";
 
 export const DIFFICULTY = { 2: "LFR", 3: "Normal", 4: "Heroic", 5: "Mythic" };
 
@@ -227,15 +228,54 @@ function metricsFromTables(dmg, casts, name, specName) {
 // metricsFromTables -- so a kill's DamageDone/Casts is fetched exactly ONCE no
 // matter who asks or what class filter they'd otherwise use. WCL bills ~flat per
 // request, so one bundled fetch per report+fight is the structural point saving.
-// Memoized by query string via the gql cache; the loader test enforces "each
-// table once per report". No className: the data is identical for every caller.
-export async function reportCore(code, fight) {
-  const q = `query { reportData { report(code:"${code}") {
+// The report-block fields reportCore reads -- shared by the single-report query and
+// the bundled multi-report query (prefetchReportCores), so a bundled fetch and a
+// later individual reportCore() are byte-identical and cache-compatible.
+const _reportCoreBody = (fight) => `
     dmg: table(fightIDs:${fight}, dataType:${throughputTable()})
     casts: table(fightIDs:${fight}, dataType:Casts)
     combatant: events(fightIDs:${fight}, dataType:CombatantInfo, limit:50) { data }
-    fightWin: fights(fightIDs:${fight}) { startTime endTime } } } }`;
-  return (await gql(q)).reportData.report;
+    fightWin: fights(fightIDs:${fight}) { startTime endTime }`;
+const _reportCoreQuery = (code, fight) =>
+  `query { reportData { report(code:"${code}") {${_reportCoreBody(fight)} } } }`;
+
+// Memoized by query string via the gql cache; the loader test enforces "each
+// table once per report". No className: the data is identical for every caller.
+export async function reportCore(code, fight) {
+  return (await gql(_reportCoreQuery(code, fight))).reportData.report;
+}
+
+// REQUEST BUNDLING: pre-warm many peers' reportCore in ONE aliased request instead
+// of one request each. WCL bills ~flat per REQUEST, so bundling N reports cuts the
+// dominant peer-fetch cost ~N-fold (and is never worse: same data, fewer round-trips).
+// Each batched result is split back to its individual reportCore query key via
+// primeQueryCache, so later reportCore() calls hit the cache and stay separately
+// reusable. Fail-soft: a cache hit is skipped; any batch error (complexity cap,
+// cache-only) just leaves those reports to be fetched individually as before. Node
+// only -- the browser keeps per-request behavior (its own budget + IndexedDB cache).
+export async function prefetchReportCores(pairs, { batch = 4 } = {}) {
+  if (!IS_NODE) return;
+  // Dedupe and drop already-cached reports (nothing to fetch for those).
+  const seen = new Set();
+  const todo = [];
+  for (const p of pairs || []) {
+    if (!p || p.code == null || p.fight == null) continue;
+    const q = _reportCoreQuery(p.code, p.fight);
+    if (seen.has(q) || isCached(q)) continue;
+    seen.add(q); todo.push({ code: p.code, fight: p.fight, q });
+  }
+  for (let i = 0; i < todo.length; i += batch) {
+    const group = todo.slice(i, i + batch);
+    const aliased = group.map((p, j) =>
+      `b${j}: reportData { report(code:"${p.code}") {${_reportCoreBody(p.fight)} } }`).join("\n");
+    try {
+      const res = await gql(`query {\n${aliased}\n}`, 2, { fresh: true }); // few retries: fail fast to the per-report fallback; don't persist the bundle
+      group.forEach((p, j) => {
+        const rd = res && res[`b${j}`];
+        if (rd && rd.report) primeQueryCache(p.q, { reportData: rd });   // store under the individual key
+      });
+    } catch (e) { /* bundle rejected / cache-only -> fall back to individual reportCore() */ }
+  }
 }
 
 // Damage + cast metrics for one player on one fight (className arg ignored -- the
@@ -659,8 +699,13 @@ export async function ilvlPeers(name, server, region, encounter, difficulty, cla
   const ranks = (er && er.ranks) || [];
   if (!ranks.length) return [];
   const ilvl = Math.max(...ranks.map((r) => r.bracketData || 0)) || 0;
-  return collectPeers({ encounters: encounter.id, difficulty, className, specName,
+  const cands = await collectPeers({ encounters: encounter.id, difficulty, className, specName,
     limit: PEER_SAMPLE + 3, pages: 7, ilvl, window });
+  // Pre-warm the peers we'll actually use (the buffer is left for lazy backfill) in
+  // ONE bundled request instead of one each -- the big per-request budget win. Best
+  // effort; on any issue the consumers fetch each peer individually as before.
+  await prefetchReportCores(cands.slice(0, PEER_SAMPLE).map((c) => ({ code: c.report.code, fight: c.report.fightID })));
+  return cands;
 }
 
 // THE top-DPS field for a spec (the META -- NOT ilvl-matched; that's ilvlPeers).

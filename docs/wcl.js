@@ -401,6 +401,18 @@ function _flushDisk() {
   else _flushRetries = 0;
 }
 
+// Store a result under a query key WITHOUT issuing that query -- used by request
+// BUNDLING: one batched (aliased multi-report) fetch is split back into the
+// individual per-report query keys, so each report stays separately cacheable and
+// reusable (cross-character, cross-section) exactly as if fetched on its own.
+export function isCached(query) {
+  return _gqlCache.has(query);   // initDisk seeds this from disk at startup
+}
+export function primeQueryCache(query, data) {
+  _gqlCache.set(query, data);
+  diskPut(query, data);          // persist to the (sharded, gzipped) disk cache; no-op if disabled
+}
+
 // Test-only hooks: flush the debounced write now, and forget all disk state so a
 // fresh initDisk() re-reads the shards (simulating a separate CLI run).
 export function _flushGqlDisk() { _flushDisk(); }

@@ -30,33 +30,41 @@ function shape(q) {
     return { characterData: { character: { encounterRankings: { ranks: Array.from({ length: 8 }, (_, k) => ({
       bracketData: IL, rankPercent: 60, startTime: k, report: { code: `RK${eid}_${k}`, fightID: k + 1 }, duration: 2e5 })) } } } }; }
   if (/reportData/.test(q)) { // universal report -- shape each field per the query
-    return { reportData: { report: {
+    const report = () => ({
       dmg: { data: tbl() },
       casts: /casts:\s*events/.test(q) ? { data: evs(), nextPageTimestamp: null } : { data: tbl() },
       combatant: { data: comb() }, fightWin: [{ startTime: 0, endTime: 2e5 }],
       autos: { data: evs(), nextPageTimestamp: null }, fights: [{ startTime: 0, endTime: 2e5 }], table: { data: tbl() },
-      events: { data: /CombatantInfo/.test(q) ? comb() : evs(), nextPageTimestamp: null } } } };
+      events: { data: /CombatantInfo/.test(q) ? comb() : evs(), nextPageTimestamp: null } });
+    // Bundled (aliased) multi-report query: one report per alias (b0:, b1:, ...).
+    const aliases = [...q.matchAll(/(\w+):\s*reportData/g)].map((m) => m[1]);
+    if (aliases.length) { const o = {}; for (const a of aliases) o[a] = { report: report() }; return o; }
+    return { reportData: { report: report() } };
   }
   return {};
 }
 
 // Parse a query into the set of (code, fight, dataType[, sourceID]) units it fetches.
+// Splits per report block so a BUNDLED (aliased multi-report) query attributes each
+// table/event to ITS report code, not just the first -- the bundling guard.
 function unitsOf(q) {
-  const code = (q.match(/report\(\s*code:\s*"([^"]+)"/) || [])[1];
   const units = new Set();
-  if (!code) return units;
-  for (const m of q.matchAll(/(?:table|events)\s*\(([^)]*)\)/g)) {
-    const a = m[1];
-    const fid = (a.match(/fightIDs:\s*\[?(\d+)/) || [])[1];
-    const dt = (a.match(/dataType:\s*(\w+)/) || [])[1];
-    const sid = (a.match(/sourceID:\s*(\d+)/) || [])[1];
-    const ab = (a.match(/abilityID:\s*(\d+)/) || [])[1];
-    if (fid && dt) units.add(`${code}:${fid}:${dt}${sid ? ":src" + sid : ""}${ab ? ":ab" + ab : ""}`);
+  for (const part of q.split(/report\(\s*code:\s*"/).slice(1)) {  // each segment = CODE"){ ...this report's fields... }
+    const code = (part.match(/^([^"]+)"/) || [])[1];
+    if (!code) continue;
+    for (const m of part.matchAll(/(?:table|events)\s*\(([^)]*)\)/g)) {
+      const a = m[1];
+      const fid = (a.match(/fightIDs:\s*\[?(\d+)/) || [])[1];
+      const dt = (a.match(/dataType:\s*(\w+)/) || [])[1];
+      const sid = (a.match(/sourceID:\s*(\d+)/) || [])[1];
+      const ab = (a.match(/abilityID:\s*(\d+)/) || [])[1];
+      if (fid && dt) units.add(`${code}:${fid}:${dt}${sid ? ":src" + sid : ""}${ab ? ":ab" + ab : ""}`);
+    }
+    for (const m of part.matchAll(/fights\s*\(\s*fightIDs:\s*\[?(\d+)/g)) units.add(`${code}:${m[1]}:fights`);
+    // The progression flow's report-wide fight list: fights() with NO fightIDs. One
+    // canonical accessor (reportFights), so two of these on a report = a dupe.
+    if (/fights\s*\{/.test(part)) units.add(`${code}:all:fights`);
   }
-  for (const m of q.matchAll(/fights\s*\(\s*fightIDs:\s*\[?(\d+)/g)) units.add(`${code}:${m[1]}:fights`);
-  // The progression flow's report-wide fight list: fights() with NO fightIDs. One
-  // canonical accessor (reportFights), so two of these on a report = a dupe.
-  if (/fights\s*\{/.test(q)) units.add(`${code}:all:fights`);
   return units;
 }
 
@@ -94,4 +102,25 @@ test("each report table/event is fetched at most once across a full run", async 
   for (const q of queries) for (const u of unitsOf(q)) cover.set(u, (cover.get(u) || 0) + 1);
   const dupes = [...cover.entries()].filter(([, c]) => c > 1).sort((a, b) => b[1] - a[1]);
   assert.deepEqual(dupes, [], `these report tables were fetched more than once in a single run:\n${dupes.map(([u, c]) => `  ${u} x${c}`).join("\n")}`);
+});
+
+// Request BUNDLING: N peers' reportCore fetched in ONE aliased request (the per-request
+// budget win), then each reportCore() is served from the primed cache -- no re-fetch.
+test("prefetchReportCores bundles N reports into one request; reportCore then hits cache", async () => {
+  const { clearGqlCache, _resetGqlDisk } = await import("../docs/wcl.js");
+  const core = await import("../docs/core.js");
+  clearGqlCache(); _resetGqlDisk();
+  const calls = [];
+  globalThis.fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("oauth/token")) return resp({ access_token: "t", expires_in: 3600 });
+    if (u.includes("/api/v2/")) { let q = ""; try { q = JSON.parse(opts.body).query || ""; } catch {} calls.push(q); return resp({ data: shape(q) }); }
+    return resp({});
+  };
+  const pairs = [1, 2, 3, 4].map((i) => ({ code: "BN" + i, fight: 1 }));
+  await core.prefetchReportCores(pairs, { batch: 4 });
+  assert.equal(calls.filter((c) => /reportData/.test(c)).length, 1, "4 reports fetched in ONE bundled request");
+  const before = calls.length;
+  for (const p of pairs) assert.ok((await core.reportCore(p.code, p.fight)).dmg, "served from primed cache");
+  assert.equal(calls.length, before, "reportCore hits the primed cache -- no extra fetch");
 });
