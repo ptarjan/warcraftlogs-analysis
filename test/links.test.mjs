@@ -1,6 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { wowheadItem, wowheadSpell } from "../docs/links.js";
+import { wowheadItem, wowheadSpell, wclReport } from "../docs/links.js";
+
+test("wclReport links a boss to its Warcraft Logs report + fight", () => {
+  assert.equal(wclReport("aB12cD34", 7, "Chimaerus"),
+    "[Chimaerus](https://www.warcraftlogs.com/reports/aB12cD34#fight=7)");
+  assert.equal(wclReport("aB12cD34", null, "Chimaerus"),
+    "[Chimaerus](https://www.warcraftlogs.com/reports/aB12cD34)");      // report only
+  assert.equal(wclReport(null, 7, "Chimaerus"), "Chimaerus");          // no code -> plain
+});
 
 test("wowheadItem builds a markdown link to the item page", () => {
   assert.equal(wowheadItem(212398, "Bludgeons of Blistering Wind"),

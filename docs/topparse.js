@@ -19,6 +19,7 @@ import {
   playerMetrics, topRankings, buffUptimes, bossDebuffs, median, f, mapLimit, bestKill,
   DPS, COMP, finding,
 } from "./core.js";
+import { wowheadSpell } from "./links.js";
 
 const TOPN = 6; // how many top-ranked kills to learn routing/potions from
 
@@ -27,16 +28,18 @@ const TOPN = 6; // how many top-ranked kills to learn routing/potions from
 // boss's debuff table, not your buffs). `est` is a rough DPS-% used only to size
 // the action-list item. Match by name keyword (like flask/food), tolerant of the
 // rank/variant suffixes WoW buff names carry.
+// `spell` is the Wowhead spell id for a hover-tooltip link (verified against real
+// report buff guids). Stable, expansion-level utility -- fine to carry here.
 export const RAID_DAMAGE = [
-  { key: "lust", label: "Bloodlust/Heroism", who: "a Shaman, Mage, Hunter, or Evoker", effect: "+30% haste burst", on: "self", est: 4, match: /bloodlust|heroism|time warp|primal rage|fury of the aspects|ancient hysteria|drums of/i },
-  { key: "ai", label: "Arcane Intellect", who: "a Mage", effect: "+intellect", on: "self", est: 2, match: /arcane intellect/i },
-  { key: "battleshout", label: "Battle Shout", who: "a Warrior", effect: "+attack power", on: "self", est: 2, match: /battle shout/i },
-  { key: "motw", label: "Mark of the Wild", who: "a Druid", effect: "+versatility", on: "self", est: 2, match: /mark of the wild/i },
-  { key: "skyfury", label: "Skyfury", who: "a Shaman", effect: "+mastery & attack power", on: "self", est: 2, match: /skyfury/i },
-  { key: "pi", label: "Power Infusion", who: "a Priest (cast on you)", effect: "+25% haste burst", on: "self", est: 6, match: /power infusion/i },
-  { key: "aug", label: "Augmentation (Ebon Might / Prescience)", who: "an Augmentation Evoker", effect: "re-attributed throughput", on: "self", est: 8, match: /ebon might|prescience|shifting sands/i },
-  { key: "chaosbrand", label: "Chaos Brand", who: "a Demon Hunter", effect: "+5% magic damage taken", on: "boss", est: 5, match: /chaos brand/i },
-  { key: "mystictouch", label: "Mystic Touch", who: "a Monk", effect: "+5% physical damage taken", on: "boss", est: 5, match: /mystic touch/i },
+  { key: "lust", label: "Bloodlust/Heroism", spell: 2825, who: "a Shaman, Mage, Hunter, or Evoker", effect: "+30% haste burst", on: "self", est: 4, match: /bloodlust|heroism|time warp|primal rage|fury of the aspects|ancient hysteria|drums of/i },
+  { key: "ai", label: "Arcane Intellect", spell: 1459, who: "a Mage", effect: "+intellect", on: "self", est: 2, match: /arcane intellect/i },
+  { key: "battleshout", label: "Battle Shout", spell: 6673, who: "a Warrior", effect: "+attack power", on: "self", est: 2, match: /battle shout/i },
+  { key: "motw", label: "Mark of the Wild", spell: 1126, who: "a Druid", effect: "+versatility", on: "self", est: 2, match: /mark of the wild/i },
+  { key: "skyfury", label: "Skyfury", spell: 462854, who: "a Shaman", effect: "+mastery & attack power", on: "self", est: 2, match: /skyfury/i },
+  { key: "pi", label: "Power Infusion", spell: 10060, who: "a Priest (cast on you)", effect: "+25% haste burst", on: "self", est: 6, match: /power infusion/i },
+  { key: "aug", label: "Augmentation (Ebon Might / Prescience)", spell: 395152, who: "an Augmentation Evoker", effect: "re-attributed throughput", on: "self", est: 8, match: /ebon might|prescience|shifting sands/i },
+  { key: "chaosbrand", label: "Chaos Brand", spell: 1490, who: "a Demon Hunter", effect: "+5% magic damage taken", on: "boss", est: 5, match: /chaos brand/i },
+  { key: "mystictouch", label: "Mystic Touch", spell: 113746, who: "a Monk", effect: "+5% physical damage taken", on: "boss", est: 5, match: /mystic touch/i },
 ];
 
 // --- pure, unit-tested helpers ----------------------------------------------
@@ -167,7 +170,7 @@ export function topParseLevers(tp) {
   // Per-line text stays terse -- the "Raid comp" section header already explains
   // these are roster gaps, not execution, so don't repeat that on every row.
   for (const e of (tp.comp ? tp.comp.missing : [])) {
-    out.push(finding("Comp", COMP(e.est), `Missing ${e.label} (${e.effect}) — bring ${e.who}.`));
+    out.push(finding("Comp", COMP(e.est), `Missing ${wowheadSpell(e.spell, e.label)} (${e.effect}) — bring ${e.who}.`));
   }
   // Damage routing: measured extra cleave/funnel the top parses get.
   const route = tp.routing ? tp.routing.top - tp.routing.you : 0;

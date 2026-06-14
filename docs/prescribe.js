@@ -12,7 +12,7 @@ import {
 } from "./core.js";
 import { timelineFindings } from "./timeline.js";
 import { gearFindings, gearLevers, itemInstance, sourceText } from "./gear.js";
-import { wowheadSpell, wowheadItem } from "./links.js";
+import { wowheadSpell, wowheadItem, wclReport } from "./links.js";
 import { rotationFindings, rotationLevers } from "./rotation.js";
 import { talentFindings, talentLevers } from "./talents.js";
 import { topParseFindings, topParseLevers } from "./topparse.js";
@@ -389,7 +389,11 @@ function renderPrescription(log, d) {
 
   // No title line here -- the report hero (name · realm · region + spec/difficulty
   // pills) and the card's own "What to change" header already say who this is.
-  if (d.medP != null) log(`You parse ${d.medP}th percentile on ${d.difficultyName} (median of the ${d.nBosses} current-tier ${d.difficultyName} boss${d.nBosses === 1 ? "" : "es"} you've killed; best ${d.bestP}th on ${d.topParse.encounter.name}).`);
+  // Quoted kills link straight to your Warcraft Logs report+fight.
+  const bestBoss = d.topReport
+    ? wclReport(d.topReport.code, d.topReport.fight, d.topParse.encounter.name) : d.topParse.encounter.name;
+  const gearBossLink = wclReport(d.code, d.fight, d.gearBoss.encounter.name);
+  if (d.medP != null) log(`You parse ${d.medP}th percentile on ${d.difficultyName} (median of the ${d.nBosses} current-tier ${d.difficultyName} boss${d.nBosses === 1 ? "" : "es"} you've killed; best ${d.bestP}th on ${bestBoss}).`);
   if (d.skipped && d.skipped.length) {
     log(`NOTE: partial list -- couldn't load ${d.skipped.join(", ")} (likely the WCL rate limit). This isn't the full picture; re-run when the budget resets for the rest.`);
   }
@@ -400,7 +404,7 @@ function renderPrescription(log, d) {
   }
   if (peerGap != null) {
     const vsField = peerGap > 0 ? `${peerGap}% behind` : `${Math.abs(peerGap)}% ahead of`;
-    log(`Measured on ${d.gearBoss.encounter.name}: you (ilvl ~${d.curIlvl}) do ${k(you.dps)} ${metricUnit()} -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
+    log(`Measured on ${gearBossLink}: you (ilvl ~${d.curIlvl}) do ${k(you.dps)} ${metricUnit()} -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
         (topGap != null ? `, ${topGap}% behind the top parses` : "") + `. That gap is your headroom.`);
   }
   // A blunt, character-specific VERDICT: name the situation so the report never
@@ -580,8 +584,11 @@ export async function run(log, name, server, region, className = "Monk", specNam
   ];
   rx.sort((a, b) => b.impact - a.impact);
 
+  // Your report+fight for the best-percentile boss (so the header can link it).
+  const topKill = kills.find((x) => x.boss.encounter.id === topParse.encounter.id);
   renderPrescription(log, {
-    name, server, className, specName, curIlvl, gearBoss,
+    name, server, className, specName, curIlvl, gearBoss, code, fight,
+    topReport: topKill ? { code: topKill.code, fight: topKill.fight } : null,
     difficultyName: DIFFICULTY[difficulty] || `difficulty ${difficulty}`,
     medP, bestP, topParse, nBosses: ranks.length, gearAgeDays,
     you, field, execd, rot, tp, gf, priority, rx, skipped,

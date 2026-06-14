@@ -9,3 +9,8 @@ export const wowheadItem = (id, name) =>
 
 export const wowheadSpell = (id, name) =>
   id ? `[${esc(name)}](https://www.wowhead.com/spell=${id})` : esc(name);
+
+// Link a boss/label straight to the Warcraft Logs report (and fight) it came
+// from -- so a quoted kill in the prescription is one click from the actual log.
+export const wclReport = (code, fight, label) =>
+  code ? `[${esc(label)}](https://www.warcraftlogs.com/reports/${code}${fight ? `#fight=${fight}` : ""})` : esc(label);
