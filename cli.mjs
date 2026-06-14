@@ -41,6 +41,9 @@ export const SECTION_SPECS = [
   { key: "healing", title: "HEALING EFFICIENCY (healers only)",
     module: "./docs/healing.js", method: "run",
     args: (p) => [p.name, p.server, p.region, p.cls, p.spec, p.difficulty] },
+  { key: "support", title: "SUPPORT BUFFS (support specs only)",
+    module: "./docs/support.js", method: "run",
+    args: (p) => [p.name, p.server, p.region, p.cls, p.spec, p.difficulty] },
   { key: "talents", title: "TALENTS vs THE FIELD",
     module: "./docs/talents.js", method: "run",
     args: (p) => [p.name, p.server, p.region, p.cls, p.spec, p.difficulty] },
@@ -137,7 +140,7 @@ if (!name || !server || !region) {
 const only = opt.only ? new Set(opt.only.split(",").map((s) => s.trim())) : null;
 
 // --- run ---
-const { detectContext, detectPriority, DIFFICULTY, metricForSpec, setRunMetric, metricUnit } = await import("./docs/core.js");
+const { detectContext, detectPriority, DIFFICULTY, metricForSpec, setRunMetric, setRunSupport, isSupport, metricUnit } = await import("./docs/core.js");
 // Learn WCL's point-reset clock up front (one cheap query, while still under
 // budget) so if we exhaust the shared budget mid-run the error can say WHEN it
 // resets ("try again in ~N min") instead of a vague "try again shortly".
@@ -180,6 +183,7 @@ if (!cls || !spec || difficulty === undefined || !priority) {
   // detectPriority so even the stat-priority sample is drawn from the right
   // (healing- vs damage-ranked) peers.
   setRunMetric(metricForSpec(cls, spec));
+  setRunSupport(isSupport(spec));               // Augmentation: framed by buff value, not personal DPS
   if (!priority) priority = await detectPriority(ctx.className, ctx.specName, ctx.difficulty, ctx.killed[0].encounter.id);
   log(`Detected: ${spec} ${cls} · ${DIFFICULTY[difficulty] || difficulty} · gear priority ${priority} · optimizing ${metricUnit()}`);
 }

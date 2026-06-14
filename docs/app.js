@@ -2,7 +2,7 @@
 // UI wiring: pick character/region/server, auto-detect the rest, then render
 // the result as a web report -- the prioritized list of changes up top, with
 // the supporting analyses as collapsible cards below.
-import { detectContext, detectPriority, DIFFICULTY, raidTeammates, slug, metricForSpec, setRunMetric, metricUnit,
+import { detectContext, detectPriority, DIFFICULTY, raidTeammates, slug, metricForSpec, setRunMetric, setRunSupport, isSupport, metricUnit,
   parseReportRef, reportFights, recentReportsFor, encountersIn, mapLimit } from "./core.js";
 import { isAuthed, beginLogin, handleRedirectCallback, logout } from "./auth.js";
 import { NeedsAuth, myCharacters, primeRateReset, fmtRateWait } from "./wcl.js";
@@ -15,6 +15,7 @@ import * as talents from "./talents.js";
 import * as topparse from "./topparse.js";
 import * as gear from "./gear.js";
 import * as healing from "./healing.js";
+import * as support from "./support.js";
 import * as prescribe from "./prescribe.js";
 
 /** Look up a known element. Typed loosely (any) on purpose -- this is DOM glue;
@@ -496,14 +497,17 @@ const SUPPORTING = [
 // The supporting cards for this run. Healers get a "Healing efficiency" card
 // (overhealing + mana -- the levers they actually control, since raw HPS is
 // damage-bound); damage specs don't. Built AFTER detection so we know the role.
-function supportingFor(isHealerRun) {
-  if (!isHealerRun) return SUPPORTING;
+function supportingFor(isHealerRun, isSupportRun) {
+  if (!isHealerRun && !isSupportRun) return SUPPORTING;
   const list = SUPPORTING.slice();
   /** @type {[string, (p:any, log:(line?:string)=>void)=>any]} */
-  const healingCard = ["Healing efficiency",
-    (p, log) => healing.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)];
+  const extraCard = isHealerRun
+    ? ["Healing efficiency",
+       (p, log) => healing.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)]
+    : ["Support buffs",
+       (p, log) => support.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)];
   const after = list.findIndex(([t]) => /^Rotation/.test(t));   // sits next to rotation
-  list.splice(after >= 0 ? after + 1 : list.length, 0, healingCard);
+  list.splice(after >= 0 ? after + 1 : list.length, 0, extraCard);
   return list;
 }
 
@@ -654,9 +658,11 @@ async function runAnalysis({ name, server, region, serverLabel }) {
     // Healers are measured on HEALING, everyone else on DAMAGE -- set before
     // detectPriority so the stat sample is drawn from the right-metric peers.
     setRunMetric(metricForSpec(ctx.className, ctx.specName));
+    setRunSupport(isSupport(ctx.specName));     // Augmentation: framed by buff value
     // The supporting card set is role-aware (healers get a Healing efficiency
-    // card), so it's built here -- once the run metric/role is known.
-    sections = supportingFor(metricForSpec(ctx.className, ctx.specName) === "hps");
+    // card, support specs a Support buffs card), so it's built here -- once the
+    // run metric/role is known.
+    sections = supportingFor(metricForSpec(ctx.className, ctx.specName) === "hps", isSupport(ctx.specName));
     supRecs = sections.map(([title]) => {
       const card = makeCard(title, { collapsed: true });
       setCardState(card, "busy");

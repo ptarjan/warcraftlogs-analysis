@@ -8,7 +8,7 @@
 import {
   ENCHANTABLE_SLOTS, DIFFICULTY, characterZone, characterEncounter, playerMetrics,
   ilvlPeers, PEER_SAMPLE, secondaryStats, buffUptimes, bossDebuffs, median, f, detectPriority, mapLimit, collectUpTo, topEntry, bestRank, bestKill,
-  DPS, INFO, finding, fieldDelta, metricUnit, throughputWord, runIsHealer, healingBreakdown, manaStats,
+  DPS, INFO, finding, fieldDelta, metricUnit, throughputWord, runIsHealer, runIsSupport, healingBreakdown, manaStats,
 } from "./core.js";
 import { timelineFindings } from "./timeline.js";
 import { gearFindings, gearLevers, itemInstance, sourceText } from "./gear.js";
@@ -363,19 +363,20 @@ export function executionLevers(execd, rot, peerGapPct = null, activePct = null)
   // 99.5%-active tank and a 99.2%-active DPS alike, without special-casing roles.
   const noIdle = activePct != null && activePct >= 98;
   const outpacesField = cg && cg.field > 0 && cg.you >= cg.field;
-  // HEALERS: never "press faster". A healer's idle GCDs are correct play -- you
-  // can't heal damage that didn't happen, so holding a global rather than dumping
-  // an overheal is right. The idle time is absorbed by the damage-bound remainder;
-  // the actual healer levers are efficiency (overhealing) + mana (see healing.js).
-  // latency + movement/uptime levers below still apply (a healer out of range is
-  // really losing healing), so only this PRESS-FASTER push is suppressed.
+  // HEALERS + SUPPORT: never "press faster". A healer's idle GCDs are correct play
+  // (you can't heal damage that didn't happen), and a SUPPORT'S personal cast deficit
+  // is mostly GCDs spent applying ally amps (Prescience/Ebon Might), not idling -- so
+  // pushing personal cast speed mis-frames both. The idle time is absorbed by the
+  // damage-bound / support remainder; their real levers are efficiency/buff-uptime.
+  // latency + movement/uptime levers below still apply (out of range = real lost
+  // output for either), so only this PRESS-FASTER push is suppressed.
   // A cast deficit only counts as "press faster" when you aren't ALREADY idling
   // LESS than peers in range (pressExcess < 0). If you out-press them in range yet
   // cast fewer/min, the missing casts are MOVEMENT (the uptime lever owns them) or
   // ability-MIX (rotation/remainder), not idle GCDs you can fill -- and a headline
   // "you idle ~-2.0s/min MORE" would flatly contradict the data (Dysphoric, Feral).
   const deficitIsPressable = speedPct >= 3 && execd.pressExcess >= 0;
-  if (!runIsHealer() && !noIdle && (execd.pressExcess >= 1.0 || deficitIsPressable) && !(speedPct < 3 && outpacesField)) {
+  if (!runIsHealer() && !runIsSupport() && !noIdle && (execd.pressExcess >= 1.0 || deficitIsPressable) && !(speedPct < 3 && outpacesField)) {
     const castEst = Math.round(speedPct / 2);
     const headroomCap = (peerGapPct && peerGapPct > 0) ? Math.max(1, Math.ceil(peerGapPct * 0.6)) : Infinity;
     const pct = Math.min(Math.max(idlePct, castEst) || 1, headroomCap, 12);
@@ -548,14 +549,19 @@ export function reconcileImpacts(impacts, target) {
 //                  raid TAKES and your healing assignment, so the gap to top healers
 //                  is mostly the encounter + who else healed + overheal, NOT "how you
 //                  play". Don't frame a healer's HPS gap as a personal playstyle deficit.
+//  - "support":    a big remainder on a SUPPORT run (Augmentation) -- its throughput
+//                  is the amps it puts on ALLIES (credited to their parses), so a
+//                  personal-DPS gap mostly measures buff value the comparison can't
+//                  see, NOT a personal playstyle deficit. (The buff-uptime lever is
+//                  the part the support DOES control -- see the Support buffs card.)
 //  - "playstyle":  a big remainder for a NON-elite DAMAGE player -- genuinely how they
 //                  play the same gear the field plays (the tool's whole point).
 //  - "underpress": a small remainder with a real cast deficit -- GCD uptime.
 //  - "small":      a small remainder, no signal -- sim-only tuning + variance.
 // Pure -> unit-testable; the caller turns the kind into prose. Precedence: elite
-// (selection bias, applies to healers too) before healer before playstyle.
-export function remainderKind(residual, { elite = false, healer = false, underPress = false } = {}) {
-  if (residual >= 8) return elite ? "elite" : healer ? "healer" : "playstyle";
+// (selection bias, applies to all roles) before healer before support before playstyle.
+export function remainderKind(residual, { elite = false, healer = false, support = false, underPress = false } = {}) {
+  if (residual >= 8) return elite ? "elite" : healer ? "healer" : support ? "support" : "playstyle";
   if (underPress) return "underpress";
   return "small";
 }
@@ -621,6 +627,8 @@ function renderPrescription(log, d) {
       ? ` -- but the field here is the TOP parses at your item level, and at your ${d.medP}th percentile most of that gap is raid comp + execution on optimal pulls, not a setup you're getting wrong. The fixes below are the concrete part you control.`
       : runIsHealer()
       ? ` -- but ${metricUnit()} is capped by the damage your raid takes and your healing assignment, so most of that gap is the encounter and healer comp, not ${metricUnit()} you can simply add. The fixes below are the concrete part you control.`
+      : runIsSupport()
+      ? ` -- but as a support most of your value is the amps you keep on allies (credited to THEIR parses, not your personal DPS), so this personal-DPS gap mostly measures buff value, not DPS you can simply add. Your real lever is buff uptime (see the Support buffs card); the fixes below are the rest you control.`
       : ` -- and they have your exact item level, so that ${peerGap}% is ${metricUnit()} you could realistically gain. The fixes below are sized to add up to it.`;
     log(`Measured on ${gearBossLink}: you (ilvl ~${d.curIlvl}) do ${k(you.dps)} ${metricUnit()} -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
         (topGap != null ? `, ${topGap}% behind the top parses` : "") + tail);
@@ -724,7 +732,7 @@ function renderPrescription(log, d) {
     // with a real cast deficit is credibly "press a bit faster".
     const underPress = (rot && rot.castGap && rot.castGap.field > rot.castGap.you)
       || (execd && execd.pressExcess >= 1 && !outpaces);
-    const kind = remainderKind(residual, { elite: isEliteParse(d.medP), healer: runIsHealer(), underPress });
+    const kind = remainderKind(residual, { elite: isEliteParse(d.medP), healer: runIsHealer(), support: runIsSupport(), underPress });
     let rtext;
     if (kind === "elite") {
       // Already top-decile: the remainder is the distance to the BEST parses at your
@@ -737,6 +745,13 @@ function renderPrescription(log, d) {
       // (how much went out), healer comp, and overheal, NOT a personal playstyle gap.
       // Don't tell a healer 100%+ of their gap is "how you play the gear worse".
       rtext = `HEALING IS DAMAGE-BOUND (~${r}%): HPS measures healing DONE, which is capped by the damage your raid takes and your healing assignment -- you can't out-heal damage that didn't happen. Most of this gap is the encounter (how much went out), the healer comp, and overheal differences, not how you play. The concrete levers above are what you actually control; chase effective throughput on a fixed kill, not the raw HPS number.`;
+    } else if (kind === "support") {
+      // A support's personal DPS is a fraction of their value: Ebon Might / Prescience
+      // amp ALLIES, and WCL credits that damage to the allies' parses, not the support's.
+      // So a big personal-DPS remainder mostly measures buff value the comparison can't
+      // see -- NOT "how you play the gear worse". The part the support DOES control is
+      // buff UPTIME (the Support buffs card / BUFF UPTIME levers), not personal damage.
+      rtext = `SUPPORT VALUE IS OFF YOUR SHEET (~${r}%): your throughput is mostly the amps you keep on allies (Ebon Might / Prescience / Breath of Eons), which WCL credits to THEIR parses, not your personal DPS. So most of this gap isn't personal DPS you can add -- it's buff value a personal-DPS comparison can't see. What you DO control is buff UPTIME (keep your amps rolling -- see the Support buffs card) and your own cooldown/gear use above; chase those, not the raw personal-DPS number.`;
     } else if (kind === "playstyle") {
       // A big remainder at matched ilvl is NOT a gear/sim gap (sims model gear, worth
       // a few % here) and NOT "press faster" -- it's PLAYSTYLE. The concrete pieces

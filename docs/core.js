@@ -13,6 +13,17 @@ const HEALER_SPECS = new Set(["Holy", "Discipline", "Restoration", "Mistweaver",
 /** @param {string} specName @returns {boolean} */
 export const isHealer = (specName) => HEALER_SPECS.has(specName);
 
+// SUPPORT specs: their throughput is mostly the buffs/amps they put on ALLIES
+// (Ebon Might / Prescience / Breath of Eons), which WCL credits to those allies'
+// parses, NOT to the support's personal DPS. So a personal-DPS comparison
+// understates their value the same way an HPS comparison mis-measures a healer's.
+// Spec->role is stable game metadata (Augmentation is the lone support spec this
+// expansion) -- the SAME kind of classification as HEALER_SPECS, not a hard-coded
+// ability/stat weight. Officially role=DPS, so this set is how we know otherwise.
+const SUPPORT_SPECS = new Set(["Augmentation"]);
+/** @param {string} specName @returns {boolean} */
+export const isSupport = (specName) => SUPPORT_SPECS.has(specName);
+
 // --------------------------------------------------------------------- //
 // Throughput metric: DPS for damage/tank specs, HPS for healers. The whole
 // analysis is throughput-generic ("output/sec vs peers", which abilities do the
@@ -28,6 +39,14 @@ let _metric = "dps";
 export function setRunMetric(m) { _metric = m === "hps" ? "hps" : "dps"; }
 export function runMetric() { return _metric; }
 export const runIsHealer = () => _metric === "hps";
+
+// A support run still uses the DPS metric/tables (Augmentation IS a damage actor),
+// but the FRAMING differs: personal DPS isn't the right yardstick. Tracked as a
+// separate flag (orthogonal to the dps/hps metric), set from the spec at run start.
+let _support = false;
+/** @param {boolean} b */
+export function setRunSupport(b) { _support = !!b; }
+export const runIsSupport = () => _support;
 // Display + table helpers so output reads "HPS"/"healing" for healers, and the
 // WCL table + per-hit event type follow the same switch. NOTE the asymmetric WCL
 // enum: damage is "DamageDone" but healing is just "Healing" (no -Done), in BOTH
