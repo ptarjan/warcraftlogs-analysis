@@ -292,9 +292,12 @@ export async function gearFindings(name, server, region, difficulty, className, 
   for (const id of myGems) gemCount.set(id, (gemCount.get(id) || 0) + 1);
   const fieldTop = [...fc.gems.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
   const variety = fc.gemVariety.slice().sort((a, b) => a - b);
+  // Resolve the field's #1 gem's real NAME here (gearFindings is async + already
+  // reads item tooltips) so the lever can link it by name, not a generic phrase.
+  const fieldTopName = fieldTop.length ? (await itemStats(fieldTop[0][0])).name : null;
   const gemInfo = {
     yourGems: gemCount, yourVariety: new Set(myGems).size,
-    fieldTop: fieldTop,
+    fieldTop: fieldTop, fieldTopName,
     fieldVarietyMed: variety.length ? variety[Math.floor(variety.length / 2)] : null,
   };
   return { rows, swaps: reconciledSwaps, embellishedSlots, restats, embCompare: embCompare, n: fc.n, priority, gems: gemInfo };
@@ -409,7 +412,9 @@ export function gemLever(gf) {
   const overVariety = gi.fieldVarietyMed != null && gi.yourVariety > gi.fieldVarietyMed;
   const wrongPrimary = yourTopId !== fieldTopId;
   if (!overVariety && !wrongPrimary) return [];           // your gems already match
-  const link = wowheadItem(fieldTopId, "the field's primary gem");
+  // Link the gem by its real NAME (resolved in gearFindings); fall back to a
+  // generic phrase only if the name couldn't be read.
+  const link = wowheadItem(fieldTopId, gi.fieldTopName || "the field's primary gem");
   // Only mention the gem-color count when you actually split MORE than the field
   // (the reason to consolidate). When the count MATCHES, citing it reads as a
   // contradiction ("re-socket... you run 2 vs 2"), so lead with the real reason.

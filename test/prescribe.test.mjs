@@ -216,6 +216,13 @@ test("gemLever: actionable when your primary gem differs from the field's", () =
   assert.match(g.text, /item=999/);                     // links the field's gem
 });
 
+test("gemLever links the field gem by NAME, not a generic phrase", () => {
+  const gf = { gems: { yourGems: new Map([[111, 3]]), yourVariety: 1, fieldTop: [[999, 40]], fieldTopName: "Culminating Blasphemite", fieldVarietyMed: 1 } };
+  const [g] = gemLever(gf);
+  assert.match(g.text, /\[Culminating Blasphemite\]\(https:\/\/www\.wowhead\.com\/item=999\)/);
+  assert.doesNotMatch(g.text, /the field's primary gem/);   // not the generic phrase
+});
+
 test("gemLever: wrong-primary w/ MATCHING variety doesn't cite the contradictory count", () => {
   // you run 2 colors, field runs 2 -- same variety, just a different main gem.
   const gf = { gems: { yourGems: new Map([[111, 2], [222, 1]]), yourVariety: 2, fieldTop: [[999, 40]], fieldVarietyMed: 2 } };
