@@ -2,7 +2,7 @@
 // UI wiring: pick character/region/server, auto-detect the rest, then render
 // the result as a web report -- the prioritized list of changes up top, with
 // the supporting analyses as collapsible cards below.
-import { detectContext, detectPriority, DIFFICULTY, raidTeammates, slug } from "./core.js";
+import { detectContext, detectPriority, DIFFICULTY, raidTeammates, slug, metricForSpec, setRunMetric, metricUnit } from "./core.js";
 import { isAuthed, beginLogin, handleRedirectCallback, logout } from "./auth.js";
 import { NeedsAuth, myCharacters, primeRateReset } from "./wcl.js";
 import { paramsFromSearch, shareSearch, encodeSnapshot, decodeSnapshot, snapshotFromHash } from "./share.js";
@@ -598,11 +598,15 @@ async function runAnalysis({ name, server, region, serverLabel }) {
 
   try {
     const ctx = await detectContext(name, server, region);
+    // Healers are measured on HEALING, everyone else on DAMAGE -- set before
+    // detectPriority so the stat sample is drawn from the right-metric peers.
+    setRunMetric(metricForSpec(ctx.className, ctx.specName));
     const priority = await detectPriority(ctx.className, ctx.specName, ctx.difficulty, ctx.killed[0].encounter.id);
     snap.pills = [
       [`${ctx.specName} ${ctx.className}`, false],
       [DIFFICULTY[ctx.difficulty], true],
       [`${priority.charAt(0).toUpperCase() + priority.slice(1)} priority`, true],
+      [`${metricUnit()}`, true],
     ];
     setPills(hero, snap.pills);
     const p = { name, server, region, cls: ctx.className, spec: ctx.specName, difficulty: ctx.difficulty, priority };

@@ -3,6 +3,7 @@
 import {
   DIFFICULTY, characterZone, characterEncounter, topRankings, playerMetrics,
   secondaryStats, gearSummary, median, f, padL, padR, mapLimit, bestRank, collectPeers,
+  metricUnit,
 } from "./core.js";
 
 export async function overview(log, name, server, region, difficulty) {
@@ -43,7 +44,7 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
   const you = await playerMetrics(code, fight, name, specName, className);
   if (!you) return;
   log("");
-  log(`--- ${encounter.name} | your best-ilvl kill: ilvl ${ilvl}, ${f(you.dur, 0)}s, ${f(you.dps, 0)} dps, ${f(best.rankPercent, 0)}%ile ---`);
+  log(`--- ${encounter.name} | your best-ilvl kill: ilvl ${ilvl}, ${f(you.dur, 0)}s, ${f(you.dps, 0)} ${metricUnit().toLowerCase()}, ${f(best.rankPercent, 0)}%ile ---`);
 
   const peers = await collectIlvlPeers(encounter.id, difficulty, className, specName, ilvl || 0);
   if (!peers.length) {
@@ -53,14 +54,14 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
   const pmed = (key) => median(peers.map((p) => p[key]).filter((v) => v !== null && v !== undefined));
 
   log(`  vs ${peers.length} ilvl-matched peers:`);
-  log(`    DPS:          you ${padL(f(you.dps, 0), 9)}   peer med ${padL(f(pmed("dps"), 0), 9)}`);
+  log(`    ${padR(metricUnit() + ":", 13)} you ${padL(f(you.dps, 0), 9)}   peer med ${padL(f(pmed("dps"), 0), 9)}`);
   log(`    casts/min:    you ${padL(f(you.castsPerMin, 1), 9)}   peer med ${padL(f(pmed("castsPerMin"), 1), 9)}`);
   log(`    active %:     you ${padL(f(you.activePct, 1), 9)}   peer med ${padL(f(pmed("activePct"), 1), 9)}`);
   log(`    targets hit:  you ${padL(you.targets, 9)}   peer med ${padL(f(pmed("targets"), 1), 9)}`);
 
   const near = peers.filter((p) => Math.abs(p.dur - you.dur) <= 40).map((p) => p.dps);
   if (near.length) {
-    log(`    DPS at your kill-time (+/-40s): you ${f(you.dps, 0)}  vs peer med ${f(median(near), 0)}  (n=${near.length})`);
+    log(`    ${metricUnit()} at your kill-time (+/-40s): you ${f(you.dps, 0)}  vs peer med ${f(median(near), 0)}  (n=${near.length})`);
   }
 
   const youStats = await secondaryStats(code, fight, you.sourceID, className);

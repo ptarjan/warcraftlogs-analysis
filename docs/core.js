@@ -6,12 +6,35 @@ import { gql } from "./wcl.js";
 export const DIFFICULTY = { 2: "LFR", 3: "Normal", 4: "Heroic", 5: "Mythic" };
 
 // The 5 healing spec NAMES cover all 7 healer specs (Holy = Priest+Paladin,
-// Restoration = Druid+Shaman). A healer has no DPS rotation, so the DPS tool
-// doesn't apply -- we say so instead of emitting nonsense (e.g. "press Smite
-// 45/min, 205% behind"). Spec->role is stable game metadata, not a stat weight.
+// Restoration = Druid+Shaman). Spec->role is stable game metadata, not a stat
+// weight. A healer is measured on HEALING (HPS), everyone else on DAMAGE (DPS).
 const HEALER_SPECS = new Set(["Holy", "Discipline", "Restoration", "Mistweaver", "Preservation"]);
 /** @param {string} specName @returns {boolean} */
 export const isHealer = (specName) => HEALER_SPECS.has(specName);
+
+// --------------------------------------------------------------------- //
+// Throughput metric: DPS for damage/tank specs, HPS for healers. The whole
+// analysis is throughput-generic ("output/sec vs peers", which abilities do the
+// most, casts/min) -- only the WCL table (DamageDone vs Healing), the ranking
+// metric, and the display label differ. We pick ONE metric per run from the
+// player's spec and stash it module-level (a run analyzes one character, in one
+// process, start to finish). Default 'dps' keeps every damage-spec query
+// BYTE-IDENTICAL to before (same query strings -> same caches, same tests).
+/** @param {string} className @param {string} specName @returns {"dps"|"hps"} */
+export const metricForSpec = (className, specName) => (isHealer(specName) ? "hps" : "dps");
+let _metric = "dps";
+/** @param {"dps"|"hps"} m */
+export function setRunMetric(m) { _metric = m === "hps" ? "hps" : "dps"; }
+export function runMetric() { return _metric; }
+export const runIsHealer = () => _metric === "hps";
+// Display + table helpers so output reads "HPS"/"healing" for healers, and the
+// WCL table + per-hit event type follow the same switch. NOTE the asymmetric WCL
+// enum: damage is "DamageDone" but healing is just "Healing" (no -Done), in BOTH
+// the TableDataType and EventDataType enums.
+export const metricUnit = () => (_metric === "hps" ? "HPS" : "DPS");
+export const throughputWord = () => (_metric === "hps" ? "healing" : "damage");
+const throughputTable = () => (_metric === "hps" ? "Healing" : "DamageDone");
+export const eventTable = throughputTable;
 
 // Slots the field actually enchants (verify each season). Display only.
 export const ENCHANTABLE_SLOTS = {
@@ -60,8 +83,10 @@ export function median(arr) {
 //   label  -- the matching display string ("~3% DPS", "~1-3% DPS", "info").
 // DPS()/COMP()/INFO build impact and label together so they can never disagree
 // (the old bug: a separate sort key that drifted from the shown %).
+// Name kept `DPS` (every call site uses it) but the unit follows the run metric,
+// so a healer's levers read "~3% HPS". Default 'dps' keeps "~3% DPS" exactly.
 /** @param {number} lo @param {number} [hi] @returns {Score} */
-export const DPS = (lo, hi = lo) => ({ impact: (lo + hi) / 2, label: hi > lo ? `~${lo}-${hi}% DPS` : `~${lo}% DPS` });
+export const DPS = (lo, hi = lo) => ({ impact: (lo + hi) / 2, label: hi > lo ? `~${lo}-${hi}% ${metricUnit()}` : `~${lo}% ${metricUnit()}` });
 /** @param {number} pct @returns {Score} */
 export const COMP = (pct) => ({ impact: pct, label: `~${pct}% comp` });
 /** @type {Score} */
@@ -85,14 +110,14 @@ export async function characterZone(name, server, region, difficulty) {
 export async function characterEncounter(name, server, region, encounterId, difficulty) {
   const q = `query { characterData { character(
     name:"${cName(name)}", serverSlug:"${slug(clean(server))}", serverRegion:"${cRegion(region)}") {
-    encounterRankings(encounterID:${encounterId}, difficulty:${difficulty}, metric:dps) } } }`;
+    encounterRankings(encounterID:${encounterId}, difficulty:${difficulty}, metric:${_metric}) } } }`;
   const c = (await gql(q)).characterData.character;
   return c ? c.encounterRankings : null;
 }
 
 export async function topRankings(encounterId, difficulty, className, specName, page = 1) {
   const q = `query { worldData { encounter(id:${encounterId}) { characterRankings(
-    difficulty:${difficulty}, className:"${clean(className)}", specName:"${clean(specName)}", metric:dps, page:${page}) } } }`;
+    difficulty:${difficulty}, className:"${clean(className)}", specName:"${clean(specName)}", metric:${_metric}, page:${page}) } } }`;
   const cr = (await gql(q)).worldData.encounter.characterRankings;
   return cr && typeof cr === "object" ? (cr.rankings || []) : [];
 }
@@ -156,7 +181,7 @@ function metricsFromTables(dmg, casts, name, specName) {
 // table once per report". No className: the data is identical for every caller.
 export async function reportCore(code, fight) {
   const q = `query { reportData { report(code:"${code}") {
-    dmg: table(fightIDs:${fight}, dataType:DamageDone)
+    dmg: table(fightIDs:${fight}, dataType:${throughputTable()})
     casts: table(fightIDs:${fight}, dataType:Casts)
     combatant: events(fightIDs:${fight}, dataType:CombatantInfo, limit:50) { data }
     fightWin: fights(fightIDs:${fight}) { startTime endTime } } } }`;

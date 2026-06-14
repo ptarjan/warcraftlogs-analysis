@@ -9,7 +9,7 @@
 //   - your opener sequence vs the field's
 import {
   characterZone, characterEncounter, playerMetrics, collectPeers, mapLimit, median,
-  reportCore, fightWindow, fightEvents, paginateEvents, f, DPS, finding,
+  reportCore, fightWindow, fightEvents, paginateEvents, f, DPS, finding, eventTable, runIsHealer,
 } from "./core.js";
 import { talentedAbilities } from "./talents.js";
 
@@ -91,7 +91,7 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
     const id = name2id[opts.onlyAbility];
     let procPerMin = 0;
     if (id) {
-      const evs = await paginateEvents(code, fight, m.sourceID, "DamageDone", id, s, e);
+      const evs = await paginateEvents(code, fight, m.sourceID, eventTable(), id, s, e);
       procPerMin = perHit(evs).procBig / (dur / 60 || 1);
     }
     return { opener: openerSequence(casts), procPerMin, castRate };
@@ -101,7 +101,7 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
   const top = abils.slice(0, opts.topN || 4);
   const hits = [];
   for (const a of top) {
-    const evs = await paginateEvents(code, fight, m.sourceID, "DamageDone", a.guid, s, e);
+    const evs = await paginateEvents(code, fight, m.sourceID, eventTable(), a.guid, s, e);
     if (evs.length) {
       const ph = perHit(evs);
       hits.push({ name: a.name, ...ph, procPerMin: ph.procBig / (dur / 60 || 1) });
@@ -224,7 +224,7 @@ export async function run(log, name, server, region, className = "Monk",
       `Spec-agnostic: nothing about ${specName} is hard-coded.`);
 
   log("");
-  log("=== YOUR HARDEST-HITTING ABILITIES (per hit) ===");
+  log(`=== YOUR ${runIsHealer() ? "BIGGEST HEALS" : "HARDEST-HITTING ABILITIES"} (per cast) ===`);
   for (const h of [...fnd.hits].sort((a, b) => b.med - a.med))
     log(`  ${h.name.padEnd(20)} median ${Math.round(h.med).toLocaleString().padStart(8)}  ` +
         `max ${Math.round(h.max).toLocaleString().padStart(8)}  (${Math.round(h.critPct)}% crit, ` +

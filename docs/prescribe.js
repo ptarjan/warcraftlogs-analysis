@@ -8,7 +8,7 @@
 import {
   ENCHANTABLE_SLOTS, DIFFICULTY, characterZone, characterEncounter, playerMetrics,
   collectPeers, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry, bestRank,
-  DPS, INFO, finding, isHealer,
+  DPS, INFO, finding, metricUnit,
 } from "./core.js";
 import { timelineFindings } from "./timeline.js";
 import { gearFindings, gearLevers } from "./gear.js";
@@ -306,7 +306,7 @@ function renderPrescription(log, d) {
   }
   if (peerGap != null) {
     const vsField = peerGap > 0 ? `${peerGap}% behind` : `${Math.abs(peerGap)}% ahead of`;
-    log(`Measured on ${d.gearBoss.encounter.name}: you do ${k(you.dps)} DPS -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
+    log(`Measured on ${d.gearBoss.encounter.name}: you do ${k(you.dps)} ${metricUnit()} -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
         (topGap != null ? `, ${topGap}% behind the top parses` : "") + `. That gap is your headroom.`);
   }
   // A blunt, character-specific VERDICT: name the situation so the report never
@@ -359,16 +359,9 @@ function renderPrescription(log, d) {
 
 export async function run(log, name, server, region, className = "Monk", specName = "Brewmaster",
   difficulty = 5, knownPriority = null) {
-  // Healers have no DPS rotation -- a "press faster / more Smites" list is
-  // nonsense (e.g. "205% behind, press Smite 45/min" for a Holy Priest). The
-  // tool optimizes DPS; for a healing spec, say so and skip rather than emit
-  // garbage. Bails before any query, so it costs nothing.
-  if (isHealer(specName)) {
-    log("");
-    log(`${name}-${server} is a healing spec (${specName} ${className}). This tool optimizes DPS,`);
-    log("which isn't a healer's metric -- no DPS prescription. (Healing/HPS analysis is out of scope.)");
-    return;
-  }
+  // Healers are analyzed on HEALING (the run metric is set to hps for healer
+  // specs, so rankings/peers/throughput are all healing) -- the same prescription
+  // machinery, just measuring HPS. No skip.
   const c = await characterZone(name, server, region, difficulty);
   const ranks = (c.zoneRankings.rankings || []).filter(
     (r) => (r.totalKills || 0) > 0 && r.rankPercent !== null && r.rankPercent !== undefined);
