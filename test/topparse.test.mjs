@@ -55,6 +55,13 @@ test("nonBossShare is 0 when everything hits the boss", () => {
   assert.equal(nonBossShare([{ name: "Boss", total: 500 }], "Boss").pct, 0);
 });
 
+test("nonBossShare falls back to the biggest target when the name doesn't match", () => {
+  // Encounter "Crown of the Cosmos" but the boss NPC is named differently -- no
+  // exact match must NOT report 100% non-boss; the biggest target is the boss.
+  const targets = [{ name: "Salhadaar", total: 700 }, { name: "Add", total: 300 }];
+  assert.equal(nonBossShare(targets, "Crown of the Cosmos").pct, 30);
+});
+
 test("potionCount keyword-matches potion casts (case-insensitive)", () => {
   assert.equal(potionCount({ "Tempered Potion": 2, "Tiger Palm": 50, "potion of unwavering focus": 1 }), 3);
   assert.equal(potionCount({}), 0);

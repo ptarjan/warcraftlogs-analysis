@@ -12,6 +12,7 @@ import {
   reportCore, fightWindow, fightEvents, paginateEvents, f, DPS, finding, eventTable, runIsHealer,
 } from "./core.js";
 import { talentedAbilities } from "./talents.js";
+import { wowheadSpell } from "./links.js";
 
 // --- pure, unit-tested helpers ----------------------------------------------
 
@@ -94,7 +95,7 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
       const evs = await paginateEvents(code, fight, m.sourceID, eventTable(), id, s, e);
       procPerMin = perHit(evs).procBig / (dur / 60 || 1);
     }
-    return { opener: openerSequence(casts), procPerMin, castRate };
+    return { opener: openerSequence(casts), procPerMin, castRate, name2id };
   }
 
   // You: per-hit detail for the top damage abilities (bounded for API cost).
@@ -107,7 +108,7 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
       hits.push({ name: a.name, ...ph, procPerMin: ph.procBig / (dur / 60 || 1) });
     }
   }
-  return { opener: openerSequence(casts), hits, dur, castRate, sourceID: m.sourceID };
+  return { opener: openerSequence(casts), hits, dur, castRate, sourceID: m.sourceID, name2id };
 }
 
 // Median casts/min per ability across the field's kills (absent in a kill = 0),
@@ -207,9 +208,13 @@ export async function rotationFindings(name, server, region, className, specName
   try {
     talent = await talentedAbilities(er.ranks[0].report.code, er.ranks[0].report.fightID, you.sourceID);
   } catch (e) { /* no talent data -> levers treat under-use as a rotation fix */ }
+  // Merged ability name -> Wowhead spell id (yours + the field's), so the
+  // prescription can link every ability it names (under/over-press, proc, the
+  // never-pressed field ability). Yours wins on collision.
+  const abilityIds = Object.assign({}, ...peers.map((p) => p.name2id || {}), you.name2id || {});
   return {
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener,
-    usage, castGap, fieldPeers: peers.length, talent,
+    usage, castGap, fieldPeers: peers.length, talent, abilityIds,
     proc: { name: top.name, isReal, youPerMin: top.procPerMin, fieldPerMin: fieldProc },
   };
 }
@@ -269,6 +274,8 @@ export async function run(log, name, server, region, className = "Monk",
 // deliberately NOT recommended (a big hit is usually just a crit). Pure.
 export function rotationLevers(rot) {
   const out = [];
+  const ids = (rot && rot.abilityIds) || {};
+  const link = (n) => wowheadSpell(ids[n], n);   // ability name -> Wowhead link when we have the id
   // Biggest rotation lever: where your ability USAGE diverges from the field.
   // Pressing the wrong button (over-use one, never press the field's) or skipping
   // a cooldown is usually the largest gap for an underperformer -- sorts above
@@ -284,22 +291,22 @@ export function rotationLevers(rot) {
     // specced it but don't press it, it's a build/usage problem; a baseline button
     // you skip falls through to the ordinary "press it more" rotation fix.
     const cls = classifyUnderUse(top, rot && rot.talent);
-    const onGlobals = overTop ? ` Right now you spend those globals on ${overTop.name}.` : "";
+    const onGlobals = overTop ? ` Right now you spend those globals on ${link(overTop.name)}.` : "";
     if (cls === "missing-talent") {
       out.push(finding("Rotation", DPS(5, 10),
-        `TALENTS/BUILD: you never press ${top.name}, and you haven't talented it while the field casts it ` +
-        `${f(top.field, 1)}/min -- respec to the field's build (the one with ${top.name}); your rotation ` +
+        `TALENTS/BUILD: you never press ${link(top.name)}, and you haven't talented it while the field casts it ` +
+        `${f(top.field, 1)}/min -- respec to the field's build (the one with ${link(top.name)}); your rotation ` +
         `can't include it until you do.${onGlobals}`));
     } else if (cls === "talented-unused") {
       out.push(finding("Rotation", DPS(5, 10),
-        `TALENTS/BUILD: you've talented ${top.name} but never press it, while the field casts it ` +
+        `TALENTS/BUILD: you've talented ${link(top.name)} but never press it, while the field casts it ` +
         `${f(top.field, 1)}/min -- a wasted talent. Work it into your rotation, or respec the point into ` +
         `something you'll actually use.${onGlobals}`));
     } else {
-      const under = u.under.slice(0, 2).map((a) => `${a.name} (peers ${f(a.field, 1)}/min vs your ${f(a.you, 1)})`);
+      const under = u.under.slice(0, 2).map((a) => `${link(a.name)} (peers ${f(a.field, 1)}/min vs your ${f(a.you, 1)})`);
       const wrongButton = u.over.length > 0;
       const over = wrongButton
-        ? `; you over-press ${u.over.slice(0, 1).map((a) => `${a.name} (your ${f(a.you, 1)}/min vs peers ${f(a.field, 1)})`).join("")}`
+        ? `; you over-press ${u.over.slice(0, 1).map((a) => `${link(a.name)} (your ${f(a.you, 1)}/min vs peers ${f(a.field, 1)})`).join("")}`
         : "";
       out.push(finding("Rotation", wrongButton ? DPS(5, 10) : DPS(3, 6),
         `ROTATION: press ${under.join(" and ")} more${over} -- match your peers' ability priority ` +
@@ -308,7 +315,7 @@ export function rotationLevers(rot) {
   }
   if (rot && rot.proc.isReal && rot.proc.fieldPerMin != null &&
       rot.proc.youPerMin < rot.proc.fieldPerMin - 0.4) {
-    out.push(finding("Rotation", DPS(1, 2), `PROC: you land ${f(rot.proc.youPerMin, 1)} ${rot.proc.name} ` +
+    out.push(finding("Rotation", DPS(1, 2), `PROC: you land ${f(rot.proc.youPerMin, 1)} ${link(rot.proc.name)} ` +
       `procs/min vs your peers' ${f(rot.proc.fieldPerMin, 1)} -- generate/use it more.`));
   }
   return out;

@@ -304,7 +304,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // they never become recommendations.
   if (utilMiss.length) {
     log("");
-    log(`Also missing (utility/defensive the field takes here — not DPS): ${utilMiss.slice(0, 6).map((t) => t.name).join(", ")}.`);
+    log(`Also missing (utility/defensive the field takes here — not DPS): ${utilMiss.slice(0, 6).map((t) => link(t.spellId, t.name)).join(", ")}.`);
   }
   const offDps = fnd.offMeta.filter((t) => t.dps);
   if (offDps.length) {

@@ -62,13 +62,21 @@ export function raidCoverage(selfBuffs, boss, { minSelf = 1, minBoss = 20 } = {}
 }
 
 // Share of damage that lands on NON-boss targets (cleave / funnel). The boss is
-// the target whose name matches the encounter; everything else counts as adds.
+// the target whose name matches the encounter -- BUT encounter names often differ
+// from the actual NPC name (council fights, renamed bosses), which would match
+// nothing and mark EVERY target non-boss (a bogus "100%"). So when no target
+// matches the name, fall back to the single biggest target = the primary boss.
 export function nonBossShare(targets, bossName) {
+  const list = (targets || []).filter((t) => (t.total || 0) > 0);
+  if (!list.length) return { pct: 0, byAdd: new Map() };
+  const hasNamed = bossName && list.some((t) => t.name === bossName);
+  const biggest = list.reduce((a, b) => ((b.total || 0) > (a.total || 0) ? b : a));
+  const isBoss = hasNamed ? (t) => t.name === bossName : (t) => t === biggest;
   let boss = 0, other = 0;
   const byAdd = new Map();
-  for (const t of targets || []) {
+  for (const t of list) {
     const tot = t.total || 0;
-    if (bossName && t.name === bossName) boss += tot;
+    if (isBoss(t)) boss += tot;
     else { other += tot; if (t.name) byAdd.set(t.name, (byAdd.get(t.name) || 0) + tot); }
   }
   const total = boss + other;
