@@ -97,7 +97,10 @@ const KILLS_PER_BOSS = 3;
 export async function timelineFindings(name, server, region, encounter, difficulty, className, specName) {
   const er = await characterEncounter(name, server, region, encounter.id, difficulty);
   if (!er || !er.ranks || !er.ranks.length) return null;
-  const perKill = await mapLimit(er.ranks.slice(0, KILLS_PER_BOSS), 4, async (rk) => {
+  // Cap to a few kills, but the MOST RECENT ones (current gear/play) rather than
+  // whatever order the ranks arrive in. Free -- just sorts the data we already have.
+  const recentRanks = [...er.ranks].sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
+  const perKill = await mapLimit(recentRanks.slice(0, KILLS_PER_BOSS), 4, async (rk) => {
     const you = await playerMetrics(rk.report.code, rk.report.fightID, name, specName, className);
     const fm = await fightMetrics(rk.report.code, rk.report.fightID, you.sourceID, className);
     return fm ? { fm, ilvl: rk.bracketData || 0 } : null;

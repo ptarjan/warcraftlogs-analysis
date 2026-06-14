@@ -8,7 +8,7 @@
 //     how often you land them vs the field
 //   - your opener sequence vs the field's
 import {
-  characterZone, characterEncounter, playerMetrics, collectPeers, mapLimit, median,
+  playerMetrics, collectPeers, mapLimit, median, bestKill,
   reportCore, fightWindow, fightEvents, paginateEvents, f, DPS, finding, eventTable, runIsHealer,
 } from "./core.js";
 import { talentedAbilities } from "./talents.js";
@@ -165,15 +165,13 @@ export function classifyUnderUse(top, talent) {
 // actionable list item. If big hits are merely crits, proc.isReal is false and
 // NOTHING is recommended (a "big hit" is usually a crit, not a missed button).
 export async function rotationFindings(name, server, region, className, specName, difficulty) {
-  const c = await characterZone(name, server, region, difficulty);
-  const killed = (c.zoneRankings.rankings || [])
-    .filter((r) => r.totalKills > 0 && r.rankPercent != null)
-    .sort((a, b) => b.totalKills - a.totalKills);
-  if (!killed.length) return null;
-  const boss = killed[0].encounter;
-  const er = await characterEncounter(name, server, region, boss.id, difficulty);
-  const you = await analyzeKill(name, er.ranks[0].report.code, er.ranks[0].report.fightID,
-                                specName, className, { topN: 5 });
+  // Analyze your most-recent current-gear kill (bestKill -- shared with gear /
+  // talents / topparse, so the fetch is cached), not whatever boss you've farmed
+  // most. Recent = current play, and a single full kill has plenty of casts.
+  const best = await bestKill(name, server, region, difficulty);
+  if (!best) return null;
+  const boss = best.encounter;
+  const you = await analyzeKill(name, best.code, best.fight, specName, className, { topN: 5 });
   if (!you || !you.hits.length) return null;
 
   const biggest = [...you.hits].sort((a, b) => b.med - a.med)[0];
@@ -183,7 +181,7 @@ export async function rotationFindings(name, server, region, className, specName
   // Pull the ilvl-matched field once: it feeds the proc rate, the opener, AND the
   // ability-usage comparison (the field comparison is the whole point, so we
   // fetch peers regardless of whether the proc turned out real).
-  const myIlvl = (er.ranks[0] || {}).bracketData || 0;
+  const myIlvl = best.ilvl || 0;
   const cands = await collectPeers({ encounters: boss.id, difficulty, className, specName,
     limit: 8, pages: 4, ilvl: myIlvl, window: 4 });
   const peers = (await mapLimit(cands, 4, async (r) => {
@@ -206,7 +204,7 @@ export async function rotationFindings(name, server, region, className, specName
   // for a baseline button). Best-effort: null if CombatantInfo/Raidbots missing.
   let talent = null;
   try {
-    talent = await talentedAbilities(er.ranks[0].report.code, er.ranks[0].report.fightID, you.sourceID);
+    talent = await talentedAbilities(best.code, best.fight, you.sourceID);
   } catch (e) { /* no talent data -> levers treat under-use as a rotation fix */ }
   // Merged ability name -> Wowhead spell id (yours + the field's), so the
   // prescription can link every ability it names (under/over-press, proc, the

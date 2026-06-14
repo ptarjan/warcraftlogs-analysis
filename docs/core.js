@@ -323,6 +323,30 @@ export async function bestKill(name, server, region, difficulty) {
   return best;
 }
 
+// Killed bosses, NEWEST kill first. So a section that caps how many bosses it
+// deep-analyzes keeps your most RECENT fights (current gear/play) instead of
+// whatever order zoneRankings returns. Each entry carries the best-ilvl ("current
+// gear") kill to compare on, plus the boss's newest kill time for the ordering.
+// The per-boss characterEncounter calls are the SAME ones bestKill / prescribe /
+// timeline already make, so the gql cache makes this near-free -- it piggybacks
+// on their requests rather than adding its own.
+export async function recentKills(name, server, region, difficulty) {
+  const c = await characterZone(name, server, region, difficulty);
+  const ranks = (c.zoneRankings.rankings || []).filter((r) => (r.totalKills || 0) > 0);
+  const ers = await mapLimit(ranks, 5, (r) =>
+    characterEncounter(name, server, region, r.encounter.id, difficulty));
+  const out = [];
+  ranks.forEach((r, i) => {
+    const kr = (ers[i] && ers[i].ranks) || [];
+    const best = bestRank(kr);
+    if (!best) return;
+    const recent = kr.reduce((mx, k) => Math.max(mx, k.startTime || 0), 0);
+    out.push({ encounter: r.encounter, rankPercent: r.rankPercent, recent,
+      code: best.report.code, fight: best.report.fightID, ilvl: best.bracketData || 0 });
+  });
+  return out.sort((a, b) => b.recent - a.recent);
+}
+
 // --------------------------------------------------------------------- //
 // Field sampling (one collector for every "compare vs peers" analysis)
 // --------------------------------------------------------------------- //

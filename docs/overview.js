@@ -3,7 +3,7 @@
 import {
   DIFFICULTY, characterZone, characterEncounter, topRankings, playerMetrics,
   secondaryStats, gearSummary, median, f, padL, padR, mapLimit, bestRank, collectPeers,
-  metricUnit,
+  metricUnit, recentKills,
 } from "./core.js";
 
 export async function overview(log, name, server, region, difficulty) {
@@ -121,14 +121,19 @@ async function difficultyInflation(log, name, server, region, encounter, classNa
 export async function run(log, name, server, region, className = "Monk", specName = "Brewmaster",
   difficulty = 5, bosses = 3, inflation = false) {
   const { killed } = await overview(log, name, server, region, difficulty);
-  for (const r of killed.slice(0, bosses)) {
+  // The list above shows every boss; the deep per-boss comparison (which fetches
+  // a fresh peer set per boss) is the expensive part, so it's capped. Pick the
+  // MOST RECENT bosses (current gear/play), not the first in raid order --
+  // recentKills reuses the cached per-boss data the other sections fetch.
+  const recent = await recentKills(name, server, region, difficulty);
+  for (const r of recent.slice(0, bosses)) {
     try {
       await deepCompare(log, name, server, region, r.encounter, difficulty, className, specName);
     } catch (e) {
       log(`  (${r.encounter.name}: ${e.message || e})`);
     }
   }
-  if (inflation && killed.length) {
-    await difficultyInflation(log, name, server, region, killed[0].encounter, className, specName);
+  if (inflation && recent.length) {
+    await difficultyInflation(log, name, server, region, recent[0].encounter, className, specName);
   }
 }
