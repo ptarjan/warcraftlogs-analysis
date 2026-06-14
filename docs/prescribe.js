@@ -288,24 +288,31 @@ function enchantLevers(field, my) {
 // Trinkets are EFFECT-based (procs / on-use), so they can't be ranked by a stat
 // sum like the other slots -- gear.js deliberately skips them. Surface them their
 // own way: a trinket most of your ilvl-matched peers equip but you DON'T is a
-// likely upgrade to SIM (Droptimizer), not a measured gain. Conservative -- only
-// on a real majority, only trinkets you don't already run, top 2 so it stays clean.
+// likely upgrade to SIM (Droptimizer), not a measured gain.
+//
+// CONFIDENCE comes from CONSENSUS, read off the data: if the field converges on
+// one trinket (high share), a player missing it has a real lever; if trinket usage
+// is spread across many different ones (low top share), there's no clear best -- so
+// don't claim it, and never size it big. The displayed % scales with the share:
+// near-unanimous is a real lever, a slim majority is only a weak hint.
 export async function trinketLevers(field, my) {
   if (!field || !field.trinkets || !field.trinkets.size || field.n < 4) return [];
-  const threshold = Math.max(2, Math.ceil(field.n * 0.5));
   const favored = [...field.trinkets.entries()]
-    .map(([id, t]) => ({ id, name: t.name, count: t.count }))
-    .filter((t) => t.count >= threshold && !my.trinketIds.has(t.id))
-    .sort((a, b) => b.count - a.count)
+    .map(([id, t]) => ({ id, name: t.name, count: t.count, share: t.count / field.n }))
+    .filter((t) => !my.trinketIds.has(t.id) && t.share >= 0.6)   // a real majority, not a split field
+    .sort((a, b) => b.share - a.share)
     .slice(0, 2);
   if (!favored.length) return [];
+  // Size from the dominant trinket's share: ~unanimous -> 3%, strong -> 2%, slim -> 1%.
+  const lead = favored[0].share;
+  const pct = lead >= 0.85 ? 3 : lead >= 0.7 ? 2 : 1;
   const parts = [];
   for (const t of favored) {
     const inst = await itemInstance(t.id, null);           // resolve dungeon/raid from the item id
     parts.push(`${wowheadItem(t.id, t.name)} (${t.count}/${field.n} peers)${sourceText(null, inst, null)}`);
   }
   const yours = my.trinkets && my.trinkets.length ? my.trinkets.join(" + ") : "your current trinkets";
-  return [finding("Gear", DPS(3),
+  return [finding("Gear", DPS(pct),
     `TRINKETS: the field favors ${parts.join(" and ")} -- you run ${yours}. Trinkets are effect-based (proc/on-use), not a stat swap -- SIM it (Droptimizer) before committing, but a trinket most of your peers run and you don't is a common hidden upgrade.`)];
 }
 

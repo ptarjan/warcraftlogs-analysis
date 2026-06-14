@@ -68,27 +68,39 @@ test("executionLevers: a genuine cast deficit still fires press-faster", () => {
   assert.match(press.text, /PRESS FASTER/);
 });
 
-test("trinketLevers: surfaces a majority field trinket you don't run; silent otherwise", async () => {
+test("trinketLevers: fires on a real consensus, sized by it; silent on a split field", async () => {
   // Trinkets are effect-based -- gear.js skips them -- so this lever flags a
   // trinket most ilvl-matched peers run that you lack, as a "sim it" candidate.
-  const field = { n: 8, trinkets: new Map([
-    [1001, { name: "Field Favorite", count: 6 }],   // 6/8 peers, you lack it
-    [1002, { name: "Splitpick", count: 3 }],        // below the majority threshold
-  ]) };
-  const out = await trinketLevers(field, { trinketIds: new Set([1002]), trinkets: ["Splitpick", "Other"] });
+  // Near-unanimous (8/8) -> a real lever, sized up.
+  const unanimous = { n: 8, trinkets: new Map([[1001, { name: "Field Favorite", count: 8 }]]) };
+  const out = await trinketLevers(unanimous, { trinketIds: new Set([2002]), trinkets: ["Yours"] });
   assert.equal(out.length, 1);
   assert.equal(out[0].dim, "Gear");
   assert.match(out[0].text, /TRINKETS:/);
   assert.match(out[0].text, /Field Favorite/);
-  assert.match(out[0].text, /6\/8 peers/);
+  assert.match(out[0].text, /8\/8 peers/);
   assert.match(out[0].text, /sim/i);                 // never claims a measured gain
+  assert.equal(out[0].impact, 3);                    // share 1.0 -> top size
+
+  // A SPLIT field (lots of people use different trinkets) -> no clear best, silent.
+  // No trinket reaches the 60% consensus bar even though you run none of them.
+  const split = { n: 10, trinkets: new Map([
+    [1001, { name: "A", count: 4 }], [1002, { name: "B", count: 3 }], [1003, { name: "C", count: 3 }],
+  ]) };
+  assert.equal((await trinketLevers(split, { trinketIds: new Set([9999]), trinkets: ["Mine"] })).length, 0);
+
+  // A slim-but-real majority (6/10) -> fires, but sized DOWN (low confidence).
+  const slim = { n: 10, trinkets: new Map([[1001, { name: "D", count: 6 }], [1002, { name: "E", count: 4 }]]) };
+  const slimOut = await trinketLevers(slim, { trinketIds: new Set([1002]), trinkets: ["E"] });
+  assert.equal(slimOut.length, 1);
+  assert.equal(slimOut[0].impact, 1);                // share 0.6 -> smallest size
 
   // You already run the favorite -> nothing to suggest.
-  assert.equal((await trinketLevers(field, { trinketIds: new Set([1001]), trinkets: ["Field Favorite"] })).length, 0);
+  assert.equal((await trinketLevers(unanimous, { trinketIds: new Set([1001]), trinkets: ["Field Favorite"] })).length, 0);
 
   // Too small a field sample -> not enough signal, stays silent (no false positive).
-  const small = { n: 3, trinkets: new Map([[1001, { name: "X", count: 3 }]]) };
-  assert.equal((await trinketLevers(small, { trinketIds: new Set(), trinkets: [] })).length, 0);
+  const tiny = { n: 3, trinkets: new Map([[1001, { name: "X", count: 3 }]]) };
+  assert.equal((await trinketLevers(tiny, { trinketIds: new Set(), trinkets: [] })).length, 0);
 });
 
 test("reconcileImpacts: concrete fixes + residual always sum to the target (the gap)", () => {
