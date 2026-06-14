@@ -352,11 +352,31 @@ export async function reportDeaths(code, fightIDs, { fresh = false } = {}) {
 // query per report.
 export async function reportRoster(code) {
   const q = `query { reportData { report(code:"${clean(code)}") {
-    masterData { actors { id name type subType } } } } }`;
+    masterData { actors { id name type subType petOwner } } } } }`;
   const actors = (((await gql(q)).reportData.report.masterData) || {}).actors || [];
   const byId = new Map();
   for (const a of actors) byId.set(a.id, a);
   return byId;
+}
+
+// Total PET damage for one owner on one fight. Pet-heavy specs (Unholy DK, BM
+// Hunter, Demo Lock) keep a big chunk of their damage in pets (summons, transforms,
+// Army/Gargoyle) -- which the cast/cooldown levers can't see, so it sits in the
+// PLAYSTYLE remainder. WCL folds pet damage into the owner's ranking DPS, so this
+// ATTRIBUTES part of the gap (your pet share vs the field's), it doesn't add new DPS.
+// One batched query over the owner's pet actor ids (from reportRoster's petOwner).
+export async function petDamage(code, fight, ownerSourceId) {
+  const roster = await reportRoster(code);
+  const petIds = [...roster.values()].filter((a) => a.petOwner === ownerSourceId).map((a) => a.id);
+  if (!petIds.length) return 0;
+  const aliases = petIds.map((id, i) =>
+    `p${i}:table(fightIDs:${fight}, dataType:${throughputTable()}, sourceID:${id})`).join(" ");
+  const r = (await gql(`query { reportData { report(code:"${code}") { ${aliases} } } }`)).reportData.report;
+  let total = 0;
+  petIds.forEach((id, i) => {
+    total += (((r[`p${i}`] && r[`p${i}`].data.entries) || []).reduce((s, e) => s + (e.total || 0), 0));
+  });
+  return total;
 }
 
 // Median field KILL time (ms) for an encounter -- the reference for sizing a DPS

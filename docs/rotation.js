@@ -9,7 +9,7 @@
 //   - your opener sequence vs the field's
 import {
   playerMetrics, ilvlPeers, mapLimit, median, bestKill,
-  reportCore, playerAbilities, dotUptimes, fightWindow, fightEvents, paginateEvents, f, DPS, finding, eventTable, runIsHealer,
+  reportCore, playerAbilities, dotUptimes, petDamage, fightWindow, fightEvents, paginateEvents, f, DPS, finding, eventTable, runIsHealer,
 } from "./core.js";
 import { talentedAbilities, heroTreeOf } from "./talents.js";
 import { wowheadSpell } from "./links.js";
@@ -131,8 +131,10 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
     // Peer DoT uptimes for the caller's DoT ids (so the field comparison is on the
     // SAME DoTs as you) -- one batched query, only when asked.
     const dotUp = (opts.dotIds && opts.dotIds.length) ? await dotUptimes(code, fight, m.sourceID, opts.dotIds, e - s) : {};
+    const petDmg = await petDamage(code, fight, m.sourceID);
+    const petShare = (m.total + petDmg) > 0 ? petDmg / (m.total + petDmg) : 0;
     return { opener: openerSequence(casts), procPerMin, empShare, castRate, allCastRate, name2id,
-             dmgBy: m.dmgBy, total: m.total, dur, sourceID: m.sourceID, dotUp };
+             dmgBy: m.dmgBy, total: m.total, dur, sourceID: m.sourceID, dotUp, petShare };
   }
 
   // You: per-hit detail for the top damage abilities (bounded for API cost).
@@ -156,8 +158,10 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
   const dots = abils.filter((a) => (a.tickCount || 0) > 0 && a.total / dmgTotal >= 0.03)
     .map((a) => ({ name: a.name, guid: a.guid, share: a.total / dmgTotal }));
   const dotUp = dots.length ? await dotUptimes(code, fight, m.sourceID, dots.map((d) => d.guid), e - s) : {};
+  const petDmg = await petDamage(code, fight, m.sourceID);
+  const petShare = (m.total + petDmg) > 0 ? petDmg / (m.total + petDmg) : 0;
   return { opener: openerSequence(casts), hits, dur, castRate, allCastRate, dmgTotals, total: m.total,
-           sourceID: m.sourceID, name2id, dots, dotUp };
+           sourceID: m.sourceID, name2id, dots, dotUp, petShare };
 }
 
 // Median casts/min per ability across the field's kills (absent in a kill = 0),
@@ -323,6 +327,21 @@ export function dotUptimeGaps(dots, youUp, fieldUp, { minGap = 6, minFieldUptime
     out.push({ name: d.name, guid: d.guid, you, field, pct });
   }
   return out.sort((a, b) => b.pct - a.pct);
+}
+
+// Pet-share gap: a pet-heavy spec (Unholy DK, BM Hunter, Demo Lock) whose pets do
+// LESS of its damage than the field's is leaving pet damage on the table -- poor
+// summon/transform/Army timing, which cast/cooldown levers can't see. Pure ->
+// testable, MEASURED. Closing the gap scales your OWN damage's complement up, so
+// gain = (1-you)/(1-field). Gated: only a REAL pet spec (field pets >= 10% of damage
+// -- excludes trinket-proc pets), and only below the field by a real margin -- so a
+// non-pet spec (share ~0) and a player who matches the field stay silent.
+export function petShareGap(youShare, fieldShare, { minGap = 0.05, minFieldShare = 0.10 } = {}) {
+  if (youShare == null || fieldShare == null) return null;
+  if (fieldShare < minFieldShare) return null;        // not a pet spec
+  if (fieldShare - youShare < minGap) return null;    // you match/beat the field
+  const pct = Math.round(100 * ((1 - youShare) / (1 - fieldShare) - 1));
+  return pct >= 1 ? { you: Math.round(100 * youShare), field: Math.round(100 * fieldShare), pct } : null;
 }
 
 export function classifyUnderUse(top, talent) {
@@ -494,9 +513,14 @@ export async function rotationFindings(name, server, region, className, specName
     if (ups.length >= 3) fieldUp[d.guid] = median(ups);
   }
   const dotGaps = dotUptimeGaps(you.dots || [], you.dotUp || {}, fieldUp);
+  // Pet-damage share gap: pet-heavy specs hide a big chunk of the playstyle remainder
+  // in pet under-use (Army/Gargoyle/Dark Transformation timing). Field-median share.
+  const petShares = peers.map((p) => p.petShare).filter((x) => x != null);
+  const fieldPetShare = petShares.length >= 3 ? median(petShares) : null;
+  const petGap = (you.petShare != null && fieldPetShare != null) ? petShareGap(you.petShare, fieldPetShare) : null;
   return {
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener,
-    usage, cooldowns, cdUsage, perCast, dotGaps, castGap, fieldPeers: peers.length, talent, abilityIds,
+    usage, cooldowns, cdUsage, perCast, dotGaps, petGap, castGap, fieldPeers: peers.length, talent, abilityIds,
     heroMatched: yourHero && peers.length ? (peers.every((p) => p.hero === yourHero) ? yourHero : null) : null,
     proc: { name: biggest.name, isReal, youPerMin: biggest.procPerMin, fieldPerMin: fieldProc, youEmp, fieldEmp },
   };
@@ -638,6 +662,15 @@ export function rotationLevers(rot) {
         `${cd.fieldPerFight.toFixed(0)}x -- ~${cd.pct}% of your damage. Use it on cooldown; it's a button you're ` +
         `skipping, not gear.`));
     }
+  }
+  // PET DAMAGE: a pet-heavy spec whose pets do less of its damage than the field's
+  // is under-using its biggest hidden lever (summon/transform/Army timing). Measured.
+  if (rot && rot.petGap) {
+    const g = rot.petGap;
+    out.push(finding("Rotation", DPS(g.pct),
+      `PET DAMAGE: your pets do ${g.you}% of your damage vs the field's ${g.field}% -- ~${g.pct}% behind. ` +
+      `Use your pet cooldowns more: summon on cooldown, keep the pet active/transformed, and line up your ` +
+      `big pet windows (Army/Gargoyle/burst). It's a major damage source you're under-using, not gear.`, "measured"));
   }
   // DoT UPTIME: a damage-over-time you keep up LESS than the field is lost damage
   // that cast/cooldown levers can't see -- THE missing lever for DoT specs. Measured

@@ -5,7 +5,20 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, dotUptimeGaps } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, dotUptimeGaps, petShareGap } = await import("../docs/rotation.js");
+
+test("petShareGap: flags a pet spec under the field's pet share; silent for non-pet/matched", () => {
+  // Unholy DK: your pets 27% of damage, field 38%. gain = (1-.27)/(1-.38) ~= 1.177.
+  const g = petShareGap(0.27, 0.38);
+  assert.equal(g.you, 27); assert.equal(g.field, 38);
+  assert.equal(g.pct, Math.round(100 * (0.73 / 0.62 - 1)));   // ~18%
+  // A non-pet spec (field pets ~2% = trinket-proc noise) never fires.
+  assert.equal(petShareGap(0.0, 0.02), null);
+  assert.equal(petShareGap(0.01, 0.03), null);
+  // You match/beat the field -> silent (no false positive).
+  assert.equal(petShareGap(0.40, 0.38), null);
+  assert.equal(petShareGap(0.35, 0.38), null);   // within the 5pp band
+});
 
 test("dotUptimeGaps: flags a clipped DoT, silent on a well-maintained one", () => {
   const dots = [
