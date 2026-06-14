@@ -466,9 +466,23 @@ export function gearLevers(gf, priority) {
   if (!gf) return [];
   const PRI = priority.toUpperCase();
   const out = [];
-  for (const sw of gf.swaps) {
-    const from = sourceText(sw.source, sw.instance, sw.dropChance);
-    out.push(finding("Gear", statScore(sw.gain), `${PRI} via ${sw.slot}: replace ${wowheadItem(sw.fromId, sw.fromName)} with ${wowheadItem(sw.toId, sw.toName)} (+${sw.gain} ${priority}${from} -- sim to confirm).`));
+  const swaps = gf.swaps || [];
+  // LEGIBILITY: a low player can have 5+ priority-stat swaps. Five separate
+  // "<STAT> via <slot>" lines bury the levers that actually matter (rotation/build).
+  // With >=3, collapse them into ONE "re-itemize N slots" task that still names every
+  // exact from->to swap. Impact = sum of the per-swap values (reconcileImpacts
+  // rescales the list to the gap anyway), so the whole re-itemization is one bullet.
+  if (swaps.length >= 3) {
+    const total = swaps.reduce((s, sw) => s + statScore(sw.gain).impact, 0);
+    const gain = swaps.reduce((s, sw) => s + (sw.gain || 0), 0);
+    const items = swaps.map((sw) => `${sw.slot} ${wowheadItem(sw.fromId, sw.fromName)}→${wowheadItem(sw.toId, sw.toName)}`).join(", ");
+    out.push(finding("Gear", { impact: total, label: `~${Math.round(total)}% ${metricUnit()}` },
+      `${PRI}: re-itemize ${swaps.length} slots toward ${priority} (+${gain} ${priority} total -- sim to confirm) -- ${items}.`));
+  } else {
+    for (const sw of swaps) {
+      const from = sourceText(sw.source, sw.instance, sw.dropChance);
+      out.push(finding("Gear", statScore(sw.gain), `${PRI} via ${sw.slot}: replace ${wowheadItem(sw.fromId, sw.fromName)} with ${wowheadItem(sw.toId, sw.toName)} (+${sw.gain} ${priority}${from} -- sim to confirm).`));
+    }
   }
   for (const rs of gf.restats) {
     out.push(finding("Gear", statScore((rs.achievable || 0) - (rs.current || 0)), `${PRI} via ${rs.slot}: ${wowheadItem(rs.itemId, rs.itemName)} is selectable -- recraft to ${rs.achievable} ${priority} (you have ${rs.current}).`));

@@ -46,7 +46,20 @@ test("pickBenchmarkKill: median-parse kill, not an outlier survival kill", () =>
   assert.equal(banded.boss, "A");
   assert.equal(pickBenchmarkKill([]), null);
 });
-const { embellishmentRx, gemLever, statScore } = await import("../docs/gear.js");          // gear-domain lever
+const { embellishmentRx, gemLever, statScore, gearLevers } = await import("../docs/gear.js");          // gear-domain lever
+
+test("gearLevers: many same-stat swaps collapse into ONE legible re-itemize line", () => {
+  const sw = (slot, gain) => ({ slot, gain, fromId: 1, fromName: `${slot}-old`, toId: 2, toName: `${slot}-new` });
+  // 2 swaps -> listed individually (a short list is fine).
+  const few = gearLevers({ swaps: [sw("Neck", 150), sw("Ring1", 120)], restats: [] }, "haste");
+  assert.equal(few.filter((x) => /via (Neck|Ring1)/.test(x.text)).length, 2);
+  // 5 swaps -> ONE grouped finding naming every slot, not five separate lines.
+  const many = gearLevers({ swaps: ["Neck", "Ring1", "Ring2", "Feet", "Back"].map((s) => sw(s, 150)), restats: [] }, "haste");
+  const reit = many.filter((x) => /re-itemize/.test(x.text));
+  assert.equal(reit.length, 1, "5 swaps -> one grouped line");
+  for (const s of ["Neck", "Ring1", "Ring2", "Feet", "Back"]) assert.match(reit[0].text, new RegExp(s));  // every exact swap kept
+  assert.ok(!many.some((x) => /via Neck/.test(x.text)), "no separate per-slot swap lines");
+});
 
 test("statScore: bigger stat gains rank above smaller ones (not a flat band)", () => {
   const big = statScore(260), small = statScore(86);
