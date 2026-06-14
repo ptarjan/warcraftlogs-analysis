@@ -505,7 +505,7 @@ export function gearLevers(gf, priority, statValue = null, gemDelta = null) {
   const swaps = gf.swaps || [];
   // Cite the field-measured stat value once (so each swap line stays terse).
   const mcite = statValue && statValue.perRating > 0
-    ? ` (measured: at your item level, peers who stack ${priority} do ${Math.round(statValue.pct)}% more, n=${statValue.nHave}/${statValue.nNot})`
+    ? ` -- measured: at your item level, peers who stack ${priority} do ${Math.round(statValue.pct)}% more (n=${statValue.nHave}/${statValue.nNot})`
     : "";
   const measured = !!(statValue && statValue.perRating > 0);
   // LEGIBILITY: a low player can have 5+ priority-stat swaps. Five separate
@@ -518,14 +518,14 @@ export function gearLevers(gf, priority, statValue = null, gemDelta = null) {
     const gain = swaps.reduce((s, sw) => s + (sw.gain || 0), 0);
     const items = swaps.map((sw) => `${sw.slot} ${wowheadItem(sw.fromId, sw.fromName)}→${wowheadItem(sw.toId, sw.toName)}`).join(", ");
     out.push(finding("Gear", { impact: total, label: `~${Math.round(total)}% ${metricUnit()}` },
-      `${PRI}: re-itemize ${swaps.length} slots toward ${priority} (+${gain} ${priority} total${measured ? mcite : " -- sim to confirm"}) -- ${items}.`,
+      `${PRI}: re-itemize ${swaps.length} slots toward ${priority} (+${gain} ${priority} total${measured ? "" : " -- sim to confirm"})${measured ? mcite : ""} -- ${items}.`,
       measured ? "measured" : "est"));
   } else {
     for (const sw of swaps) {
       const from = sourceText(sw.source, sw.instance, sw.dropChance);
       const mv = statValueScore(sw.gain, statValue);
       out.push(finding("Gear", mv || statScore(sw.gain),
-        `${PRI} via ${sw.slot}: replace ${wowheadItem(sw.fromId, sw.fromName)} with ${wowheadItem(sw.toId, sw.toName)} (+${sw.gain} ${priority}${from}${mv ? mcite : " -- sim to confirm"}).`,
+        `${PRI} via ${sw.slot}: replace ${wowheadItem(sw.fromId, sw.fromName)} with ${wowheadItem(sw.toId, sw.toName)} (+${sw.gain} ${priority}${from}${mv ? "" : " -- sim to confirm"})${mv ? mcite : ""}.`,
         mv ? "measured" : "est"));
     }
   }
