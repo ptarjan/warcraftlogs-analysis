@@ -192,8 +192,11 @@ async function aggregateExecution(name, server, region, difficulty, className, s
     totalExcess: med("lostPerMin"),
     overshootExcess: med("overshootMs"),
     activePct: activePcts.length ? median(activePcts) : null,
+    // Name only the WORST few -- a list of every affected boss isn't actionable
+    // (and when it's nearly all of them, it's a global habit, said once below).
     worstRange: rangeBosses
       .filter(([d, , kills]) => d > 1.5 && kills >= 2)
+      .slice(0, 3)
       .map(([, b, kills]) => `${b} (${kills} kills)`),
   };
 }
