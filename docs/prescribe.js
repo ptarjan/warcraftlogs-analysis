@@ -7,7 +7,7 @@
 // need its own peer aggregates, then sorts + splits + renders.
 import {
   ENCHANTABLE_SLOTS, DIFFICULTY, characterZone, characterEncounter, playerMetrics,
-  collectPeers, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry, bestRank,
+  ilvlPeers, PEER_SAMPLE, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry, bestRank,
   DPS, INFO, finding, fieldDelta, metricUnit,
 } from "./core.js";
 import { timelineFindings } from "./timeline.js";
@@ -44,15 +44,15 @@ export function pickCurrentKill(kills, band = 1) {
     .reduce((a, b) => ((b.startTime || 0) > (a.startTime || 0) ? b : a));
 }
 
-async function fieldGearConsumables(encounterId, difficulty, className, specName, targetIlvl, priority = "crit", n = 10) {
+async function fieldGearConsumables(name, server, region, encounter, difficulty, className, specName, priority = "crit") {
   const enchBySlot = {};   // slot -> Map(name -> count)
   const trinkets = new Map(), flasks = new Map(), foods = new Map(), potions = new Map(), augRunes = new Map(), oils = new Map();
   const guids = new Map(); // flask/food name -> spell guid (for Wowhead links)
   const statPcts = [];
-  // Collect ilvl-matched candidates, then fetch each peer's gear/buffs/stats
-  // concurrently (bounded) instead of one slow peer at a time.
-  const cands = await collectPeers({ encounters: encounterId, difficulty, className, specName,
-    limit: n + 3, pages: 7, ilvl: targetIlvl, window: 2 });
+  // The ilvl-matched field, via the shared core.ilvlPeers (same set overview /
+  // timeline / rotation use -- one fetch shared, not a divergent copy). Then fetch
+  // each peer's gear/buffs/stats concurrently (bounded).
+  const cands = await ilvlPeers(name, server, region, encounter, difficulty, className, specName);
   const peers = (await mapLimit(cands, 5, async (r) => {
     const code = r.report.code, fight = r.report.fightID;
     const m = await playerMetrics(code, fight, r.name, specName, className);
@@ -60,7 +60,7 @@ async function fieldGearConsumables(encounterId, difficulty, className, specName
     const bf = await buffUptimes(code, fight, m.sourceID);
     const s = await secondaryStats(code, fight, m.sourceID, className);
     return { m, bf, s };
-  })).filter(Boolean).slice(0, n);
+  })).filter(Boolean).slice(0, PEER_SAMPLE);
 
   for (const { m, bf, s } of peers) {
     for (const g of m.gear) {
@@ -600,7 +600,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   } catch (e) { skipped.push("your gear/consumables"); }
 
   const field = await soft("the peer field (consumables/enchants/stat gap)",
-    fieldGearConsumables(gearBoss.encounter.id, difficulty, className, specName, curIlvl, priority));
+    fieldGearConsumables(name, server, region, gearBoss.encounter, difficulty, className, specName, priority));
   const execd = await soft("execution timeline",
     aggregateExecution(name, server, region, difficulty, className, specName, ranks));
   const gf = await soft("gear audit",

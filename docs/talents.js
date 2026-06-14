@@ -10,7 +10,7 @@
 // node `id`, and WCL `id` === Raidbots entry `id`, which carries the real name +
 // spellId. We match the spec by CombatantInfo.specID === Raidbots specId.
 import { spellTooltip } from "./wcl.js";
-import { reportCore, playerMetrics, collectPeers, mapLimit, f, bestKill, DPS, finding } from "./core.js";
+import { reportCore, playerMetrics, topField, mapLimit, f, bestKill, DPS, finding } from "./core.js";
 import { wowheadSpell } from "./links.js";
 
 const TALENTS_URL = "https://www.raidbots.com/static/data/live/talents.json";
@@ -162,7 +162,7 @@ async function loadout(code, fight, sourceId) {
 }
 
 async function fieldLoadouts(encounterId, difficulty, className, specName, n = 10) {
-  const cands = await collectPeers({ encounters: encounterId, difficulty, className, specName, limit: n + 3, pages: 4 });
+  const cands = await topField(className, specName, difficulty, encounterId, n + 3);
   const outs = await mapLimit(cands, 5, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
     const lo = m ? await loadout(r.report.code, r.report.fightID, m.sourceID) : null;

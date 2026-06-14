@@ -63,18 +63,24 @@ test("bestRank returns null for no ranks", () => {
   assert.equal(bestRank(null), null);
 });
 
-// STRUCTURAL INVARIANT: the overview and timeline comparisons must select their
-// ilvl-matched peers through the ONE shared core.ilvlPeers -- never their own
-// collectPeers call. Two separate selections drift apart (different ilvl/window)
-// and stop deduping, which is exactly the redundant-fetch bug we removed. This
-// test makes reintroducing it fail CI, not just review.
-test("overview & timeline pick ilvl-matched peers only via the shared core.ilvlPeers", async () => {
-  const { readFileSync } = await import("node:fs");
+// STRUCTURAL INVARIANT (the whole class of bug, not two files): an analysis
+// module must NEVER build its own peer/field selection (collectPeers) or raw
+// query (gql). Those live ONCE in core, behind named selectors (ilvlPeers for the
+// ilvl-matched field, topField for the top-DPS field) and fetchers. Two modules
+// that build the "same" selection inline drift apart (different ilvl/window/pages)
+// and stop deduping -- a pile of redundant fetches. Forcing everything through
+// the named core functions makes that impossible: same need -> same function ->
+// fetches coalesce. This test fails CI the moment a module reaches for the raw
+// primitives, so a future analysis can't reintroduce the divergence.
+test("analysis modules select peers/field + fetch ONLY via named core functions", async () => {
+  const { readFileSync, readdirSync } = await import("node:fs");
   const { fileURLToPath } = await import("node:url");
   const dir = fileURLToPath(new URL("../docs/", import.meta.url));
-  for (const file of ["overview.js", "timeline.js"]) {
-    const src = readFileSync(dir + file, "utf8");
-    assert.match(src, /\bilvlPeers\(/, `${file} must select peers via core.ilvlPeers`);
-    assert.doesNotMatch(src, /\bcollectPeers\s*\(/, `${file} must NOT call collectPeers directly (route through ilvlPeers)`);
+  const DATA_LAYER = new Set(["core.js", "wcl.js"]); // these own the primitives
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".js") && !DATA_LAYER.has(f))) {
+    const src = readFileSync(dir + file, "utf8")
+      .split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n"); // ignore comments
+    assert.doesNotMatch(src, /\bcollectPeers\s*\(/, `${file}: select peers via core.ilvlPeers/topField, never collectPeers`);
+    assert.doesNotMatch(src, /\bgql\s*\(/, `${file}: fetch via named core functions, never raw gql`);
   }
 });

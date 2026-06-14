@@ -416,7 +416,10 @@ export async function collectPeers({
 // metric they map over the SAME candidates (playerMetrics vs fightMetrics+events),
 // and those fetches coalesce. Returns the candidate ranking entries; PEER_SAMPLE
 // is how many each caller keeps after dropping the ones that fail to load.
-export const PEER_SAMPLE = 6;
+// Because the SAME set now serves overview/timeline/rotation/prescribe (one fetch
+// shared, not four divergent ones), we can afford a bigger sample than any single
+// section used before -- better medians for fewer total requests.
+export const PEER_SAMPLE = 10;
 export async function ilvlPeers(name, server, region, encounter, difficulty, className, specName) {
   const er = await characterEncounter(name, server, region, encounter.id, difficulty);
   const ranks = (er && er.ranks) || [];
@@ -424,6 +427,15 @@ export async function ilvlPeers(name, server, region, encounter, difficulty, cla
   const ilvl = Math.max(...ranks.map((r) => r.bracketData || 0)) || 0;
   return collectPeers({ encounters: encounter.id, difficulty, className, specName,
     limit: PEER_SAMPLE + 3, pages: 7, ilvl, window: 3 });
+}
+
+// THE top-DPS field for a spec (the META -- NOT ilvl-matched; that's ilvlPeers).
+// The single selector gear and talents share, so they pick the same players and
+// their fetches dedupe. Candidate order is deterministic (top rankings), so a
+// caller taking fewer players gets a prefix of a caller taking more -- the
+// overlap still coalesces.
+export async function topField(className, specName, difficulty, encounters, limit) {
+  return collectPeers({ encounters, difficulty, className, specName, limit, pages: 4 });
 }
 
 // --------------------------------------------------------------------- //

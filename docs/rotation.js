@@ -8,7 +8,7 @@
 //     how often you land them vs the field
 //   - your opener sequence vs the field's
 import {
-  playerMetrics, collectPeers, mapLimit, median, bestKill,
+  playerMetrics, ilvlPeers, mapLimit, median, bestKill,
   reportCore, fightWindow, fightEvents, paginateEvents, f, DPS, finding, eventTable, runIsHealer,
 } from "./core.js";
 import { talentedAbilities } from "./talents.js";
@@ -237,12 +237,10 @@ export async function rotationFindings(name, server, region, className, specName
   const top = [...you.hits].sort((a, b) => b.procBig - a.procBig)[0];
   const isReal = top.procBig >= 2;            // outsized NON-crit cluster = real proc
 
-  // Pull the ilvl-matched field once: it feeds the proc rate, the opener, AND the
-  // ability-usage comparison (the field comparison is the whole point, so we
-  // fetch peers regardless of whether the proc turned out real).
-  const myIlvl = best.ilvl || 0;
-  const cands = await collectPeers({ encounters: boss.id, difficulty, className, specName,
-    limit: 8, pages: 4, ilvl: myIlvl, window: 4 });
+  // The ilvl-matched field, via the shared core.ilvlPeers (same set overview /
+  // timeline / prescribe use, so the fetches dedupe). It feeds the proc rate, the
+  // opener, AND the ability-usage comparison.
+  const cands = await ilvlPeers(name, server, region, boss, difficulty, className, specName);
   const peers = (await mapLimit(cands, 4, async (r) => {
     try {
       return await analyzeKill(r.name, r.report.code, r.report.fightID, specName, className,

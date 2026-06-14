@@ -3,14 +3,15 @@
 // Wowhead proxy) and compares slot-by-slot to the field. Ported from gear.py.
 import { itemTooltip, itemXml, zoneTooltip, npcTooltip } from "./wcl.js";
 import {
-  playerMetrics, collectPeers, f, mapLimit, topEntry, bestKill, DPS, finding, metricUnit,
+  playerMetrics, topField, f, mapLimit, topEntry, bestKill, DPS, finding, metricUnit,
 } from "./core.js";
 import { wowheadItem } from "./links.js";
 
-// Collect up to n unique (by name+server) top-ranked candidates across the
-// given encounters, so the heavy per-peer fetches can run concurrently.
+// Up to n unique top-ranked candidates across the given encounters -- via the
+// shared core.topField so gear and talents select the same players (their
+// per-peer fetches dedupe).
 async function fieldCandidates(className, specName, difficulty, encounters, n) {
-  return collectPeers({ encounters, difficulty, className, specName, limit: n, pages: 2 });
+  return topField(className, specName, difficulty, encounters, n);
 }
 
 const SLOT = {
