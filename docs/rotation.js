@@ -536,11 +536,15 @@ export function castable(name, talent) {
 // empowerment proc (outsized NON-crit hits) you under-use vs the field -- an
 // actionable list item. If big hits are merely crits, proc.isReal is false and
 // NOTHING is recommended (a "big hit" is usually a crit, not a missed button).
-export async function rotationFindings(name, server, region, className, specName, difficulty) {
-  // Analyze your most-recent current-gear kill (bestKill -- shared with gear /
-  // talents / topparse, so the fetch is cached), not whatever boss you've farmed
-  // most. Recent = current play, and a single full kill has plenty of casts.
-  const best = await bestKill(name, server, region, difficulty);
+export async function rotationFindings(name, server, region, className, specName, difficulty, killOverride = null) {
+  // Which kill we analyze. The rotation CARD analyzes your most-recent current-gear
+  // kill (bestKill -- shared with gear/talents/topparse, so the fetch is cached).
+  // PRESCRIBE passes its benchmark (median-parse) kill via killOverride, so the
+  // rotation levers are measured on the SAME kill the gap is sized on -- otherwise a
+  // player analyzed on their BEST kill (where they play well) shows tiny levers while
+  // the gap, measured on a median kill, is huge, and the difference falls into the
+  // residual. killOverride must carry { code, fight, encounter } (bestKill's shape).
+  const best = killOverride || await bestKill(name, server, region, difficulty);
   if (!best) return null;
   const boss = best.encounter;
   const you = await analyzeKill(name, best.code, best.fight, specName, className, { topN: 5 });

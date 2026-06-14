@@ -916,7 +916,14 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // rot/tp are hoisted so the synthesis below can quote their MEASURED numbers.
   // Each may be unavailable (private logs, no peers) -- treat that as no findings.
   let rot = null, tp = null, tal = null;
-  try { rot = await rotationFindings(name, server, region, className, specName, difficulty); }
+  // Analyze the rotation on the SAME (benchmark, median-parse) kill the gap is sized
+  // on -- NOT bestKill. Otherwise the levers come from a kill where you played well
+  // (small gaps) while the gap is measured on a median kill (huge), and the controllable
+  // difference -- the wrong buttons you actually pressed that kill -- vanishes into the
+  // residual. (Validated: a Feral read 12% castGap + no under-use on his best kill, but
+  // 33% castGap + Ferocious Bite 3.2 vs 10.1/min on the benchmark kill.)
+  const benchKill = (code && fight) ? { code, fight, encounter: gearBoss && gearBoss.encounter } : null;
+  try { rot = await rotationFindings(name, server, region, className, specName, difficulty, benchKill); }
   catch (e) { skipped.push("rotation"); }
   try { tp = await topParseFindings(name, server, region, difficulty, className, specName); }
   catch (e) { skipped.push("top-parse comparison"); }
