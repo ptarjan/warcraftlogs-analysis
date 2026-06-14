@@ -113,8 +113,12 @@ export async function timelineFindings(name, server, region, encounter, difficul
   // The ilvl-matched field -- via the shared core.ilvlPeers, so this can't drift
   // from overview's selection and start double-fetching the same peers.
   const peers = await peerMetricsFor(name, server, region, encounter, difficulty, className, specName);
+  // No ilvl-matched peers -> nothing to compare against. Skip the boss (like the
+  // overview's "no item-level-matched peers found") instead of printing NaN deltas
+  // and poisoning the cross-boss aggregate with them.
+  if (!peers.length) return null;
   const ymed = (k) => median(yourFms.map((x) => x[k]));
-  const pmed = (k) => (peers.length ? median(peers.map((x) => x[k])) : NaN);
+  const pmed = (k) => median(peers.map((x) => x[k]));
   const keys = ["lostPerMin", "rangeLostPerMin", "pressLostPerMin", "autoDownPct", "overshootMs"];
   const you = {}, peer = {};
   for (const k of keys) { you[k] = ymed(k); peer[k] = pmed(k); }
