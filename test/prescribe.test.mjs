@@ -139,6 +139,15 @@ test("gemLever: actionable when your primary gem differs from the field's", () =
   assert.match(g.text, /item=999/);                     // links the field's gem
 });
 
+test("gemLever: wrong-primary w/ MATCHING variety doesn't cite the contradictory count", () => {
+  // you run 2 colors, field runs 2 -- same variety, just a different main gem.
+  const gf = { gems: { yourGems: new Map([[111, 2], [222, 1]]), yourVariety: 2, fieldTop: [[999, 40]], fieldVarietyMed: 2 } };
+  const [g] = gemLever(gf);
+  assert.match(g.text, /^GEMS:/);
+  assert.doesNotMatch(g.text, /2 gem colors vs the field's 2/);  // the nonsensical line
+  assert.doesNotMatch(g.text, /splitting stats/);                // not an over-variety case
+});
+
 test("gemLever: flags over-variety even when your top gem matches", () => {
   const gf = { gems: { yourGems: new Map([[999, 2], [111, 1], [222, 1]]), yourVariety: 3, fieldTop: [[999, 40]], fieldVarietyMed: 1 } };
   const [g] = gemLever(gf);

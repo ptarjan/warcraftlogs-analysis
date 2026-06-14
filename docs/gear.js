@@ -409,11 +409,13 @@ export function gemLever(gf) {
   const wrongPrimary = yourTopId !== fieldTopId;
   if (!overVariety && !wrongPrimary) return [];           // your gems already match
   const link = wowheadItem(fieldTopId, "the field's primary gem");
-  const variety = gi.fieldVarietyMed != null
-    ? ` You run ${gi.yourVariety} gem color(s) vs the field's ${gi.fieldVarietyMed}${overVariety ? " -- you're splitting stats instead of stacking" : ""}.`
-    : "";
-  return [finding("Gear", DPS(1, 2),
-    `GEMS: re-socket toward ${link} (what most of the field runs).${variety} Gems are the cheapest stat change there is.`)];
+  // Only mention the gem-color count when you actually split MORE than the field
+  // (the reason to consolidate). When the count MATCHES, citing it reads as a
+  // contradiction ("re-socket... you run 2 vs 2"), so lead with the real reason.
+  const msg = overVariety
+    ? `GEMS: you run ${gi.yourVariety} gem colors vs the field's ${gi.fieldVarietyMed} -- you're splitting stats instead of stacking. Consolidate toward ${link}. Gems are the cheapest stat change there is.`
+    : `GEMS: your main gem isn't the one most of the field runs -- re-socket toward ${link}. Gems are the cheapest stat change there is.`;
+  return [finding("Gear", DPS(1, 2), msg)];
 }
 
 // All gear levers as findings: priority-stat drop swaps, re-stats, embellishment.
