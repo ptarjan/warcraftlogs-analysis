@@ -247,6 +247,9 @@ test("remainderKind: a big remainder for an ELITE player is the gap to top parse
   // at their ilvl (comp + optimal pulls), NOT a personal playstyle deficit.
   assert.equal(remainderKind(86, { elite: true }), "elite");
   assert.equal(remainderKind(86, { elite: false }), "playstyle");
+  // A healer's big remainder is HPS-is-damage-bound, not personal playstyle.
+  assert.equal(remainderKind(86, { healer: true }), "healer");
+  assert.equal(remainderKind(86, { elite: true, healer: true }), "elite");   // elite wins (selection bias applies to healers too)
   // Small remainders are unaffected by elite -- still execution/variance.
   assert.equal(remainderKind(4, { elite: true, underPress: true }), "underpress");
   assert.equal(remainderKind(4, { elite: true, underPress: false }), "small");

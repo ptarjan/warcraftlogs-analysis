@@ -8,7 +8,7 @@
 import {
   ENCHANTABLE_SLOTS, DIFFICULTY, characterZone, characterEncounter, playerMetrics,
   ilvlPeers, PEER_SAMPLE, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry, bestRank, bestKill,
-  DPS, INFO, finding, fieldDelta, metricUnit, throughputWord,
+  DPS, INFO, finding, fieldDelta, metricUnit, throughputWord, runIsHealer,
 } from "./core.js";
 import { timelineFindings } from "./timeline.js";
 import { gearFindings, gearLevers, itemInstance, sourceText } from "./gear.js";
@@ -348,13 +348,17 @@ export function executionLevers(execd, rot, peerGapPct = null, activePct = null)
       ? "gaps between GCDs (partly input latency -- see the INPUT LATENCY item)."
       : "not latency (yours matches theirs), just gaps between GCDs.";
     out.push(finding("Execution", DPS(pct),
-      `PRESS FASTER (every boss): you idle ~${f(execd.pressExcess, 1)}s/min MORE than peers while IN melee range -- ${cause}${cite} Always queue your next ability so a GCD never sits empty.`, "measured"));
+      `PRESS FASTER (every boss): you idle ~${f(execd.pressExcess, 1)}s/min MORE than peers while in range and not moving -- ${cause}${cite} Always queue your next ability so a GCD never sits empty.`, "measured"));
   }
   out.push(...latencyLever(execd));
   if (execd.rangeExcess >= 1.0 || execd.worstRange.length) {
     const where = execd.worstRange.length ? " Worst on: " + execd.worstRange.join(", ") + "." : "";
+    // Class-agnostic: this is GCD lost to movement / being out of range, which is
+    // a melee uptime problem AND a caster/healer one. Avoid melee-only language
+    // ("out of melee", "gap-closers to stay on target") -- it's wrong for a ranged
+    // healer, whom this lever also fires for.
     out.push(finding("Execution", DPS(Math.round(Math.max(execd.rangeExcess, 0.1) / 60 * 100)),
-      `UPTIME on specific fights: you're out of melee ~${f(execd.rangeExcess, 1)}s/min more than peers (intermissions excluded).${where} Pre-position and use your mobility / gap-closers to stay on target through mechanics.`, "measured"));
+      `MOVEMENT uptime on specific fights: you lose ~${f(execd.rangeExcess, 1)}s/min of casting to moving / being out of range more than peers (intermissions excluded).${where} Pre-position and cut avoidable movement so your GCD keeps rolling through mechanics.`, "measured"));
   }
   return out;
 }
@@ -484,13 +488,18 @@ export function reconcileImpacts(impacts, target) {
 //                  or rotation they're getting wrong. NEVER tell a 94th-%ile player
 //                  the gap is "how you play the gear worse" -- it contradicts their
 //                  own percentile and isn't actionable.
-//  - "playstyle":  a big remainder for a NON-elite player -- genuinely how they play
-//                  the same gear the field plays (the tool's whole point).
+//  - "healer":     a big remainder on an HPS run -- HPS is bounded by the damage the
+//                  raid TAKES and your healing assignment, so the gap to top healers
+//                  is mostly the encounter + who else healed + overheal, NOT "how you
+//                  play". Don't frame a healer's HPS gap as a personal playstyle deficit.
+//  - "playstyle":  a big remainder for a NON-elite DAMAGE player -- genuinely how they
+//                  play the same gear the field plays (the tool's whole point).
 //  - "underpress": a small remainder with a real cast deficit -- GCD uptime.
 //  - "small":      a small remainder, no signal -- sim-only tuning + variance.
-// Pure -> unit-testable; the caller turns the kind into prose.
-export function remainderKind(residual, { elite = false, underPress = false } = {}) {
-  if (residual >= 8) return elite ? "elite" : "playstyle";
+// Pure -> unit-testable; the caller turns the kind into prose. Precedence: elite
+// (selection bias, applies to healers too) before healer before playstyle.
+export function remainderKind(residual, { elite = false, healer = false, underPress = false } = {}) {
+  if (residual >= 8) return elite ? "elite" : healer ? "healer" : "playstyle";
   if (underPress) return "underpress";
   return "small";
 }
@@ -554,6 +563,8 @@ function renderPrescription(log, d) {
       ? ". You're already ahead of your item-level bracket -- the top parses are the target."
       : isEliteParse(d.medP)
       ? ` -- but the field here is the TOP parses at your item level, and at your ${d.medP}th percentile most of that gap is raid comp + execution on optimal pulls, not a setup you're getting wrong. The fixes below are the concrete part you control.`
+      : runIsHealer()
+      ? ` -- but ${metricUnit()} is capped by the damage your raid takes and your healing assignment, so most of that gap is the encounter and healer comp, not ${metricUnit()} you can simply add. The fixes below are the concrete part you control.`
       : ` -- and they have your exact item level, so that ${peerGap}% is ${metricUnit()} you could realistically gain. The fixes below are sized to add up to it.`;
     log(`Measured on ${gearBossLink}: you (ilvl ~${d.curIlvl}) do ${k(you.dps)} ${metricUnit()} -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
         (topGap != null ? `, ${topGap}% behind the top parses` : "") + tail);
@@ -651,13 +662,19 @@ function renderPrescription(log, d) {
     // with a real cast deficit is credibly "press a bit faster".
     const underPress = (rot && rot.castGap && rot.castGap.field > rot.castGap.you)
       || (execd && execd.pressExcess >= 1 && !outpaces);
-    const kind = remainderKind(residual, { elite: isEliteParse(d.medP), underPress });
+    const kind = remainderKind(residual, { elite: isEliteParse(d.medP), healer: runIsHealer(), underPress });
     let rtext;
     if (kind === "elite") {
       // Already top-decile: the remainder is the distance to the BEST parses at your
       // ilvl, not a setup/rotation you're getting wrong. Say so -- don't manufacture
       // an 86%-of-your-DPS "playstyle" problem for a 94th-%ile player.
       rtext = `GAP TO TOP PARSES (~${r}%): you already parse ${d.medP}th percentile -- the "field" here is the BEST players at your item level, and this is the distance to them. The concrete levers above are small because there isn't much on your character to fix; the rest is raid comp + executing on optimal pulls (lust/cooldown windows, perfect target swaps), not gear or a rotation you're getting wrong.`;
+    } else if (kind === "healer") {
+      // HPS is bounded by the damage the raid TAKES and your assignment -- you can't
+      // heal damage that didn't happen. So a big HPS remainder is mostly the encounter
+      // (how much went out), healer comp, and overheal, NOT a personal playstyle gap.
+      // Don't tell a healer 100%+ of their gap is "how you play the gear worse".
+      rtext = `HEALING IS DAMAGE-BOUND (~${r}%): HPS measures healing DONE, which is capped by the damage your raid takes and your healing assignment -- you can't out-heal damage that didn't happen. Most of this gap is the encounter (how much went out), the healer comp, and overheal differences, not how you play. The concrete levers above are what you actually control; chase effective throughput on a fixed kill, not the raw HPS number.`;
     } else if (kind === "playstyle") {
       // A big remainder at matched ilvl is NOT a gear/sim gap (sims model gear, worth
       // a few % here) and NOT "press faster" -- it's PLAYSTYLE. The concrete pieces
