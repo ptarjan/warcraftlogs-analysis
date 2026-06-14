@@ -17,7 +17,7 @@
 // rule is actually about.
 import {
   playerMetrics, topRankings, buffUptimes, bossDebuffs, median, f, mapLimit, bestKill,
-  DPS, COMP, finding, runIsHealer,
+  DPS, COMP, INFO, finding, runIsHealer, metricUnit,
 } from "./core.js";
 import { wowheadSpell } from "./links.js";
 
@@ -25,21 +25,25 @@ const TOPN = 6; // how many top-ranked kills to learn routing/potions from
 
 // The canonical raid-wide DAMAGE buffs/debuffs and who provides each. `on`:
 // "self" = a buff on the player, "boss" = a debuff on the enemy (so it needs the
-// boss's debuff table, not your buffs). `est` is a rough DPS-% used only to size
-// the action-list item. Match by name keyword (like flask/food), tolerant of the
-// rank/variant suffixes WoW buff names carry.
+// boss's debuff table, not your buffs). Match by name keyword (like flask/food),
+// tolerant of the rank/variant suffixes WoW buff names carry.
+// NO `est` here on purpose: the MAGNITUDE of a comp lever is MEASURED from the field
+// (peers who had the amp vs not, on the run metric -- compDeltas), never a curated
+// guess. The curated part is only WHICH auras are throughput amps + who brings them
+// (you can't tell from a log alone that Chaos Brand adds damage); when the field gives
+// no with/without split to measure, the lever is shown UNSIZED, not guessed.
 // `spell` is the Wowhead spell id for a hover-tooltip link (verified against real
 // report buff guids). Stable, expansion-level utility -- fine to carry here.
 export const RAID_DAMAGE = [
-  { key: "lust", label: "Bloodlust/Heroism", spell: 2825, who: "a Shaman, Mage, Hunter, or Evoker", effect: "+30% haste burst", on: "self", est: 4, match: /bloodlust|heroism|time warp|primal rage|fury of the aspects|ancient hysteria|drums of/i },
-  { key: "ai", label: "Arcane Intellect", spell: 1459, who: "a Mage", effect: "+intellect", on: "self", est: 2, match: /arcane intellect/i },
-  { key: "battleshout", label: "Battle Shout", spell: 6673, who: "a Warrior", effect: "+attack power", on: "self", est: 2, match: /battle shout/i },
-  { key: "motw", label: "Mark of the Wild", spell: 1126, who: "a Druid", effect: "+versatility", on: "self", est: 2, match: /mark of the wild/i },
-  { key: "skyfury", label: "Skyfury", spell: 462854, who: "a Shaman", effect: "+mastery & attack power", on: "self", est: 2, match: /skyfury/i },
-  { key: "pi", label: "Power Infusion", spell: 10060, who: "a Priest (cast on you)", effect: "+25% haste burst", on: "self", est: 6, match: /power infusion/i },
-  { key: "aug", label: "Augmentation (Ebon Might / Prescience)", spell: 395152, who: "an Augmentation Evoker", effect: "re-attributed throughput", on: "self", est: 8, match: /ebon might|prescience|shifting sands/i },
-  { key: "chaosbrand", label: "Chaos Brand", spell: 1490, who: "a Demon Hunter", effect: "+5% magic damage taken", on: "boss", est: 5, match: /chaos brand/i },
-  { key: "mystictouch", label: "Mystic Touch", spell: 113746, who: "a Monk", effect: "+5% physical damage taken", on: "boss", est: 5, match: /mystic touch/i },
+  { key: "lust", label: "Bloodlust/Heroism", spell: 2825, who: "a Shaman, Mage, Hunter, or Evoker", effect: "+30% haste burst", on: "self", match: /bloodlust|heroism|time warp|primal rage|fury of the aspects|ancient hysteria|drums of/i },
+  { key: "ai", label: "Arcane Intellect", spell: 1459, who: "a Mage", effect: "+intellect", on: "self", match: /arcane intellect/i },
+  { key: "battleshout", label: "Battle Shout", spell: 6673, who: "a Warrior", effect: "+attack power", on: "self", match: /battle shout/i },
+  { key: "motw", label: "Mark of the Wild", spell: 1126, who: "a Druid", effect: "+versatility", on: "self", match: /mark of the wild/i },
+  { key: "skyfury", label: "Skyfury", spell: 462854, who: "a Shaman", effect: "+mastery & attack power", on: "self", match: /skyfury/i },
+  { key: "pi", label: "Power Infusion", spell: 10060, who: "a Priest (cast on you)", effect: "+25% haste burst", on: "self", match: /power infusion/i },
+  { key: "aug", label: "Augmentation (Ebon Might / Prescience)", spell: 395152, who: "an Augmentation Evoker", effect: "re-attributed throughput", on: "self", match: /ebon might|prescience|shifting sands/i },
+  { key: "chaosbrand", label: "Chaos Brand", spell: 1490, who: "a Demon Hunter", effect: "+5% magic damage taken", on: "boss", match: /chaos brand/i },
+  { key: "mystictouch", label: "Mystic Touch", spell: 113746, who: "a Monk", effect: "+5% physical damage taken", on: "boss", match: /mystic touch/i },
 ];
 
 // --- pure, unit-tested helpers ----------------------------------------------
@@ -177,14 +181,23 @@ export function topParseLevers(tp, compDeltas = null) {
   if (!tp) return [];
   const out = [];
   // Raid-comp amps missing from your kill (a buff on you / debuff on the boss).
-  // You can't press these -- it's who's in the raid. Sized from the field when we
-  // measured it (peers who had the amp vs not -- a confounded floor, capped so a
-  // raid-quality outlier can't swamp the gap reconciliation) else the curated value.
+  // You can't press these -- it's who's in the raid. The MAGNITUDE is MEASURED from
+  // the field (peers who had the amp vs not, on the run metric -- compDeltas), a
+  // confounded floor; we NEVER fall back to a curated guess. When the field gives no
+  // with/without split (a near-universal amp, or a boss debuff we don't sample per
+  // peer), the lever is shown UNSIZED (INFO) -- an honest roster note that claims 0
+  // of the gap, rather than a fabricated %. (compDeltas only covers self-buffs today;
+  // measuring boss debuffs per peer is a follow-up.)
   for (const e of (tp.comp ? tp.comp.missing : [])) {
     const cd = compDeltas && compDeltas[e.key];
-    const pct = cd ? Math.min(e.est + 4, Math.max(1, Math.round(cd.pct))) : e.est;
-    const cite = cd ? ` (measured: peers with it do ${Math.round(cd.pct)}% more, n=${cd.nHave}/${cd.nNot})` : "";
-    out.push(finding("Comp", COMP(pct), `Missing ${wowheadSpell(e.spell, e.label)} (${e.effect}) — bring ${e.who}.${cite}`, cd ? "measured" : "est"));
+    const link = wowheadSpell(e.spell, e.label);
+    if (cd) {
+      out.push(finding("Comp", COMP(Math.max(1, Math.round(cd.pct))),
+        `Missing ${link} (${e.effect}) — bring ${e.who}. (measured: peers with it do ${Math.round(cd.pct)}% more ${metricUnit()}, n=${cd.nHave}/${cd.nNot}).`, "measured"));
+    } else {
+      out.push(finding("Comp", INFO,
+        `Missing ${link} (${e.effect}) — bring ${e.who}. (Roster gap; this field gave no with/without split to size it from, so it's unmeasured — not your character to fix.)`, "measured"));
+    }
   }
   // Damage routing: measured extra cleave/funnel the top parses get. This is a
   // DPS-only lever -- it compares where you put your DAMAGE. For a healer it would

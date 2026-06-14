@@ -68,6 +68,22 @@ test("potionCount keyword-matches potion casts (case-insensitive)", () => {
   assert.equal(potionCount({}), 0);
 });
 
+test("topParseLevers: comp magnitude is MEASURED from the field, never a curated estimate", () => {
+  const missing = [RAID_DAMAGE.find((e) => e.key === "pi"), RAID_DAMAGE.find((e) => e.key === "aug")];
+  const tp = { comp: { missing }, routing: null, potions: null };
+  // With a measured field delta -> sized from it (not a hardcoded est), basis measured.
+  const sized = topParseLevers(tp, { pi: { pct: 11, nHave: 5, nNot: 6 } });
+  const piLev = sized.find((r) => /Power Infusion/.test(r.text));
+  assert.equal(piLev.impact, 11, "magnitude comes from the field delta");
+  assert.equal(piLev.basis, "measured");
+  assert.match(piLev.text, /measured: peers with it do 11% more/);
+  // No split to measure (aug) -> UNSIZED (INFO, 0 impact), NOT a fabricated %.
+  const augLev = sized.find((r) => /Augmentation/.test(r.text));
+  assert.equal(augLev.impact, 0, "unmeasurable comp claims 0 of the gap, not a guess");
+  assert.equal(augLev.label, "info");
+  assert.match(augLev.text, /unmeasured|no with\/without split/i);
+});
+
 test("topParseLevers: damage-ROUTING lever is suppressed for healers (HPS run)", () => {
   // A damage-target-distribution lever told a Mistweaver to "cleave/funnel instead
   // of tunneling the boss" to raise HPS -- nonsense for a healer. It must fire for
