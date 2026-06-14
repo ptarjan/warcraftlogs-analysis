@@ -253,11 +253,23 @@ const _shardFile = (id) => _diskPath.join(_diskDir, `${id}.json`);
 // test suite point the cache at a temp file via WCL_GQL_CACHE_FILE.
 const diskEnabled = () => IS_NODE && typeof process !== "undefined" && process.env.WCL_GQL_CACHE === "1";
 
-// Cache-only mode (Node): a cache MISS throws instead of hitting the network, so a
-// run can NEVER spend WCL points. Used to analyze only fully-cached characters
-// (`WCL_CACHE_ONLY=1`) without risking the shared hourly budget.
-const cacheOnly = () => IS_NODE && typeof process !== "undefined" && process.env.WCL_CACHE_ONLY === "1";
-export class CacheMiss extends Error { constructor(q) { super("cache-only: not cached (would spend WCL points)"); this.name = "CacheMiss"; this.q = q; } }
+// SINGLE-WRITER / opt-in fetching (Node). The shared hourly WCL point budget is the
+// scarce resource, and the disaster cascaded because ANY process could spend it
+// (parallel runs, stuck old processes, the loop -- all at once). So under Node,
+// hitting the network is OPT-IN: a caller must set WCL_ALLOW_FETCH=1 to permit it.
+// By DEFAULT a cache MISS throws CacheMiss instead of fetching -- background, agent,
+// and parallel runs can never accidentally drain the budget; only the roster loop or
+// an explicit `--allow-fetch` fetches. WCL_CACHE_ONLY=1 forces read-only even when
+// fetching is allowed (a hard override). The BROWSER is unaffected (not IS_NODE): the
+// user spends their OWN token there and the app must fetch.
+const cacheOnly = () => IS_NODE && typeof process !== "undefined" &&
+  (process.env.WCL_CACHE_ONLY === "1" || process.env.WCL_ALLOW_FETCH !== "1");
+export class CacheMiss extends Error {
+  constructor(q) {
+    super("not cached, and fetching is off (set WCL_ALLOW_FETCH=1 / pass --allow-fetch to spend WCL points)");
+    this.name = "CacheMiss"; this.q = q;
+  }
+}
 
 async function initDisk() {
   if (!diskEnabled()) return;

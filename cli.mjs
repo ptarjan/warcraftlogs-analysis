@@ -113,17 +113,26 @@ globalThis.localStorage = {
 const argv = process.argv.slice(2);
 const positional = [];
 const opt = { only: "" }; // class/spec/difficulty/priority are auto-detected unless given
+// Valueless boolean flags (must NOT consume the next arg, or they'd eat a positional).
+const BOOL_FLAGS = new Set(["allow-fetch", "cache-only"]);
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
-  if (a.startsWith("--")) opt[a.slice(2)] = argv[++i];
+  if (a.startsWith("--")) { const k = a.slice(2); opt[k] = BOOL_FLAGS.has(k) ? true : argv[++i]; }
   else positional.push(a);
 }
+// Fetching the WCL network (= spending the shared hourly point budget) is OPT-IN:
+// pass --allow-fetch to permit it; otherwise this run is cache-only and an uncached
+// query fails fast (no accidental budget spend). --cache-only forces read-only.
+// Must be set before any wcl.js call below (primeRateReset / detectContext).
+if (opt["allow-fetch"]) process.env.WCL_ALLOW_FETCH = "1";
+if (opt["cache-only"]) process.env.WCL_CACHE_ONLY = "1";
 const [name, server, region] = positional;
 if (!name || !server || !region) {
   console.error("usage: node cli.mjs <name> <server> <region> " +
     "[--class Monk] [--spec Brewmaster] [--difficulty 5] [--priority crit] " +
-    "[--only overview,timeline,gear,prescribe]\n" +
-    "(class/spec/difficulty/priority are auto-detected from your logs if omitted)");
+    "[--only overview,timeline,gear,prescribe] [--allow-fetch] [--cache-only]\n" +
+    "(class/spec/difficulty/priority are auto-detected from your logs if omitted;\n" +
+    " runs are CACHE-ONLY by default -- add --allow-fetch to pull from WCL, which spends your hourly point budget)");
   process.exit(1);
 }
 const only = opt.only ? new Set(opt.only.split(",").map((s) => s.trim())) : null;

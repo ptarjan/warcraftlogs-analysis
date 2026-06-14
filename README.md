@@ -144,14 +144,21 @@ Create a *confidential* client (or reuse one) and provide its id + secret:
 ```bash
 # credentials via env, .env, or worker/.dev.vars
 export WCL_CLIENT_ID=...  WCL_CLIENT_SECRET=...
-node cli.mjs "Hadryan" proudmoore US                 # class/spec/difficulty auto-detected
-node cli.mjs "Hadryan" proudmoore US --only prescribe
-node cli.mjs "Name" server EU --class Monk --spec Brewmaster --difficulty 4   # override detection
+node cli.mjs "Hadryan" proudmoore US --allow-fetch   # analyze (spends your hourly WCL points)
+node cli.mjs "Hadryan" proudmoore US                 # CACHE-ONLY: only what's already cached, $0
+node cli.mjs "Hadryan" proudmoore US --only prescribe --allow-fetch
+node cli.mjs "Name" server EU --class Monk --spec Brewmaster --difficulty 4 --allow-fetch
 
 # Raid progression: backtest a night of pulls from the terminal
-node progression-cli.mjs "https://www.warcraftlogs.com/reports/aBcD1234"
-node progression-cli.mjs aBcD1234 --enc 2902                 # pin a specific encounter id
+node progression-cli.mjs "https://www.warcraftlogs.com/reports/aBcD1234" --allow-fetch
+node progression-cli.mjs aBcD1234 --enc 2902 --allow-fetch    # pin a specific encounter id
 ```
+
+**Fetching is opt-in.** A run is **cache-only by default** — it never touches WCL and
+spends zero points; an uncached query just fails fast. Pass **`--allow-fetch`** to pull
+from WCL (which spends your shared hourly point budget). This is the single-writer rule:
+only the run you explicitly bless spends the budget, so background/parallel/agent runs
+can't drain it. The browser app is unaffected (it always fetches, on your own token).
 
 Class, spec, difficulty, and gear priority are **auto-detected from your logs**
 (same as the web app) — the flags only override individual fields. `cli.mjs`

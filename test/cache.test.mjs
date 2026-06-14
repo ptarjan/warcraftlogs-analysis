@@ -44,11 +44,11 @@ test("a fetched query is served from the cache on the next reload (no 2nd fetch)
 test("WCL_CACHE_ONLY: a cache miss throws instead of spending WCL points", async () => {
   const { gql, clearGqlCache, CacheMiss } = await import("../docs/wcl.js");
   clearGqlCache();
-  process.env.WCL_CACHE_ONLY = "1";
+  process.env.WCL_CACHE_ONLY = "1";   // hard override -- read-only even though setup allows fetch
   globalThis.fetch = async () => { throw new Error("cache-only must NOT hit the network"); };
   try {
     await assert.rejects(() => gql("query{ never-cached }"),
-      (e) => e instanceof CacheMiss || /cache-only/.test(e.message), "an uncached query throws CacheMiss, no fetch");
+      (e) => e instanceof CacheMiss, "an uncached query throws CacheMiss, no fetch");
     // A query already in cache still serves (no throw).
     globalThis.fetch = async () => { throw new Error("should not fetch"); };
     const { _cacheWrite } = await import("../docs/wcl.js");
@@ -57,6 +57,25 @@ test("WCL_CACHE_ONLY: a cache miss throws instead of spending WCL points", async
     assert.deepEqual(await gql("query{ already-cached }"), { ok: 1 }, "cached query served under cache-only");
   } finally {
     delete process.env.WCL_CACHE_ONLY;
+  }
+});
+
+test("fetching is OPT-IN under Node: a miss throws by default; WCL_ALLOW_FETCH permits it", async () => {
+  const { gql, clearGqlCache, CacheMiss } = await import("../docs/wcl.js");
+  const saved = process.env.WCL_ALLOW_FETCH;   // setup.mjs sets this; simulate a default (unauthorized) run
+  try {
+    clearGqlCache();
+    delete process.env.WCL_ALLOW_FETCH;
+    globalThis.fetch = async () => { throw new Error("must NOT fetch without opt-in"); };
+    await assert.rejects(() => gql("query{ optin-gate }"), (e) => e instanceof CacheMiss,
+      "default = cache-only, a miss throws (no accidental budget spend)");
+    // Opt in -> the same query is now allowed to fetch.
+    process.env.WCL_ALLOW_FETCH = "1";
+    clearGqlCache();
+    globalThis.fetch = mockFetch([TOKEN, ["/api/v2/client", { json: { data: { ok: 1 } } }]]);
+    assert.deepEqual(await gql("query{ optin-gate }"), { ok: 1 }, "WCL_ALLOW_FETCH=1 fetches");
+  } finally {
+    if (saved === undefined) delete process.env.WCL_ALLOW_FETCH; else process.env.WCL_ALLOW_FETCH = saved;
   }
 });
 

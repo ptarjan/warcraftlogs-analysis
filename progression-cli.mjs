@@ -35,13 +35,18 @@ async function main() {
   const argv = process.argv.slice(2);
   const positional = [];
   const opt = {};
+  const BOOL_FLAGS = new Set(["allow-fetch", "cache-only"]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a.startsWith("--")) opt[a.slice(2)] = argv[++i];
+    if (a.startsWith("--")) { const k = a.slice(2); opt[k] = BOOL_FLAGS.has(k) ? true : argv[++i]; }
     else positional.push(a);
   }
+  // Cache-only by default; --allow-fetch opts in to spending the WCL point budget.
+  if (opt["allow-fetch"]) process.env.WCL_ALLOW_FETCH = "1";
+  if (opt["cache-only"]) process.env.WCL_CACHE_ONLY = "1";
   if (!positional[0]) {
-    console.error('usage: node progression-cli.mjs <report-url-or-code> [--enc <encounterId>]');
+    console.error('usage: node progression-cli.mjs <report-url-or-code> [--enc <encounterId>] [--allow-fetch]\n' +
+      ' (cache-only by default -- add --allow-fetch to pull from WCL, which spends your hourly point budget)');
     process.exit(1);
   }
 
