@@ -208,7 +208,15 @@ export function executionLevers(execd, rot, peerGapPct = null) {
   // are a delay after each global (covered by latencyLever), not pure idling --
   // so don't tell them "it's not latency" when it actually is.
   const latencyHigh = execd.overshootExcess >= LATENCY_MS;
-  if (execd.pressExcess >= 1.0 || speedPct >= 3) {
+  // You can't out-press the field AND idle more than them. When the cast count
+  // says you fire AS MANY or MORE damaging abilities/min than the field (no
+  // deficit, speedPct<3), the idle-gap heuristic (pressLostPerMin) is contradicted
+  // by harder evidence -- treat it as noise and DON'T raise press-faster. Leading
+  // a 99%-active, out-casting player with "press faster" buries the real lever:
+  // the gap is damage-PER-CAST (stats/gear/trinkets), not pressing. A genuine
+  // deficit (speedPct>=3) still fires normally.
+  const outpacesField = cg && cg.field > 0 && cg.you >= cg.field;
+  if ((execd.pressExcess >= 1.0 || speedPct >= 3) && !(speedPct < 3 && outpacesField)) {
     const castEst = Math.round(speedPct / 2);
     const headroomCap = (peerGapPct && peerGapPct > 0) ? Math.max(1, Math.ceil(peerGapPct * 0.6)) : Infinity;
     const pct = Math.min(Math.max(idlePct, castEst) || 1, headroomCap, 12);
@@ -318,14 +326,23 @@ function renderPrescription(log, d) {
   if (hasBuild) {
     log("VERDICT: your biggest lever is a TALENT/BUILD fix -- you're not pressing an ability the field leans on (see #1). Sort that first, then do the free enchant/gear fixes below.");
   } else if (setupFixes.length) {
-    log(`VERDICT: your build & rotation already match the field -- your character levers are the ${setupFixes.length} gear/setup fix${setupFixes.length > 1 ? "es" : ""} below + pressing faster. The big gap is ${compList0.length ? "comp + " : ""}reps, not a setup overhaul.`);
+    // Only credit "pressing faster" when a press-faster lever survived -- for a
+    // player who already out-casts the field it's suppressed, and the gap is
+    // damage-per-cast (the gear/setup fixes), not activity.
+    const hasPress = yours.some((r) => /PRESS FASTER/.test(r.text));
+    log(`VERDICT: your build & rotation already match the field -- your character levers are the ${setupFixes.length} gear/setup fix${setupFixes.length > 1 ? "es" : ""} below${hasPress ? " + pressing faster" : ""}. The big gap is ${compList0.length ? "comp + " : ""}${hasPress ? "reps" : "damage-per-cast (stats/gear), not activity"}, not a setup overhaul.`);
   } else {
     log(`VERDICT: build, gear, enchants, and rotation all match the field -- there's NO setup or talent fix to make. Your gap is ${compList0.length ? "comp + " : ""}execution (press faster / uptime). Tighten your play; there's no gear/talent shortcut.`);
   }
   if (yours.length) log(`Biggest fix YOU control: ${rxHeadline(yours[0].text)} -- start here.`);
   // What the gap is made of -- MEASURED quantities (no per-lever DPS guess).
   const facts = [];
-  if (execd && execd.totalExcess >= 1) facts.push(`Execution -- you lose ${f(execd.totalExcess, 1)}s/min of GCD uptime vs peers`);
+  // Skip the "GCD uptime lost" fact when the cast count shows you out-press the
+  // field (its dominant component is the press-lost heuristic, which the cast
+  // count contradicts -- see executionLevers). Otherwise it reads as a real lever
+  // when it isn't.
+  const outpaces = rot && rot.castGap && rot.castGap.field > 0 && rot.castGap.you >= rot.castGap.field;
+  if (execd && execd.totalExcess >= 1 && !outpaces) facts.push(`Execution -- you lose ${f(execd.totalExcess, 1)}s/min of GCD uptime vs peers`);
   if (rot && rot.usage && rot.usage.under.length) { const a = rot.usage.under[0]; facts.push(`Rotation -- you press ${a.name} ${f(a.you, 1)}/min vs the field's ${f(a.field, 1)}`); }
   if (tp && tp.routing && (tp.routing.top - tp.routing.you) >= 5) facts.push(`Routing -- ${f(tp.routing.you, 0)}% of your damage hits adds vs the top parses' ${f(tp.routing.top, 0)}%`);
   if (tp && tp.buffGaps) { const g = tp.buffGaps.find((x) => x.comp); if (g) facts.push(`Comp -- you're missing ${g.name} (${f(g.you, 0)}% vs ${f(g.top, 0)}% uptime; raid-dependent)`); }

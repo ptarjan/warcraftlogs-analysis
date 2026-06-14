@@ -50,16 +50,22 @@ test("executionLevers: high overshoot flips press-faster off the 'not latency' c
   assert.ok(out.some((r) => /INPUT LATENCY/.test(r.text))); // and the latency lever fires
 });
 
-test("executionLevers: doesn't claim a 'lower cast rate' when you cast as many/more than the field", () => {
-  // Idle gaps (pressExcess) can coexist with an equal-or-higher cast count.
-  // The press-faster headline still fires, but the cast-deficit citation must
-  // not appear -- "your lower cast rate -- 69 vs 65" is a false statement.
+test("executionLevers: no press-faster when you out-cast the field (idle heuristic is contradicted)", () => {
+  // You can't fire MORE damaging abilities/min than the field (69 vs 65) AND idle
+  // more than them. The cast count is harder evidence than the gap heuristic, so
+  // press-faster must be suppressed entirely -- the gap is damage-per-cast.
   const execd = { pressExcess: 2.7, rangeExcess: 0, worstRange: [], overshootExcess: 0 };
   const rot = { castGap: { you: 69, field: 65, pct: 0 } };
-  const [press] = executionLevers(execd, rot, 22);
-  assert.match(press.text, /PRESS FASTER/);               // headline still fires (measured idle)
-  assert.doesNotMatch(press.text, /lower cast rate/);     // but no false deficit claim
-  assert.doesNotMatch(press.text, /69 vs 65/);
+  const out = executionLevers(execd, rot, 22);
+  assert.ok(!out.some((r) => /PRESS FASTER/.test(r.text)), "no press-faster lever when out-casting the field");
+});
+
+test("executionLevers: a genuine cast deficit still fires press-faster", () => {
+  // The guard is narrow: only when you cast >= field. A real deficit still leads.
+  const execd = { pressExcess: 2.0, rangeExcess: 0, worstRange: [], overshootExcess: 0 };
+  const rot = { castGap: { you: 16, field: 28, pct: 44 } };
+  const [press] = executionLevers(execd, rot, 60);
+  assert.match(press.text, /PRESS FASTER/);
 });
 
 test("latencyLever: fires only above the threshold, never below", () => {
