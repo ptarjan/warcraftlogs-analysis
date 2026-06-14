@@ -593,13 +593,13 @@ export async function collectPeers({
 // shared, not four divergent ones), we can afford a bigger sample than any single
 // section used before -- better medians for fewer total requests.
 export const PEER_SAMPLE = 10;
-export async function ilvlPeers(name, server, region, encounter, difficulty, className, specName) {
+export async function ilvlPeers(name, server, region, encounter, difficulty, className, specName, { window = 3 } = {}) {
   const er = await characterEncounter(name, server, region, encounter.id, difficulty);
   const ranks = (er && er.ranks) || [];
   if (!ranks.length) return [];
   const ilvl = Math.max(...ranks.map((r) => r.bracketData || 0)) || 0;
   return collectPeers({ encounters: encounter.id, difficulty, className, specName,
-    limit: PEER_SAMPLE + 3, pages: 7, ilvl, window: 3 });
+    limit: PEER_SAMPLE + 3, pages: 7, ilvl, window });
 }
 
 // THE top-DPS field for a spec (the META -- NOT ilvl-matched; that's ilvlPeers).

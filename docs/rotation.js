@@ -394,7 +394,14 @@ export async function rotationFindings(name, server, region, className, specName
   // The ilvl-matched field, via the shared core.ilvlPeers (same set overview /
   // timeline / prescribe use, so the fetches dedupe). It feeds the empowered-share
   // + proc rate of your biggest hit, the opener, AND the ability-usage comparison.
-  const cands = await ilvlPeers(name, server, region, boss, difficulty, className, specName);
+  let cands = await ilvlPeers(name, server, region, boss, difficulty, className, specName);
+  // Under-geared, or a low-population spec: if NO ilvl-matched peers exist (everyone
+  // logged is far higher ilvl), widen the window so we can still compare PLAYSTYLE.
+  // Which buttons you press, pet usage, and DoT uptime are ~ilvl-independent, so a
+  // slightly-higher-ilvl field is a valid rotation comparison -- and an approximate
+  // one beats none (0 peers = no rotation levers + a uninformative remainder). The
+  // raw-DPS gap stays strict (it's measured elsewhere against the tight ilvl band).
+  if (!cands.length) cands = await ilvlPeers(name, server, region, boss, difficulty, className, specName, { window: 15 });
   // Your hero tree, so we can compare you only to peers who run the SAME one --
   // two hero trees swap whole buttons, and a mixed field makes the cast-rate diff
   // lie in BOTH directions (you "over-press" a button the other tree dropped, and
