@@ -128,7 +128,12 @@ const _gqlCache = new Map();
 // the store falls back to an in-memory map, so the cross-reload behavior is testable.
 const PERSIST = !IS_NODE ||
   (typeof process !== "undefined" && process.env && process.env.WCL_PERSIST_TEST === "1");
-const CACHE_TTL = 60 * 60 * 1000; // 1 hour (rankings drift; Worker edge-cache backs this)
+// Same TTL as the Node on-disk cache (DISK_TTL_MS, ~1 week) so the browser and CLI
+// behave identically: a kill's report data never expires (see _isImmutable), and
+// ranking/world/character queries refresh ~weekly -- NOT hourly, which made the
+// browser re-spend points on data the CLI still had cached. (Browsers may still
+// evict IndexedDB under storage pressure; that's out of our control.)
+const CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 // A specific logged kill's report data (events/tables for a report+fight) never
 // changes once logged -- so it must never expire from any cache. Ranking/world/
 // character queries (the "field") DO drift, so they keep a finite TTL.
@@ -147,6 +152,12 @@ const _memStore = new Map();
 let _idbPromise = null;
 function _openIdb() {
   if (_idbPromise) return _idbPromise;
+  // Ask the browser to KEEP this cache through storage pressure. Without this,
+  // IndexedDB is "best-effort" storage the browser may evict at any time -- which is
+  // the cache "purging" you'd see: immutable report data has no TTL (it's cached
+  // forever), so if it vanishes it was evicted, not expired. Fire-and-forget;
+  // harmless where unsupported or denied.
+  try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch { /* ignore */ }
   _idbPromise = new Promise((resolve) => {
     try {
       const req = indexedDB.open("wcl-gql-cache", 1);
@@ -331,6 +342,14 @@ export async function gql(query, retries = 6) {
   }
 }
 
+// Human "when to retry" from a seconds-to-reset, so the thrown error and the live
+// UI event phrase the wait IDENTICALLY (no "~3 min" in one place, "shortly" in the
+// other). null when we have no clock to report.
+export function fmtRateWait(seconds) {
+  if (!(seconds > 0)) return null;
+  return seconds >= 60 ? `${Math.max(1, Math.ceil(seconds / 60))} min` : `${Math.ceil(seconds)}s`;
+}
+
 // Run a GraphQL query, returning the parsed `data`. Retries transient errors;
 // throws PrivateReport on permission errors so callers can skip a report.
 async function _gqlRun(query, retries = 6) {
@@ -360,10 +379,14 @@ async function _gqlRun(query, retries = 6) {
       // that header is CORS-hidden (connected direct-to-WCL), from the reset clock
       // primed by primeRateReset(). Whichever we learn, remember it.
       if (retryAfter) _resetAt = Math.max(_resetAt, Date.now() + retryAfter * 1000);
+      // No readable reset yet (a connected session can't see Retry-After)? Ask WCL
+      // for the exact reset clock, best-effort, so we can ALWAYS say when to retry
+      // rather than a vague "shortly".
+      if (!retryAfter && _resetAt <= Date.now()) { try { await primeRateReset(); } catch { /* keep the fallback */ } }
       const eff = retryAfter || (_resetAt > Date.now() ? Math.ceil((_resetAt - Date.now()) / 1000) : null);
-      const mins = eff ? Math.max(1, Math.ceil(eff / 60)) : null;
-      const when = mins ? `try again in ~${mins} min` : "try again shortly";
-      last = new Error(`WCL rate limit reached — your WCL hourly point budget is used up. ${when}.`);
+      const wait = fmtRateWait(eff);
+      const when = wait ? `Try again in ~${wait}` : "Try again shortly";
+      last = new Error(`WCL rate limit reached — your hourly WCL point budget is used up. ${when}.`);
       if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("wcl-ratelimit", { detail: { retryAfter: eff } }));
       await sleep(eff ? Math.min(20000, eff * 1000) : Math.min(12000, 2000 * 2 ** attempt));
       continue;

@@ -4,7 +4,7 @@
 // the supporting analyses as collapsible cards below.
 import { detectContext, detectPriority, DIFFICULTY, raidTeammates, slug, metricForSpec, setRunMetric, metricUnit } from "./core.js";
 import { isAuthed, beginLogin, handleRedirectCallback, logout } from "./auth.js";
-import { NeedsAuth, myCharacters, primeRateReset } from "./wcl.js";
+import { NeedsAuth, myCharacters, primeRateReset, fmtRateWait } from "./wcl.js";
 import { paramsFromSearch, shareSearch, encodeSnapshot, decodeSnapshot, snapshotFromHash } from "./share.js";
 import * as overview from "./overview.js";
 import * as timeline from "./timeline.js";
@@ -434,10 +434,10 @@ function setRunning(on) {
 let activeHero = null;
 window.addEventListener("wcl-ratelimit", (e) => {
   const detail = /** @type {CustomEvent} */ (e).detail;
-  const s = detail && detail.retryAfter;
-  const when = (typeof s === "number" && s > 0)
-    ? ` — retry in ~${s >= 60 ? Math.ceil(s / 60) + " min" : Math.ceil(s) + "s"}`
-    : " — waiting a moment";
+  const wait = fmtRateWait(detail && detail.retryAfter);   // same formatter as the thrown error
+  // "Auto-retrying" makes clear this is the WAITING state -- distinct from the
+  // final "Try again in ~X" error you see only if the retries give up.
+  const when = wait ? ` — auto-retrying, budget resets in ~${wait}` : " — auto-retrying";
   if (activeHero && activeHero.det && activeHero.det.isConnected) {
     activeHero.det.textContent = `WCL rate limit reached${when}…`;
   }
