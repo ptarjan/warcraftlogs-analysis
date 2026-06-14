@@ -64,18 +64,49 @@ payoff; the list is sorted **biggest-DPS-first by the impact actually shown**.
 - **Derive the stat priority** (`detectPriority`), never assume crit.
 - **The list order must match the displayed `% DPS`** — sort by `impactScore`,
   not an internal proxy.
+- **The change-list must ADD UP to the measured gap** (`reconcileImpacts`): gap =
+  comp + your concrete fixes + an explicit remainder. A big remainder is a
+  *diagnostic*, NOT cosmetics — it means we're missing/mis-measuring a lever
+  (the trinket lever was hiding there). Investigate it; never quietly absorb it.
+- **A big gap at matched ilvl is PLAYSTYLE, not gear.** Sims model gear (~a few %
+  at your ilvl); the gap to the field on the *same gear* is how you play —
+  cooldown usage, which buttons and when, uptime. Surfacing that is the tool's
+  whole purpose. NEVER punt a big remainder to "press faster" or "go sim it" —
+  those are cop-outs. Explain the playstyle, or admit the breakdown is the gap to
+  close *in this tool*.
+- **Don't tell a ~99%-active player to "press faster."** You can't idle while
+  ~99% active — suppress press-faster when `activePct >= 98` or you out-cast the
+  field; the cast deficit is ability-MIX (defensive/low-APM GCDs), not idling.
+- **Tanks are NOT special for DPS.** The ilvl-matched field is *fellow tanks*, so
+  the gap is real and explainable (itemization toward crit, build, cooldowns) —
+  don't excuse it as a "survival tradeoff." (Only true caveat: their damaging-cast
+  count is confounded by defensive GCDs, which the activePct rule already handles.)
 - Lessons go in as **behavior** (and a test), NOT as comments in the analysis.
 
 ## More gotchas
 See README → "Lessons baked in". Highlights: match buffs by keyword not exact
 name; "current" kill = MOST RECENT within 1 ilvl of your best (`bestRank`/
-`bestKill`), not the single highest-ilvl one, or recent enchant/consumable fixes
-get hidden by an old lucky-drop kill; Heroic vs Mythic
+`bestKill`/`pickCurrentKill`), not the single highest-ilvl one, or recent
+enchant/consumable fixes get hidden by an old lucky-drop kill (prescribe *re-broke*
+this once by sorting kills by ilvl — flag a snapshot ≥7 days old); Heroic vs Mythic
 percentiles aren't comparable; secondary stats live in CombatantInfo *events*;
 `sourceID`-filtered Casts/Buffs *tables* return empty (map names by class);
 crafted item stats + embellishments only render with the item's bonus IDs; tier
 needs 4 of 5 (one flex slot); auto-attack is melee-only (hunters=75, casters
 none); compare uptime/range to peers on the SAME fight (intermissions).
+- **Cooldowns hide below `usageDivergence`'s 0.5/min floor** (filler-tuned).
+  `cooldownGaps` covers the ~0.1–1.0/min band, sized from MEASURED damage-per-cast.
+  BUT it only sees DAMAGE casts (castRate is built from the damage table), so
+  **buff/pet cooldowns deal no direct cast damage and stay invisible** (Brewmaster's
+  Weapons of Order = buff, Invoke Niuzao = pet). Those need buff-uptime / pet-damage
+  analysis — an OPEN lever, the likely home of a tank's big playstyle remainder.
+- **Trinkets are effect-based** — `gear.js` deliberately skips them from stat
+  swaps; `trinketLevers` flags a field-favored trinket you lack, sized by
+  CONSENSUS (silent on a split field, where "lots of people run different
+  trinkets" is itself the signal).
+- **Immutable report data is cached forever** (`_isImmutable`: `report(code:…)`),
+  rankings/world/character queries expire weekly — don't assume a cold cost for a
+  character analyzed within the tier.
 
 ## Dev workflow
 - **Tests:** `npm test` (zero-dep `node:test`, mocked fetch + localStorage). Add

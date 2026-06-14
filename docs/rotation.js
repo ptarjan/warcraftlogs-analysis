@@ -108,7 +108,10 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
       hits.push({ name: a.name, ...ph, procPerMin: ph.procBig / (dur / 60 || 1) });
     }
   }
-  return { opener: openerSequence(casts), hits, dur, castRate, sourceID: m.sourceID, name2id };
+  // Per-ability total damage (name -> total), so the cooldown lever can size a
+  // missed cooldown by its MEASURED damage-per-cast rather than guessing.
+  const dmgTotals = Object.fromEntries(abils.map((a) => [a.name, a.total]));
+  return { opener: openerSequence(casts), hits, dur, castRate, dmgTotals, sourceID: m.sourceID, name2id };
 }
 
 // Median casts/min per ability across the field's kills (absent in a kill = 0),
@@ -138,6 +141,33 @@ export function usageDivergence(youRate, fieldRate, { floor = 0.5, ratio = 2 } =
   under.sort((a, b) => b.gap - a.gap);
   over.sort((a, b) => b.gap - a.gap);
   return { under, over };
+}
+
+// Under-used DAMAGE COOLDOWNS -- the lever usageDivergence structurally MISSES.
+// usageDivergence floors at 0.5 casts/min (filler-tuned), but a damage cooldown is
+// cast ~0.1-1.0/min, so a player skipping it is invisible there -- and that's
+// exactly where a big PLAYSTYLE gap hides (gear/sims only move a few %; the gap at
+// matched ilvl is HOW you play). Here we look in the cooldown band and size the
+// gap from MEASURED damage: missed casts x your damage-per-cast / your total damage.
+// Class-agnostic -- the cooldown set and rates come entirely from you + the field;
+// only damage-dealing casts appear (castRate is built from the damage table), so a
+// pure buff/summon CD won't show (that needs buff-uptime analysis, not cast counts).
+export function cooldownGaps(youRate, fieldRate, dmgTotals, dur, { band = 1.0, minField = 0.1 } = {}) {
+  const totalDmg = Object.values(dmgTotals || {}).reduce((a, b) => a + b, 0) || 1;
+  const mins = dur ? dur / 60 : 0;
+  const out = [];
+  for (const [n, fr] of Object.entries(fieldRate || {})) {
+    const yr = (youRate || {})[n] || 0;
+    if (fr < minField || fr > band) continue;          // only the low-frequency cooldown band
+    if (fr <= yr * 1.3 || fr - yr < 0.1) continue;     // you already use it about as much
+    const youCasts = yr * mins, fieldCasts = fr * mins;
+    // Size from your OWN damage-per-cast (robust to multi-hit; conservative if you
+    // use it in worse windows than the field). Needs >=1 of your casts to measure.
+    const dpc = youCasts >= 0.5 ? (dmgTotals[n] || 0) / youCasts : null;
+    const pct = dpc != null ? Math.round((100 * (fieldCasts - youCasts) * dpc) / totalDmg) : null;
+    out.push({ name: n, you: yr, field: fr, youCasts, fieldCasts, pct });
+  }
+  return out.sort((a, b) => (b.pct || 0) - (a.pct || 0));
 }
 
 // Classify the field's top under-used ability against YOUR talents, so we only
@@ -194,6 +224,11 @@ export async function rotationFindings(name, server, region, className, specName
   const fieldOpener = peers.length ? peers[0].opener : null;
   const fieldRate = fieldCastRates(peers.map((p) => p.castRate || {}));
   const usage = usageDivergence(you.castRate || {}, fieldRate);
+  // Under-used damage cooldowns (the band usageDivergence's filler floor misses).
+  // Dedupe against usage.under so the same ability isn't double-counted.
+  const underNames = new Set(usage.under.map((a) => a.name));
+  const cooldowns = (peers.length ? cooldownGaps(you.castRate || {}, fieldRate, you.dmgTotals || {}, you.dur) : [])
+    .filter((c) => !underNames.has(c.name));
   // Measured total damaging-ability casts/min, you vs field -- the direct "are
   // you pressing as often as they are" gap (sizes the press-faster lever).
   const sum = (o) => Object.values(o || {}).reduce((a, b) => a + b, 0);
@@ -212,7 +247,7 @@ export async function rotationFindings(name, server, region, className, specName
   const abilityIds = Object.assign({}, ...peers.map((p) => p.name2id || {}), you.name2id || {});
   return {
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener,
-    usage, castGap, fieldPeers: peers.length, talent, abilityIds,
+    usage, cooldowns, castGap, fieldPeers: peers.length, talent, abilityIds,
     proc: { name: top.name, isReal, youPerMin: top.procPerMin, fieldPerMin: fieldProc },
   };
 }
@@ -309,6 +344,17 @@ export function rotationLevers(rot) {
       out.push(finding("Rotation", wrongButton ? DPS(5, 10) : DPS(3, 6),
         `ROTATION: press ${under.join(" and ")} more${over} -- match your peers' ability priority ` +
         `(verify in a log/sim).`));
+    }
+  }
+  // Under-used DAMAGE COOLDOWNS -- a measured playstyle lever (the kind that
+  // explains a big remainder; gear/sims don't). Sized from real damage-per-cast,
+  // so only emit ones we could size (>=1% of your damage).
+  for (const cd of ((rot && rot.cooldowns) || []).slice(0, 2)) {
+    if (cd.pct && cd.pct >= 1) {
+      out.push(finding("Rotation", DPS(cd.pct),
+        `COOLDOWN: you cast ${cd.name} ${cd.youCasts.toFixed(1)}x this fight (${f(cd.you, 1)}/min) vs the field's ` +
+        `${cd.fieldCasts.toFixed(1)}x (${f(cd.field, 1)}/min) -- ~${cd.pct}% of your damage. Use it on cooldown ` +
+        `(or line it up with your burst); it's a button you're skipping, not gear.`));
     }
   }
   if (rot && rot.proc.isReal && rot.proc.fieldPerMin != null &&

@@ -5,7 +5,29 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps } = await import("../docs/rotation.js");
+
+test("cooldownGaps: catches a low-frequency cooldown usageDivergence's floor misses", () => {
+  // Field casts a big cooldown 0.5/min, you 0.2/min -- below usageDivergence's
+  // 0.5 floor, so it's invisible there. Here it's caught and SIZED from damage.
+  // 300s fight: you 1 cast, field 2.5 casts; your dmg/cast = 600k/1 = 600k.
+  // missed = (2.5-1)*600k = 900k of a 6,000k total = 15%.
+  const cds = cooldownGaps(
+    { BigCD: 0.2, Filler: 30 },
+    { BigCD: 0.5, Filler: 31 },
+    { BigCD: 600000, Filler: 5400000 },
+    300,
+  );
+  assert.equal(cds.length, 1, "filler (31/min) is outside the cooldown band; only the CD is flagged");
+  assert.equal(cds[0].name, "BigCD");
+  assert.equal(cds[0].pct, 15);
+  // usageDivergence (floor 0.5) does NOT see this cooldown at all.
+  assert.equal(usageDivergence({ BigCD: 0.2 }, { BigCD: 0.5 }).under.length, 0);
+});
+
+test("cooldownGaps: silent when you use the cooldown about as much as the field", () => {
+  assert.equal(cooldownGaps({ CD: 0.45 }, { CD: 0.5 }, { CD: 500000 }, 300).length, 0);
+});
 
 test("classifyUnderUse: baseline button you skip is NOT a missing talent", () => {
   // Shield of the Righteous is baseline -- in neither your talents nor the spec's
