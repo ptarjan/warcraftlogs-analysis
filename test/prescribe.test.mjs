@@ -44,7 +44,16 @@ test("fieldDelta measures an attribute's value from the field (have vs not)", ()
   // Too few on one side -> null.
   assert.equal(fieldDelta([110, 100, 100, 100, 100], [true, false, false, false, false]), null);
 });
-const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, verdictLever } = await import("../docs/prescribe.js");
+const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever } = await import("../docs/prescribe.js");
+
+test("isOffMetaBuild: true only when a HERO TREE mismatch lever is present", () => {
+  // The field runs a hero tree you don't -> the rotation can't be compared, so the
+  // playstyle remainder must own up to the off-meta build (Rezaa: Colossus vs Slayer).
+  assert.equal(isOffMetaBuild([{ text: "HERO TREE: 100% of the field runs Slayer -- you run Colossus." }]), true);
+  assert.equal(isOffMetaBuild([{ text: "ROTATION: press Mortal Strike more" }, { text: "TALENTS: ..." }]), false);
+  assert.equal(isOffMetaBuild([]), false);
+  assert.equal(isOffMetaBuild(null), false);
+});
 
 test("pickBenchmarkKill: median-parse kill, not an outlier survival kill", () => {
   // A tank with a great Imperator parse but a terrible recent Belo'ren kill (a

@@ -579,6 +579,13 @@ export function remainderKind(residual, { elite = false, healer = false, support
 // problem" line.
 export const isEliteParse = (medP) => medP != null && medP >= 90;
 
+// Is the player on an OFF-META BUILD the field doesn't run? Signalled by a HERO TREE
+// lever (talents.js fires it only when the field strongly favors the OTHER hero
+// tree). When true, the rotation can't be compared button-for-button (no same-hero
+// peers), so a big "playstyle" remainder is partly the off-meta build itself -- which
+// the conservative talent/hero ESTIMATES above under-size -- not pure per-cast play.
+export const isOffMetaBuild = (findings) => (findings || []).some((x) => /^HERO TREE/.test(x.text || ""));
+
 // THE SYNTHESIS, rendered: one answer anchored on the MEASURED DPS gap (your
 // kill vs the ilvl-matched field vs the top parses -- real numbers, not a sum of
 // per-lever guesses), what that gap is made of, then the change-list split into
@@ -785,7 +792,14 @@ function renderPrescription(log, d) {
         : under.length
         ? ` We can see part of it: you press ${under.slice(0, 2).map((a) => `${a.name} ${f(a.you, 1)}/min vs ${f(a.field, 1)}`).join(", ")}.`
         : ` The cooldown/ability gaps we could measure are listed above; the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps) we can't pin to one ability.`;
-      rtext = `PLAYSTYLE (~${r}%): the biggest chunk, and it's NOT gear (a sim would value your gear swaps at a few %) and NOT "press faster" -- it's how you play the same gear the field plays.${cite}`;
+      // Off-meta build: the field runs a different hero tree, so we have NO same-hero
+      // peers to compare your rotation against -- a big part of this remainder is the
+      // build itself (the HERO TREE + TALENTS items, conservatively estimated above),
+      // not "how you play the same gear". Lead with that instead of mis-calling it
+      // pure per-cast playstyle. (Rezaa: Colossus Arms vs a 100%-Slayer field.)
+      rtext = isOffMetaBuild(rx)
+        ? `OFF-META BUILD + PLAYSTYLE (~${r}%): the biggest chunk, and a large part is your BUILD -- you run a hero tree (and talents) the field doesn't (see the HERO TREE + TALENTS items), so we can't compare your rotation to theirs button-for-button and a sim would value the build swap well above the small estimate above. Switch to the meta build and re-run first.${cite}`
+        : `PLAYSTYLE (~${r}%): the biggest chunk, and it's NOT gear (a sim would value your gear swaps at a few %) and NOT "press faster" -- it's how you play the same gear the field plays.${cite}`;
     } else if (kind === "underpress") {
       rtext = `THE REMAINDER (~${r}%): not a setup item -- it's GCD uptime and hitting your priority on more pulls (see the measured cast/idle gaps above). That's where the rest of your gap lives.`;
     } else {
