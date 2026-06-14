@@ -8,7 +8,7 @@
 import {
   ENCHANTABLE_SLOTS, DIFFICULTY, characterZone, characterEncounter, playerMetrics,
   collectPeers, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry, bestRank,
-  DPS, INFO, finding, metricUnit,
+  DPS, INFO, finding, fieldDelta, metricUnit,
 } from "./core.js";
 import { timelineFindings } from "./timeline.js";
 import { gearFindings, gearLevers, itemInstance, sourceText } from "./gear.js";
@@ -95,8 +95,28 @@ async function fieldGearConsumables(encounterId, difficulty, className, specName
       statPcts.push(100 * s[priority] / sec);
     }
   }
+  // Empirically value each lever from THIS ilvl-matched sample -- median DPS of
+  // peers who have it vs who don't (fieldDelta). null where the field gives no
+  // counterfactual (e.g. everyone flasks) -> the lever keeps its estimate.
+  const dps = peers.map((p) => p.m.dps);
+  const mask = (test) => peers.map((p) => Object.entries(p.bf || {}).some(([nm, b]) => test(nm.toLowerCase(), b)));
+  const deltas = {
+    flasks: fieldDelta(dps, mask((lc, b) => b.pct > 50 && lc.includes("flask"))),
+    foods: fieldDelta(dps, mask((lc, b) => b.pct > 50 && lc.includes("well fed"))),
+    potions: fieldDelta(dps, mask((lc, b) => b.pct > 0 && lc.includes("potion") && !lc.includes("healing"))),
+    augRunes: fieldDelta(dps, mask((lc, b) => b.pct > 50 && lc.includes("augment rune"))),
+    oils: fieldDelta(dps, mask((lc, b) => b.pct > 50 && /\boil\b|sharpening|whetstone|weightstone/.test(lc))),
+  };
+  // Priority-stat value: top-half vs bottom-half of the field's secondary %.
+  const secOf = (s) => 100 * s[priority] / (["crit", "haste", "mastery", "vers"].reduce((a, k) => a + s[k], 0) || 1);
+  const withStat = peers.map((p, i) => ({ pc: p.s ? secOf(p.s) : null, d: dps[i] })).filter((x) => x.pc != null && x.d > 0);
+  let statDelta = null;
+  if (withStat.length >= 8) {
+    const medStat = median(withStat.map((x) => x.pc));
+    statDelta = fieldDelta(withStat.map((x) => x.d), withStat.map((x) => x.pc >= medStat));
+  }
   return {
-    enchBySlot, trinkets, flasks, foods, potions, augRunes, oils, guids,
+    enchBySlot, trinkets, flasks, foods, potions, augRunes, oils, guids, deltas, statDelta,
     statPct: statPcts.length ? median(statPcts) : null, n: peers.length,
     dpsMed: peers.length ? median(peers.map((p) => p.m.dps)) : null, // measured field DPS
   };
@@ -277,11 +297,18 @@ function consumableLevers(field, my) {
     if (!counter.size) continue;
     const top = topEntry(counter)[0];                        // field's most common, by count
     const mineName = my[cn.mine], mineGuid = my[cn.mine + "Guid"];
+    // Prefer the MEASURED field delta (peers with it vs without) when the field
+    // gives a counterfactual; else the category estimate. Both flagged honestly.
+    const fd = field.deltas && field.deltas[cn.field];
+    const noneScore = fd ? DPS(Math.round(fd.pct)) : cn.none;
+    const basis = fd ? "measured" : "est";
+    const cite = fd ? ` (measured: peers with it do ${Math.round(fd.pct)}% more, n=${fd.nHave}/${fd.nNot})` : "";
     if (!mineName) {
-      out.push(finding("Setup", cn.none, `${cn.label}: ${cn.missText} -- ${counter.get(top)}/${field.n} peers ` +
-        `${cn.peerVerb} ${wowheadSpell(field.guids.get(top), top)}${cn.note}. ${cn.tail}`));
+      out.push(finding("Setup", noneScore, `${cn.label}: ${cn.missText} -- ${counter.get(top)}/${field.n} peers ` +
+        `${cn.peerVerb} ${wowheadSpell(field.guids.get(top), top)}${cn.note}.${cite} ${cn.tail}`, basis));
     } else if (mineName !== top) {
-      out.push(finding("Setup", cn.swap, `${cn.label}: ${wowheadSpell(mineGuid, mineName)} -> ${wowheadSpell(field.guids.get(top), top)}.`));
+      out.push(finding("Setup", fd ? noneScore : cn.swap,
+        `${cn.label}: ${wowheadSpell(mineGuid, mineName)} -> ${wowheadSpell(field.guids.get(top), top)}.`, basis));
     }
   }
   return out;
@@ -342,7 +369,11 @@ function statGapLever(gf, my, field, priority) {
   const statGap = (my.statPct !== null && field && field.statPct) ? field.statPct - my.statPct : 0;
   const hasGearLever = gf && (gf.swaps.length || gf.restats.length);
   if (statGap >= 4 && !hasGearLever) {
-    return [finding("Gear", INFO, `${PRI}: yours (${f(my.statPct, 0)}%) is below your peers (${f(field.statPct, 0)}%), but NOT actionable now -- every item you own is already ${priority}-maxed and no ${priority}-itemized upgrade exists to swap to. It only rises when ${priority}-itemized drops come.`)];
+    // Measured value of the stat gap: how much more the field's top-half-of-stat
+    // peers do. Cite it when we have it; it's context (no swap exists to act on).
+    const sd = field && field.statDelta;
+    const worth = sd ? ` Measured: peers in the top half of ${priority} do ${Math.round(sd.pct)}% more (n=${sd.nHave}/${sd.nNot}).` : "";
+    return [finding("Gear", INFO, `${PRI}: yours (${f(my.statPct, 0)}%) is below your peers (${f(field.statPct, 0)}%), but NOT actionable now -- every item you own is already ${priority}-maxed and no ${priority}-itemized upgrade exists to swap to.${worth} It only rises when ${priority}-itemized drops come.`, sd ? "measured" : "est")];
   }
   if (gf && !gf.swaps.length && !gf.restats.length && statGap < 4) {
     return [finding("Gear", INFO, "GEAR/STATS: optimal for what you own -- no lever; gains are future drops + a sim (Droptimizer).")];

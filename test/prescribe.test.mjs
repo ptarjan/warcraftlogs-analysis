@@ -7,11 +7,24 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { DPS, COMP, INFO, finding } = await import("../docs/core.js");          // shared Finding currency
+const { DPS, COMP, INFO, finding, fieldDelta } = await import("../docs/core.js");          // shared Finding currency
 
 test("finding tags its basis: estimate by default, measured on opt-in", () => {
   assert.equal(finding("Gear", DPS(2), "x").basis, "est");          // levers must opt IN to "measured"
   assert.equal(finding("Execution", DPS(3), "y", "measured").basis, "measured");
+});
+
+test("fieldDelta measures an attribute's value from the field (have vs not)", () => {
+  // 5 with it median 110, 5 without median 100 -> +10%.
+  const dps = [110, 110, 110, 110, 110, 100, 100, 100, 100, 100];
+  const has = [true, true, true, true, true, false, false, false, false, false];
+  const d = fieldDelta(dps, has);
+  assert.equal(Math.round(d.pct), 10);
+  assert.deepEqual([d.nHave, d.nNot], [5, 5]);
+  // No counterfactual (everyone has it) -> not measurable.
+  assert.equal(fieldDelta([100, 100, 100, 100, 100], [true, true, true, true, true]), null);
+  // Too few on one side -> null.
+  assert.equal(fieldDelta([110, 100, 100, 100, 100], [true, false, false, false, false]), null);
 });
 const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill } = await import("../docs/prescribe.js");
 const { embellishmentRx, gemLever, statScore } = await import("../docs/gear.js");          // gear-domain lever

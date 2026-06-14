@@ -100,6 +100,25 @@ export const INFO = { impact: 0, label: "info" };
 /** @param {Dim} dim @param {Score} score @param {string} text @param {"measured"|"est"} [basis] @returns {Finding} */
 export const finding = (dim, score, text, basis = "est") => ({ dim, ...score, text, basis });
 
+// Empirically value an attribute from the FIELD's own logs -- the natural
+// experiment: median throughput of peers who HAVE it minus peers who don't, as a
+// %. `dps` and `has` are parallel arrays over the ilvl-matched peer sample. Needs
+// both groups to have >= `min` peers or it's noise -> null (caller keeps an
+// estimate). Observational, so confounded (good players do more of everything) --
+// a positive delta is a measured FLOOR on the value, not a sim. Clamped to >=0
+// (a "have" group that's somehow lower is selection noise, not a negative value).
+export function fieldDelta(dps, has, { min = 4 } = {}) {
+  const have = [], not = [];
+  for (let i = 0; i < dps.length; i++) {
+    if (!(dps[i] > 0)) continue;
+    (has[i] ? have : not).push(dps[i]);
+  }
+  if (have.length < min || not.length < min) return null;   // no counterfactual -> not measurable
+  const mh = median(have), mn = median(not);
+  if (!(mn > 0)) return null;
+  return { pct: Math.max(0, (mh - mn) / mn * 100), nHave: have.length, nNot: not.length };
+}
+
 // --------------------------------------------------------------------- //
 // Low-level fetchers
 // --------------------------------------------------------------------- //
