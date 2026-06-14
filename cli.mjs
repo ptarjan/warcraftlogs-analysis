@@ -158,7 +158,7 @@ if (!cls || !spec || difficulty === undefined || !priority) {
 setRunMetric(metricForSpec(cls, spec));
 const p = { name, server, region, cls, spec, difficulty, priority };
 
-log(`=== ${p.name}-${p.server} (${p.region}) | ${p.spec} ${p.cls} | difficulty ${p.difficulty} ===`);
+log(`=== ${p.name}-${p.server} (${p.region}) | ${p.spec} ${p.cls} | ${DIFFICULTY[p.difficulty] || p.difficulty} ===`);
 for (const spec of SECTION_SPECS) {
   if (only && !only.has(spec.key)) continue;
   log("\n" + "#".repeat(70) + `\n# ${spec.title}\n` + "#".repeat(70));
