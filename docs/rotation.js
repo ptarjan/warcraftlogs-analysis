@@ -254,6 +254,48 @@ export function cooldownGaps(youRate, fieldRate, dmgTotals, dur, { band = 1.0, m
   return out.sort((a, b) => (b.pct || 0) - (a.pct || 0));
 }
 
+// Size the UNDER-PRESSED damage abilities by MEASURED damage -- the way cooldownGaps
+// sizes the low band, but for the filler/core band usageDivergence covers. Pressing a
+// core ability far less than the field (Fury's Raging Blow 2.4/min vs 7.4) is the single
+// biggest CONTROLLABLE lever for an underperformer, and -- flat-estimated until now --
+// the chunk that hid in the "playstyle" residual. We size it from REAL damage so it
+// lands as a concrete "press X more, ~N%" item instead of vanishing into the bucket.
+// GCD-AWARE so it never over-claims: a wrong-button swap nets the per-cast DIFFERENCE
+// (a GCD-capped player must drop a filler to fit the core ability -- displace the
+// CHEAPEST over-pressed button first); a pure under-press (no over-press) nets the full
+// hit, since the missing casts go into the idle time your lower cast rate proves you
+// have. Sized from YOUR OWN per-cast damage -- never the field's bigger hit -- so it
+// can't smuggle in a comp/crit gap (the empowerment/per-cast levers own that, gated).
+// >=0.5 of your casts needed to measure a per-cast; a never-pressed ability has none and
+// stays the (sim-priced) missing-talent branch. reconcileImpacts caps the column total
+// at the gap, so a GCD-capped player with no detected over-press can't over-attribute.
+// Returns { abilityName: pct }. Pure -> testable.
+export function usageDamageGaps(under, over, dmgTotals, dur, total, { perCap = 30 } = {}) {
+  const mins = dur ? dur / 60 : 0;
+  if (!mins) return {};
+  const totalDmg = total || Object.values(dmgTotals || {}).reduce((a, b) => a + b, 0) || 1;
+  const dpc = (n, rate) => {
+    const casts = rate * mins;
+    return casts >= 0.5 ? (dmgTotals[n] || 0) / casts : null;     // your measured damage-per-cast
+  };
+  // The cheapest over-pressed button's per-cast damage = what a GCD-capped swap
+  // displaces. 0 when you over-press nothing (the extra casts are pure additions into
+  // the idle GCDs your cast deficit implies). Subtracting it keeps the estimate
+  // conservative (under-claims the pure-addition casts when both exist).
+  const overDpcs = (over || []).map((o) => dpc(o.name, o.you)).filter((x) => x != null);
+  const displaced = overDpcs.length ? Math.min(...overDpcs) : 0;
+  const out = {};
+  for (const u of (under || [])) {
+    const dU = dpc(u.name, u.you);
+    if (dU == null) continue;                          // can't measure -> talent branch owns it
+    const net = Math.max(0, dU - displaced);           // GCD-aware net damage per recovered cast
+    const missed = Math.max(0, (u.field - u.you) * mins);
+    const pct = Math.min(perCap, Math.round((100 * missed * net) / totalDmg));
+    if (pct >= 1) out[u.name] = pct;
+  }
+  return out;
+}
+
 // COOLDOWN USAGE gaps from ALL casts (keyed by ability id), the layer that catches
 // BUFF/PET cooldowns the damage table can't see (Invoke Niuzao, Weapons of Order).
 // We can't size a buff/pet CD's damage from cast counts, so this returns the
@@ -551,6 +593,12 @@ export async function rotationFindings(name, server, region, className, specName
   const fieldOpener = peers.length ? peers[0].opener : null;
   const fieldRate = fieldCastRates(peers.map((p) => p.castRate || {}));
   const usage = usageDivergence(you.castRate || {}, fieldRate);
+  // Size each under-pressed damage ability by MEASURED damage (not a flat guess), so a
+  // core ability you press far less than the field lands as a concrete %, not residual.
+  const usageDmg = peers.length
+    ? usageDamageGaps(usage.under, usage.over, you.dmgTotals || {}, you.dur, you.total)
+    : {};
+  for (const u of usage.under) if (usageDmg[u.name] != null) u.dmgPct = usageDmg[u.name];
   // Under-used damage cooldowns (the band usageDivergence's filler floor misses).
   // Dedupe against usage.under so the same ability isn't double-counted.
   const underNames = new Set(usage.under.map((a) => a.name));
@@ -778,38 +826,56 @@ export function rotationLevers(rot) {
     // you skip falls through to the ordinary "press it more" rotation fix.
     const cls = classifyUnderUse(top, rot && rot.talent);
     const onGlobals = overTop ? ` Right now you spend those globals on ${link(overTop.name)}.` : "";
+    // The top under-use can be a BUILD problem (a talent you skipped, or one you took
+    // but never press) -- that's a respec, sim-priced, so it keeps the flat estimate.
+    // We consume only that ONE ability here; the rest still get the measured press-more
+    // treatment below (the old code dropped them when the top was a talent issue).
+    let consumed = null;
     if (cls === "missing-talent") {
+      consumed = top.name;
       out.push(finding("Rotation", DPS(5, 10),
         `TALENTS/BUILD: you never press ${link(top.name)}, and you haven't talented it while the field casts it ` +
         `${f(top.field, 1)}/min -- respec to the field's build (the one with ${link(top.name)}); your rotation ` +
         `can't include it until you do.${onGlobals}`));
     } else if (cls === "talented-unused") {
+      consumed = top.name;
       out.push(finding("Rotation", DPS(5, 10),
         `TALENTS/BUILD: you've talented ${link(top.name)} but never press it, while the field casts it ` +
         `${f(top.field, 1)}/min -- a wasted talent. Work it into your rotation, or respec the point into ` +
         `something you'll actually use.${onGlobals}`));
-    } else {
-      // Only recommend pressing abilities the player can actually cast -- the peer
-      // pool can skew to a different hero tree (a Guardian on Elune's Chosen vs
-      // Druid-of-the-Claw peers who press Ravage). A skipped damage talent the field
-      // takes is the missing-talent branch above, not "press it more".
-      // HEALERS: suppress the reactive "press more heals" rec. Healing is reactive
-      // -- you cast to match incoming damage, so "the field presses Vivify 30/min vs
-      // your 11, press it more" is a misframe (casting more heals into less damage
-      // just overheals). A genuine build gap (missing-talent/talented-unused above)
-      // still fires; under-used healing COOLDOWNS fire below ("use Rewind more" is a
-      // real HPS rec). Only this raw cast-rate "press more" is wrong for a healer.
-      const underAbilities = runIsHealer() ? [] : u.under.filter((a) => castable(a.name, rot && rot.talent));
-      if (underAbilities.length) {
-        const under = underAbilities.slice(0, 2).map((a) => `${link(a.name)} (peers ${f(a.field, 1)}/min vs your ${f(a.you, 1)})`);
-        const wrongButton = realOver.length > 0;
-        const over = wrongButton
-          ? `; you over-press ${realOver.slice(0, 1).map((a) => `${link(a.name)} (your ${f(a.you, 1)}/min vs peers ${f(a.field, 1)})`).join("")}`
-          : "";
-        out.push(finding("Rotation", wrongButton ? DPS(5, 10) : DPS(3, 6),
-          `ROTATION: press ${under.join(" and ")} more${over} -- match your peers' ability priority ` +
-          `(verify in a log/sim).`));
-      }
+    }
+    // Measured PRESS-MORE levers: one TARGETED finding per under-pressed damage ability,
+    // each sized from real damage (usageDamageGaps -> a.dmgPct). This is the chunk that
+    // used to hide in the "playstyle" residual -- pressing a core ability far less than
+    // the field is lost damage we can now name AND size, not a flat 3-6% guess.
+    // Only abilities you can actually cast (peer pool can skew hero tree); the
+    // never-pressed talent above is excluded. HEALERS: suppress -- "press more heals"
+    // is a misframe (healing is reactive; casting into less damage just overheals).
+    const underAbilities = runIsHealer()
+      ? []
+      : u.under.filter((a) => a.name !== consumed && castable(a.name, rot && rot.talent));
+    const measured = underAbilities.filter((a) => (a.dmgPct || 0) >= 1).sort((a, b) => b.dmgPct - a.dmgPct);
+    measured.slice(0, 3).forEach((a, i) => {
+      // Name the wrong-button swap once, on the biggest, when you over-press a filler.
+      const over = (i === 0 && realOver.length)
+        ? ` You're spending those globals on ${link(realOver[0].name)} (your ${f(realOver[0].you, 1)}/min vs peers ${f(realOver[0].field, 1)}) -- swap them.`
+        : "";
+      out.push(finding("Rotation", DPS(a.dmgPct),
+        `ROTATION: press ${link(a.name)} more -- peers cast it ${f(a.field, 1)}/min vs your ${f(a.you, 1)}; ` +
+        `the casts you're missing are ~${a.dmgPct}% of your ${throughputWord()}.${over}`, "measured"));
+    });
+    // Fallback: when NONE could be measured (no peers, or too few of your own casts to
+    // get a per-cast), keep the old lumped flat estimate so the lever still surfaces.
+    const unmeasured = underAbilities.filter((a) => !((a.dmgPct || 0) >= 1));
+    if (!measured.length && unmeasured.length) {
+      const under = unmeasured.slice(0, 2).map((a) => `${link(a.name)} (peers ${f(a.field, 1)}/min vs your ${f(a.you, 1)})`);
+      const wrongButton = realOver.length > 0;
+      const over = wrongButton
+        ? `; you over-press ${realOver.slice(0, 1).map((a) => `${link(a.name)} (your ${f(a.you, 1)}/min vs peers ${f(a.field, 1)})`).join("")}`
+        : "";
+      out.push(finding("Rotation", wrongButton ? DPS(5, 10) : DPS(3, 6),
+        `ROTATION: press ${under.join(" and ")} more${over} -- match your peers' ability priority ` +
+        `(verify in a log/sim).`));
     }
   }
   // Under-used DAMAGE COOLDOWNS -- a measured PLAYSTYLE lever (the kind that

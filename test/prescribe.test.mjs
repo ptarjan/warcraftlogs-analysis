@@ -8,11 +8,28 @@ import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
 const { DPS, COMP, INFO, finding, fieldDelta, setRunMetric } = await import("../docs/core.js");          // shared Finding currency
-const { rotationLevers } = await import("../docs/rotation.js");
+const { rotationLevers, usageDamageGaps } = await import("../docs/rotation.js");
 
 test("finding tags its basis: estimate by default, measured on opt-in", () => {
   assert.equal(finding("Gear", DPS(2), "x").basis, "est");          // levers must opt IN to "measured"
   assert.equal(finding("Execution", DPS(3), "y", "measured").basis, "measured");
+});
+
+test("usageDamageGaps: sizes an under-pressed ability by MEASURED damage, GCD-aware", () => {
+  // dur 300s (5 min). Under A: you 2/min, field 7/min -> 25 missed casts; your 10 casts
+  // did 10000 -> 1000/cast. Over B (filler): you 8/min, field 3 -> 200/cast. total 100000.
+  const dmg = { A: 10000, B: 8000 };
+  // Wrong-button: swapping nets the DIFFERENCE (1000-200)=800/cast -> 25*800/100000 = 20%.
+  const wrong = usageDamageGaps([{ name: "A", you: 2, field: 7 }], [{ name: "B", you: 8, field: 3 }], dmg, 300, 100000);
+  assert.equal(wrong.A, 20);
+  // Pure under-press (no over): casts go into idle -> full 1000/cast -> 25*1000/100000 = 25%.
+  const pure = usageDamageGaps([{ name: "A", you: 2, field: 7 }], [], dmg, 300, 100000);
+  assert.equal(pure.A, 25);
+  // Never-pressed ability (you 0): no per-cast to measure -> skipped (talent branch owns it).
+  assert.deepEqual(usageDamageGaps([{ name: "C", you: 0, field: 5 }], [], dmg, 300, 100000), {});
+  // Capped per ability so one button can't dominate before reconcile.
+  const huge = usageDamageGaps([{ name: "A", you: 2, field: 30 }], [], dmg, 300, 100000);
+  assert.equal(huge.A, 30);
 });
 
 test("fieldDelta measures an attribute's value from the field (have vs not)", () => {
