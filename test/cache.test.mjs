@@ -41,6 +41,25 @@ test("a fetched query is served from the cache on the next reload (no 2nd fetch)
   assert.deepEqual(await gql(q), { n: 42 }, "served from the persistent cache, no fetch");
 });
 
+test("WCL_CACHE_ONLY: a cache miss throws instead of spending WCL points", async () => {
+  const { gql, clearGqlCache, CacheMiss } = await import("../docs/wcl.js");
+  clearGqlCache();
+  process.env.WCL_CACHE_ONLY = "1";
+  globalThis.fetch = async () => { throw new Error("cache-only must NOT hit the network"); };
+  try {
+    await assert.rejects(() => gql("query{ never-cached }"),
+      (e) => e instanceof CacheMiss || /cache-only/.test(e.message), "an uncached query throws CacheMiss, no fetch");
+    // A query already in cache still serves (no throw).
+    globalThis.fetch = async () => { throw new Error("should not fetch"); };
+    const { _cacheWrite } = await import("../docs/wcl.js");
+    await _cacheWrite("query{ already-cached }", { ok: 1 });
+    clearGqlCache();                          // drop in-memory; persistent survives
+    assert.deepEqual(await gql("query{ already-cached }"), { ok: 1 }, "cached query served under cache-only");
+  } finally {
+    delete process.env.WCL_CACHE_ONLY;
+  }
+});
+
 test("gql({fresh}) bypasses every read cache and re-fetches (live-report poll)", async () => {
   const { gql, clearGqlCache } = await import("../docs/wcl.js");
   clearGqlCache();

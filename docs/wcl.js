@@ -223,6 +223,12 @@ let _diskTimer = null;
 // test suite point the cache at a temp file via WCL_GQL_CACHE_FILE.
 const diskEnabled = () => IS_NODE && typeof process !== "undefined" && process.env.WCL_GQL_CACHE === "1";
 
+// Cache-only mode (Node): a cache MISS throws instead of hitting the network, so a
+// run can NEVER spend WCL points. Used to analyze only fully-cached characters
+// (`WCL_CACHE_ONLY=1`) without risking the shared hourly budget.
+const cacheOnly = () => IS_NODE && typeof process !== "undefined" && process.env.WCL_CACHE_ONLY === "1";
+export class CacheMiss extends Error { constructor(q) { super("cache-only: not cached (would spend WCL points)"); this.name = "CacheMiss"; this.q = q; } }
+
 async function initDisk() {
   if (!diskEnabled()) return;
   if (_diskReady) return _diskReady;
@@ -337,6 +343,9 @@ export async function gql(query, retries = 6, { fresh = false } = {}) {
       const stored = await _cacheRead(query);
       if (stored !== undefined) return stored; // cross-reload hit -- no network
     }
+    // Cache-only: every cache read above missed, so a fetch here would spend points.
+    // Refuse instead -- the caller wanted a guaranteed-free, cached-only run.
+    if (cacheOnly()) throw new CacheMiss(query);
     const data = await _gqlRun(query, retries);
     if (!fresh) {
       diskPut(query, data);              // Node CLI disk cache (no-op in the browser)
