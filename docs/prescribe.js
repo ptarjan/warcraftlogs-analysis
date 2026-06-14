@@ -11,8 +11,8 @@ import {
   DPS, INFO, finding, metricUnit,
 } from "./core.js";
 import { timelineFindings } from "./timeline.js";
-import { gearFindings, gearLevers } from "./gear.js";
-import { wowheadSpell } from "./links.js";
+import { gearFindings, gearLevers, itemInstance, sourceText } from "./gear.js";
+import { wowheadSpell, wowheadItem } from "./links.js";
 import { rotationFindings, rotationLevers } from "./rotation.js";
 import { talentFindings, talentLevers } from "./talents.js";
 import { topParseFindings, topParseLevers } from "./topparse.js";
@@ -59,7 +59,13 @@ async function fieldGearConsumables(encounterId, difficulty, className, specName
         (enchBySlot[slotName] = enchBySlot[slotName] || new Map())
           .set(g.permanentEnchantName, (enchBySlot[slotName].get(g.permanentEnchantName) || 0) + 1);
       }
-      if ((slot === 12 || slot === 13) && g.name) trinkets.set(g.name, (trinkets.get(g.name) || 0) + 1);
+      // Tally trinkets by item id (a name can re-skin across ilvls); keep the name
+      // for display. Trinkets are EFFECT-based, so they get their own lever (a
+      // "sim this" candidate), never a stat-swap -- see trinketLevers / gear.js.
+      if ((slot === 12 || slot === 13) && g.id) {
+        const t = trinkets.get(g.id) || { name: g.name, count: 0 };
+        t.count++; trinkets.set(g.id, t);
+      }
     }
     for (const [nm, b] of Object.entries(bf)) {
       const lc = nm.toLowerCase();
@@ -99,7 +105,9 @@ async function mySetup(code, fight, sourceId, gear, priority = "crit", className
   const statPct = stats
     ? 100 * stats[priority] / (["crit", "haste", "mastery", "vers"].reduce((a, k) => a + stats[k], 0) || 1)
     : null;
-  const trinkets = gear.filter((g) => g.slot === 12 || g.slot === 13).map((g) => g.name);
+  const myTrinkets = gear.filter((g) => g.slot === 12 || g.slot === 13);
+  const trinkets = myTrinkets.map((g) => g.name);
+  const trinketIds = new Set(myTrinkets.map((g) => g.id).filter(Boolean));
   const ench = new Set(gear.filter((g) => g.slot in SLOT_NAME && g.permanentEnchant).map((g) => SLOT_NAME[g.slot]));
   return {
     flask: flask ? flask[0] : null, flaskGuid: flask ? flask[1].guid : null,
@@ -107,7 +115,7 @@ async function mySetup(code, fight, sourceId, gear, priority = "crit", className
     potion: potion ? potion[0] : null, potionGuid: potion ? potion[1].guid : null,
     augrune: augrune ? augrune[0] : null, augruneGuid: augrune ? augrune[1].guid : null,
     oil: oil ? oil[0] : null, oilGuid: oil ? oil[1].guid : null,
-    statPct, trinkets, ench,
+    statPct, trinkets, trinketIds, ench,
   };
 }
 
@@ -277,6 +285,30 @@ function enchantLevers(field, my) {
   return [finding("Setup", DPS(est), `ENCHANTS: you're missing enchants on ${list}. The field runs them -- a free parse with equal gear.`)];
 }
 
+// Trinkets are EFFECT-based (procs / on-use), so they can't be ranked by a stat
+// sum like the other slots -- gear.js deliberately skips them. Surface them their
+// own way: a trinket most of your ilvl-matched peers equip but you DON'T is a
+// likely upgrade to SIM (Droptimizer), not a measured gain. Conservative -- only
+// on a real majority, only trinkets you don't already run, top 2 so it stays clean.
+export async function trinketLevers(field, my) {
+  if (!field || !field.trinkets || !field.trinkets.size || field.n < 4) return [];
+  const threshold = Math.max(2, Math.ceil(field.n * 0.5));
+  const favored = [...field.trinkets.entries()]
+    .map(([id, t]) => ({ id, name: t.name, count: t.count }))
+    .filter((t) => t.count >= threshold && !my.trinketIds.has(t.id))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 2);
+  if (!favored.length) return [];
+  const parts = [];
+  for (const t of favored) {
+    const inst = await itemInstance(t.id, null);           // resolve dungeon/raid from the item id
+    parts.push(`${wowheadItem(t.id, t.name)} (${t.count}/${field.n} peers)${sourceText(null, inst, null)}`);
+  }
+  const yours = my.trinkets && my.trinkets.length ? my.trinkets.join(" + ") : "your current trinkets";
+  return [finding("Gear", DPS(3),
+    `TRINKETS: the field favors ${parts.join(" and ")} -- you run ${yours}. Trinkets are effect-based (proc/on-use), not a stat swap -- SIM it (Droptimizer) before committing, but a trinket most of your peers run and you don't is a common hidden upgrade.`)];
+}
+
 // Your secondary % trails the field but there's no lever to close it -- either
 // every item is already maxed for the stat (gear/comp-locked), or your gear is
 // optimal for what you own. Only fires when gearLevers found no swap/restat
@@ -438,11 +470,15 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // Measured DPS gap to the field -- the true headroom that caps the press-faster
   // estimate so no single execution lever can claim more than the whole gap.
   const peerGapPct = (you && you.dps && field && field.dpsMed) ? Math.round(((field.dpsMed - you.dps) / you.dps) * 100) : null;
+  // Trinkets are effect-based, so they get their own (async, Wowhead-resolved)
+  // lever instead of a stat swap -- compute it before the sync concat below.
+  const trinketRx = (field && my) ? await trinketLevers(field, my) : [];
   /** @type {Finding[]} */
   const rx = [
     ...executionLevers(execd, rot, peerGapPct),
     ...(field && my ? consumableLevers(field, my) : []),
     ...(field && my ? enchantLevers(field, my) : []),
+    ...trinketRx,
     ...gearLevers(gf, priority),
     ...(my ? statGapLever(gf, my, field, priority) : []),
     ...rotationLevers(rot),
