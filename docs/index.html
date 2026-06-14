@@ -96,6 +96,11 @@
     color: var(--muted); }
   .card-status.err { color: var(--warn); }
   .card-status .spin { width: 11px; height: 11px; margin-right: 0; }
+  /* live last-line preview while a collapsed section loads -- fills the gap
+     between the title and the spinner, ellipsized to one line. */
+  .card-preview { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font: 400 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: 0; text-transform: none; color: var(--muted); opacity: .85; }
 
   /* ---------- landing intro (hidden once analysis starts) ---------- */
   .intro { margin-top: 30px; }
@@ -159,10 +164,12 @@
   #out { margin-top: 24px; display: flex; flex-direction: column; gap: 16px; }
   .card { background: linear-gradient(180deg, var(--panel2), var(--panel));
     border: 1px solid var(--edge); border-radius: 14px; overflow: hidden;
+    min-width: 0; /* flex-item: allow shrink so a nowrap preview can't widen it */
     box-shadow: 0 6px 20px rgba(0,0,0,.25); }
   /* one uniform header for every card -- title on the left, status on the
      right -- so the primary list and the supporting analyses look alike. */
   .card-head { margin: 0; padding: 13px 18px; display: flex; align-items: center; gap: 8px;
+    min-width: 0; overflow: hidden; /* so .card-preview ellipsizes instead of overflowing */
     border-bottom: 1px solid var(--edge); background: rgba(255,255,255,.02); }
   .card-title { font-size: 12.5px; font-weight: 700; letter-spacing: .6px;
     text-transform: uppercase; color: var(--accent); }

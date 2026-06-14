@@ -267,6 +267,9 @@ function makeCard(title, { primary = false, collapsed = false } = {}) {
 // they all run at once the page reads as several parallel flows.
 function setCardState(h, state) {
   h.state = state;
+  // The live last-line preview belongs to the "busy" phase only -- drop it the
+  // moment the section finishes (or fails), leaving a clean collapsed header.
+  if (state !== "busy" && h.preview) { h.preview.remove(); h.preview = null; }
   // "done" removes the indicator entirely -- the thinking spinner just vanishes.
   if (state === "done") { if (h.status) { h.status.remove(); h.status = null; } return; }
   if (!h.status) {
@@ -277,6 +280,18 @@ function setCardState(h, state) {
   h.status.classList.toggle("err", state === "error");
   if (state === "error") h.status.textContent = "failed";  // keep failures legible
   else h.status.innerHTML = '<span class="spin"></span>';  // running: a thinking spinner
+}
+
+// While a collapsed section streams, show its latest line in the header so the
+// wait reads as live progress, not a blank spinner. Cleared when it finishes.
+function setPreview(h, text) {
+  if (!(h.el && h.el.tagName === "DETAILS") || h.state !== "busy") return;
+  if (!h.preview) {
+    h.preview = document.createElement("span");
+    h.preview.className = "card-preview";
+    h.head.insertBefore(h.preview, h.status || null); // sits between title and spinner
+  }
+  h.preview.textContent = text;
 }
 
 // Rendering primitives, parameterized by the card handle `h` so sections running
@@ -339,6 +354,12 @@ function readoutLine(raw) {
 
 // Turn one streamed text line into the right DOM node inside card `h`.
 function logTo(h, line) {
+  // Live preview: mirror the latest meaningful line into the collapsed header
+  // (links -> plain text, separators stripped) so loading shows real progress.
+  if (h.state === "busy") {
+    const t = line.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/[=#–—-]{2,}/g, " ").replace(/\s+/g, " ").trim();
+    if (t) setPreview(h, t);
+  }
   if (/^[=#-]{3,}$/.test(line.trim())) return;                  // bare separator bars
   const m = line.match(/^\s*(\d+)\.\s*\[\s*(.+?)\s*\]\s*(.+)$/); // prescription item -> its own card
   if (m) {
