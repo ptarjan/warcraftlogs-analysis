@@ -151,12 +151,39 @@ export async function characterZone(name, server, region, difficulty) {
   return c;
 }
 
+// Factored so the single-encounter query and the bundled multi-encounter query share
+// EXACT text (the cache key) -- verified to reproduce existing cached keys byte-for-byte.
+const _charHead = (name, server, region) =>
+  `character(\n    name:"${cName(name)}", serverSlug:"${slug(clean(server))}", serverRegion:"${cRegion(region)}")`;
+const _encField = (encounterId, difficulty) =>
+  `encounterRankings(encounterID:${encounterId}, difficulty:${difficulty}, metric:${_metric})`;
+export const _characterEncounterQuery = (name, server, region, encounterId, difficulty) =>
+  `query { characterData { ${_charHead(name, server, region)} {\n    ${_encField(encounterId, difficulty)} } } }`;
 export async function characterEncounter(name, server, region, encounterId, difficulty) {
-  const q = `query { characterData { character(
-    name:"${cName(name)}", serverSlug:"${slug(clean(server))}", serverRegion:"${cRegion(region)}") {
-    encounterRankings(encounterID:${encounterId}, difficulty:${difficulty}, metric:${_metric}) } } }`;
-  const c = (await gql(q)).characterData.character;
+  const c = (await gql(_characterEncounterQuery(name, server, region, encounterId, difficulty))).characterData.character;
   return c ? c.encounterRankings : null;
+}
+
+// Pre-warm a character's encounterRankings for MANY bosses in ONE request (aliased
+// within the single character node), split back to each per-encounter cache key.
+// bestKill/recentKills each loop characterEncounter over every killed boss; this turns
+// that ~8-request fan-out into ~1. Fail-soft; Node only; primes the same keys (no orphaning).
+export async function prefetchCharacterEncounters(name, server, region, encounterIds, difficulty, { batch = 8 } = {}) {
+  if (!IS_NODE) return;
+  const todo = [];
+  for (const eid of encounterIds || []) {
+    const q = _characterEncounterQuery(name, server, region, eid, difficulty);
+    if (todo.some((t) => t.eid === eid) || isCached(q)) continue;
+    todo.push({ eid, q });
+  }
+  for (let i = 0; i < todo.length; i += batch) {
+    const group = todo.slice(i, i + batch);
+    const aliased = group.map((t, j) => `e${j}: ${_encField(t.eid, difficulty)}`).join("\n    ");
+    try {
+      const c = (await gql(`query { characterData { ${_charHead(name, server, region)} {\n    ${aliased} } } }`, 2, { fresh: true })).characterData.character;
+      if (c) group.forEach((t, j) => { const er = c[`e${j}`]; if (er !== undefined) primeQueryCache(t.q, { characterData: { character: { encounterRankings: er } } }); });
+    } catch (_) { /* fall back to individual characterEncounter */ }
+  }
 }
 
 export async function topRankings(encounterId, difficulty, className, specName, page = 1) {
@@ -644,6 +671,7 @@ export const bestRank = (ranks) => {
 export async function bestKill(name, server, region, difficulty) {
   const c = await characterZone(name, server, region, difficulty);
   const ranks = (c.zoneRankings.rankings || []).filter((r) => (r.totalKills || 0) > 0);
+  await prefetchCharacterEncounters(name, server, region, ranks.map((r) => r.encounter.id), difficulty);
   const ers = await mapLimit(ranks, 5, (r) =>
     characterEncounter(name, server, region, r.encounter.id, difficulty));
   // Every individual kill, tagged with its boss, so we can pick the most recent
@@ -675,6 +703,7 @@ export async function bestKill(name, server, region, difficulty) {
 export async function recentKills(name, server, region, difficulty) {
   const c = await characterZone(name, server, region, difficulty);
   const ranks = (c.zoneRankings.rankings || []).filter((r) => (r.totalKills || 0) > 0);
+  await prefetchCharacterEncounters(name, server, region, ranks.map((r) => r.encounter.id), difficulty);
   const ers = await mapLimit(ranks, 5, (r) =>
     characterEncounter(name, server, region, r.encounter.id, difficulty));
   const out = [];

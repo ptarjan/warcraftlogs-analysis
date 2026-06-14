@@ -26,9 +26,14 @@ function shape(q) {
   if (/characterRankings/.test(q)) return { worldData: { encounter: { characterRankings: { rankings: Array.from({ length: 100 }, (_, i) => ({
     name: "Peer" + i, class: CLS, spec: SPEC, amount: 2e7 - i, bracketData: IL - 2 + (i % 5),
     server: { name: "S", region: "US" }, report: { code: "PR" + (i % 20), fightID: (i % 5) + 1 }, duration: 2e5, startTime: i })) } } } };
-  if (/encounterRankings/.test(q)) { const eid = (q.match(/encounterID:\s*(\d+)/) || [])[1] || "0";
-    return { characterData: { character: { encounterRankings: { ranks: Array.from({ length: 8 }, (_, k) => ({
-      bracketData: IL, rankPercent: 60, startTime: k, report: { code: `RK${eid}_${k}`, fightID: k + 1 }, duration: 2e5 })) } } } }; }
+  if (/encounterRankings/.test(q)) {
+    const ranksFor = (eid) => ({ ranks: Array.from({ length: 8 }, (_, k) => ({
+      bracketData: IL, rankPercent: 60, startTime: k, report: { code: `RK${eid}_${k}`, fightID: k + 1 }, duration: 2e5 })) });
+    // Bundled (aliased) multi-encounter query: e0:/e1:/... each with its own encounterID.
+    const aliases = [...q.matchAll(/(\w+):\s*encounterRankings\(encounterID:\s*(\d+)/g)];
+    if (aliases.length) { const ch = {}; for (const [, a, eid] of aliases) ch[a] = ranksFor(eid); return { characterData: { character: ch } }; }
+    const eid = (q.match(/encounterID:\s*(\d+)/) || [])[1] || "0";
+    return { characterData: { character: { encounterRankings: ranksFor(eid) } } }; }
   if (/reportData/.test(q)) { // universal report -- shape each field per the query
     const report = () => ({
       dmg: { data: tbl() },
@@ -140,8 +145,10 @@ test("structural: report-data queries are built ONLY in core.js (don't bypass th
 // whitespace change orphans EVERY cached report and re-fetches it, burning the budget.
 // Locked byte-for-byte here (verified to reproduce 1500+ real cached keys exactly).
 test("cache-key stability: report query strings are frozen (changing them orphans the cache)", async () => {
-  const { _reportCoreQuery, _fightEventsQuery, _buffUptimesQuery, setRunMetric } = await import("../docs/core.js");
+  const { _reportCoreQuery, _fightEventsQuery, _buffUptimesQuery, _characterEncounterQuery, setRunMetric } = await import("../docs/core.js");
   setRunMetric("dps");
+  assert.equal(_characterEncounterQuery("AbCd", "server", "US", 5, 4),
+    'query { characterData { character(\n    name:"Abcd", serverSlug:"server", serverRegion:"US") {\n    encounterRankings(encounterID:5, difficulty:4, metric:dps) } } }');
   assert.equal(_reportCoreQuery("AbCd", 3),
     'query { reportData { report(code:"AbCd") {\n    dmg: table(fightIDs:3, dataType:DamageDone)\n    casts: table(fightIDs:3, dataType:Casts)\n    combatant: events(fightIDs:3, dataType:CombatantInfo, limit:50) { data }\n    fightWin: fights(fightIDs:3) { startTime endTime } } } }');
   assert.equal(_fightEventsQuery("AbCd", 3, 7, 100, 200),
