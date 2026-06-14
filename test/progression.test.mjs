@@ -99,6 +99,16 @@ test("pickEncounter: with no boss named, picks the most-pulled encounter", () =>
   assert.equal(e.pulls.length, 2);
 });
 
+test("pickEncounter: the boss you're progging (most wipes) beats a more-pulled farm boss", () => {
+  // Farm boss (enc 1): 4 pulls but all kills. Prog boss (enc 2): 3 pulls, all wipes.
+  // The default must be the one you keep WIPING on, not the one with more pulls.
+  const fights = [
+    ...Array.from({ length: 4 }, () => ({ encounterID: 1, name: "Farm", kill: true })),
+    ...Array.from({ length: 3 }, () => ({ encounterID: 2, name: "Prog", kill: false })),
+  ];
+  assert.equal(prog.pickEncounter(fights).encounterID, 2);
+});
+
 test("pickEncounter: honors an explicit encounter id", () => {
   const fights = [{ encounterID: 1, name: "A" }, { encounterID: 2, name: "B" }, { encounterID: 2, name: "B" }];
   assert.equal(prog.pickEncounter(fights, 2).pulls.length, 2);

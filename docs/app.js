@@ -798,11 +798,14 @@ function buildProgHero(code) {
 function buildEncBar(hero, encs, chosen, live) {
   hero.encbar.innerHTML = "";
   if (encs.length > 1) {
+    const lbl = document.createElement("span"); lbl.className = "enclabel"; lbl.textContent = "Boss:";
+    hero.encbar.appendChild(lbl);
     for (const e of encs) {
       const c = document.createElement("button"); c.type = "button";
       c.className = "encchip" + (e.encounterID === chosen ? " active" : "");
-      c.textContent = `${e.name} (${e.pulls})`;
-      c.onclick = () => { progCtx.encounterId = e.encounterID; renderProgFull(); };
+      const tag = e.kills ? `${e.wipes}w · ${e.kills}k` : `${e.pulls} pulls`;
+      c.textContent = `${e.name} (${tag})`;
+      c.onclick = () => { if (e.encounterID !== progCtx.encounterId) { progCtx.encounterId = e.encounterID; renderProgFull(); } };
       hero.encbar.appendChild(c);
     }
   }

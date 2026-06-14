@@ -49,20 +49,29 @@ export function pickEncounter(fights, encounterId = null) {
   }
   const byEnc = new Map();
   for (const x of boss) { const a = byEnc.get(x.encounterID) || []; a.push(x); byEnc.set(x.encounterID, a); }
+  // Default to the boss you're PROGRESSING: most WIPES (a farm boss you one-shot
+  // shouldn't win over the one you keep pulling), tie-broken by total pulls.
   let best = null;
-  for (const [eid, arr] of byEnc) if (!best || arr.length > best.pulls.length) best = { encounterID: eid, name: arr[0].name, pulls: arr };
+  for (const [eid, arr] of byEnc) {
+    const wipes = arr.filter((p) => !p.kill).length;
+    if (!best || wipes > best.wipes || (wipes === best.wipes && arr.length > best.pulls.length)) {
+      best = { encounterID: eid, name: arr[0].name, pulls: arr, wipes };
+    }
+  }
   return best;
 }
 
-// Every encounter pulled in a report, for a picker (most-pulled first).
+// Every encounter pulled in a report, for the boss chooser. Ordered the same way
+// pickEncounter defaults (most wipes, then most pulls) so the highlighted chip
+// matches the boss actually analyzed.
 export function encountersIn(fights) {
   const byEnc = new Map();
   for (const x of (fights || [])) {
     if (!(x.encounterID > 0)) continue;
-    const e = byEnc.get(x.encounterID) || { encounterID: x.encounterID, name: x.name, pulls: 0, kills: 0, difficulty: x.difficulty };
-    e.pulls++; if (x.kill) e.kills++; byEnc.set(x.encounterID, e);
+    const e = byEnc.get(x.encounterID) || { encounterID: x.encounterID, name: x.name, pulls: 0, kills: 0, wipes: 0, difficulty: x.difficulty };
+    e.pulls++; if (x.kill) e.kills++; else e.wipes++; byEnc.set(x.encounterID, e);
   }
-  return [...byEnc.values()].sort((a, b) => b.pulls - a.pulls);
+  return [...byEnc.values()].sort((a, b) => (b.wipes - a.wipes) || (b.pulls - a.pulls));
 }
 
 // Resolve a death event's victim name+class and the killing ability id, via the
