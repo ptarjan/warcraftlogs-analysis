@@ -5,7 +5,25 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps } = await import("../docs/rotation.js");
+
+test("castUsageGaps: flags a buff/pet cooldown the field presses more (by ability id)", () => {
+  // 300s fight. Field casts a cooldown id 0.5/min (2.5/kill), you 0.2/min (1/kill).
+  // Below usageDivergence's floor AND not in the damage table -- only this catches it.
+  const gaps = castUsageGaps(
+    { 132578: 0.2, 100780: 50 },   // you: Niuzao 1x, Tiger Palm filler
+    { 132578: 0.5, 100780: 51 },   // field: Niuzao 2.5x, filler
+    300,
+  );
+  assert.equal(gaps.length, 1, "the 51/min filler is outside the cooldown band");
+  assert.equal(gaps[0].id, "132578");
+  assert.equal(Math.round(gaps[0].fieldPerFight), 3);   // 0.5/min * 5min ~= 2.5 -> 3
+  assert.equal(Math.round(gaps[0].youPerFight), 1);
+});
+
+test("castUsageGaps: silent when you use the cooldown about as often as the field", () => {
+  assert.equal(castUsageGaps({ 132578: 0.45 }, { 132578: 0.5 }, 300).length, 0);
+});
 
 test("cooldownGaps: catches a low-frequency cooldown usageDivergence's floor misses", () => {
   // Field casts a big cooldown 0.5/min, you 0.2/min -- below usageDivergence's

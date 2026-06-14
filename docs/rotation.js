@@ -13,6 +13,7 @@ import {
 } from "./core.js";
 import { talentedAbilities } from "./talents.js";
 import { wowheadSpell } from "./links.js";
+import { spellTooltip } from "./wcl.js";
 
 // --- pure, unit-tested helpers ----------------------------------------------
 
@@ -75,8 +76,18 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
   const abils = await damageAbilities(code, fight, m.name, className);
   const id2name = Object.fromEntries(abils.map((a) => [a.guid, a.name]));
   const name2id = Object.fromEntries(abils.map((a) => [a.name, a.guid]));
-  const casts = (await fightEvents(code, fight, m.sourceID, s, e)).casts
-    .filter((x) => !x.fake && id2name[x.abilityGameID])
+  const rawCasts = (await fightEvents(code, fight, m.sourceID, s, e)).casts.filter((x) => !x.fake);
+  const cpm = dur ? 60 / dur : 0;
+  // ALL casts/min keyed by ability id -- the damage table is truncated to ~5
+  // abilities, so buff/pet COOLDOWNS (Invoke Niuzao, Weapons of Order) appear ONLY
+  // here, not in the damage-derived castRate. Names are resolved later (via Wowhead)
+  // for just the few that diverge from the field, so this stays cheap.
+  const allCastRate = {};
+  for (const x of rawCasts) allCastRate[x.abilityGameID] = (allCastRate[x.abilityGameID] || 0) + 1;
+  for (const k of Object.keys(allCastRate)) allCastRate[k] *= cpm;
+
+  const casts = rawCasts
+    .filter((x) => id2name[x.abilityGameID])
     .map((x) => ({ t: x.timestamp - s, name: id2name[x.abilityGameID] }))
     .sort((a, b) => a.t - b.t);
   if (casts.length < 5) return null;
@@ -85,7 +96,6 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
   // what the field presses". Free: we already have every (damage) cast here.
   const castRate = {};
   for (const c of casts) castRate[c.name] = (castRate[c.name] || 0) + 1;
-  const cpm = dur ? 60 / dur : 0;
   for (const k of Object.keys(castRate)) castRate[k] *= cpm;
 
   if (opts.onlyAbility) {
@@ -95,7 +105,7 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
       const evs = await paginateEvents(code, fight, m.sourceID, eventTable(), id, s, e);
       procPerMin = perHit(evs).procBig / (dur / 60 || 1);
     }
-    return { opener: openerSequence(casts), procPerMin, castRate, name2id };
+    return { opener: openerSequence(casts), procPerMin, castRate, allCastRate, name2id };
   }
 
   // You: per-hit detail for the top damage abilities (bounded for API cost).
@@ -111,7 +121,7 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
   // Per-ability total damage (name -> total), so the cooldown lever can size a
   // missed cooldown by its MEASURED damage-per-cast rather than guessing.
   const dmgTotals = Object.fromEntries(abils.map((a) => [a.name, a.total]));
-  return { opener: openerSequence(casts), hits, dur, castRate, dmgTotals, sourceID: m.sourceID, name2id };
+  return { opener: openerSequence(casts), hits, dur, castRate, allCastRate, dmgTotals, total: m.total, sourceID: m.sourceID, name2id };
 }
 
 // Median casts/min per ability across the field's kills (absent in a kill = 0),
@@ -168,6 +178,25 @@ export function cooldownGaps(youRate, fieldRate, dmgTotals, dur, { band = 1.0, m
     out.push({ name: n, you: yr, field: fr, youCasts, fieldCasts, pct });
   }
   return out.sort((a, b) => (b.pct || 0) - (a.pct || 0));
+}
+
+// COOLDOWN USAGE gaps from ALL casts (keyed by ability id), the layer that catches
+// BUFF/PET cooldowns the damage table can't see (Invoke Niuzao, Weapons of Order).
+// We can't size a buff/pet CD's damage from cast counts, so this returns the
+// measured USAGE gap (you vs field, per kill) -- a "the field presses this cooldown
+// more than you" fact to NAME in the playstyle breakdown, not a fabricated %. Only
+// the low-frequency band, and only a real gap (field >=1.5x you AND >=1 cast/kill
+// more). Class-agnostic; names are resolved by the caller (Wowhead) for just these.
+export function castUsageGaps(youRate, fieldRate, dur, { band = 1.5, minField = 0.3 } = {}) {
+  const mins = dur ? dur / 60 : 1;
+  const out = [];
+  for (const [id, fr] of Object.entries(fieldRate || {})) {
+    const yr = (youRate || {})[id] || 0;
+    if (fr < minField || fr > band) continue;            // cooldown band only (skip fillers)
+    if (fr < yr * 1.5 || (fr - yr) * mins < 1) continue; // real gap: >=1 more cast/kill
+    out.push({ id, you: yr, field: fr, youPerFight: yr * mins, fieldPerFight: fr * mins, gap: fr - yr });
+  }
+  return out.sort((a, b) => b.gap - a.gap);
 }
 
 // Classify the field's top under-used ability against YOUR talents, so we only
@@ -229,6 +258,33 @@ export async function rotationFindings(name, server, region, className, specName
   const underNames = new Set(usage.under.map((a) => a.name));
   const cooldowns = (peers.length ? cooldownGaps(you.castRate || {}, fieldRate, you.dmgTotals || {}, you.dur) : [])
     .filter((c) => !underNames.has(c.name));
+  // BUFF/PET cooldown usage gaps from ALL casts (the damage table can't see them).
+  // Resolve names via Wowhead for just the top few divergent ids (bounded + cached).
+  const fieldAllRate = fieldCastRates(peers.map((p) => p.allCastRate || {}));
+  let cdUsage = [];
+  if (peers.length) {
+    const [fs, fe] = await fightWindow(best.code, best.fight);
+    const yourTotal = you.total || Object.values(you.dmgTotals || {}).reduce((a, b) => a + b, 0) || 1;
+    const gaps = castUsageGaps(you.allCastRate || {}, fieldAllRate, you.dur).slice(0, 5);
+    cdUsage = (await mapLimit(gaps, 3, async (g) => {
+      const id = Number(g.id);
+      // Keep ONLY damage cooldowns YOU actually cast: a targeted DamageDone check
+      // drops taunts/defensives/utility (Provoke, Fortifying Brew) and never-cast
+      // talents (Empty the Cellar -- the talent lever's job) -- all deal no damage
+      // under your source, so "use it on cooldown" can never be a false positive.
+      // The same events SIZE the gap: missed casts x your damage-per-cast / total.
+      let dmg = [];
+      try { dmg = await paginateEvents(best.code, best.fight, you.sourceID, eventTable(), id, fs, fe); } catch (e) { return null; }
+      if (!dmg.length) return null;
+      let nm = null;
+      try { const t = await spellTooltip(id); nm = t && t.name; } catch (e) { return null; }
+      if (!nm || underNames.has(nm) || cooldowns.some((c) => c.name === nm)) return null;
+      const abilityDmg = dmg.reduce((sm, x) => sm + (x.amount || 0), 0);
+      const dpc = g.youPerFight >= 1 ? abilityDmg / g.youPerFight : null;
+      const pct = dpc != null ? Math.round((100 * (g.fieldPerFight - g.youPerFight) * dpc) / yourTotal) : null;
+      return { name: nm, youPerFight: g.youPerFight, fieldPerFight: g.fieldPerFight, id, pct };
+    })).filter(Boolean).slice(0, 3);
+  }
   // Measured total damaging-ability casts/min, you vs field -- the direct "are
   // you pressing as often as they are" gap (sizes the press-faster lever).
   const sum = (o) => Object.values(o || {}).reduce((a, b) => a + b, 0);
@@ -247,7 +303,7 @@ export async function rotationFindings(name, server, region, className, specName
   const abilityIds = Object.assign({}, ...peers.map((p) => p.name2id || {}), you.name2id || {});
   return {
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener,
-    usage, cooldowns, castGap, fieldPeers: peers.length, talent, abilityIds,
+    usage, cooldowns, cdUsage, castGap, fieldPeers: peers.length, talent, abilityIds,
     proc: { name: top.name, isReal, youPerMin: top.procPerMin, fieldPerMin: fieldProc },
   };
 }
@@ -346,15 +402,27 @@ export function rotationLevers(rot) {
         `(verify in a log/sim).`));
     }
   }
-  // Under-used DAMAGE COOLDOWNS -- a measured playstyle lever (the kind that
-  // explains a big remainder; gear/sims don't). Sized from real damage-per-cast,
-  // so only emit ones we could size (>=1% of your damage).
+  // Under-used DAMAGE COOLDOWNS -- a measured PLAYSTYLE lever (the kind that
+  // explains a big remainder; gear/sims don't). Sized from real damage-per-cast.
+  // Two sources: cooldowns (the truncated damage table) and cdUsage (cast events,
+  // which catch cooldowns beyond the top-5 the damage table shows). Dedupe by name.
+  const seenCd = new Set();
   for (const cd of ((rot && rot.cooldowns) || []).slice(0, 2)) {
     if (cd.pct && cd.pct >= 1) {
+      seenCd.add(cd.name);
       out.push(finding("Rotation", DPS(cd.pct),
-        `COOLDOWN: you cast ${cd.name} ${cd.youCasts.toFixed(1)}x this fight (${f(cd.you, 1)}/min) vs the field's ` +
+        `COOLDOWN: you cast ${link(cd.name)} ${cd.youCasts.toFixed(1)}x this fight (${f(cd.you, 1)}/min) vs the field's ` +
         `${cd.fieldCasts.toFixed(1)}x (${f(cd.field, 1)}/min) -- ~${cd.pct}% of your damage. Use it on cooldown ` +
         `(or line it up with your burst); it's a button you're skipping, not gear.`));
+    }
+  }
+  for (const cd of ((rot && rot.cdUsage) || [])) {
+    if (cd.pct && cd.pct >= 1 && !seenCd.has(cd.name)) {
+      seenCd.add(cd.name);
+      out.push(finding("Rotation", DPS(cd.pct),
+        `COOLDOWN: you cast ${wowheadSpell(cd.id, cd.name)} ${cd.youPerFight.toFixed(0)}x/kill vs the field's ` +
+        `${cd.fieldPerFight.toFixed(0)}x -- ~${cd.pct}% of your damage. Use it on cooldown; it's a button you're ` +
+        `skipping, not gear.`));
     }
   }
   if (rot && rot.proc.isReal && rot.proc.fieldPerMin != null &&

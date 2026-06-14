@@ -510,13 +510,13 @@ function renderPrescription(log, d) {
       // A big remainder at matched ilvl is NOT a gear/sim gap (sims model gear, worth
       // a few % here) and NOT "press faster" -- it's PLAYSTYLE: how you play the same
       // gear vs the field (cooldown usage, ability frequency/sequencing, target &
-      // uptime). That's exactly what this tool exists to surface, so don't punt it to
-      // a sim. Name the concrete rotation divergence we measured, if any.
+      // uptime). Concrete cooldown/usage gaps now surface as their OWN levers above;
+      // name any remaining rotation divergence we measured.
       const under = (rot && rot.usage && rot.usage.under) || [];
       const cite = under.length
         ? ` We can see part of it: you press ${under.slice(0, 2).map((a) => `${a.name} ${f(a.you, 1)}/min vs ${f(a.field, 1)}`).join(", ")}.`
-        : ` We don't yet break it down ability-by-ability -- that's the gap in THIS tool to close, not a sim to run.`;
-      rtext = `PLAYSTYLE (~${r}%): the biggest chunk, and it's NOT gear (a sim would value your gear swaps at a few %) and NOT "press faster" -- it's how you play the same gear the field plays: cooldown usage, which abilities you press and when, and staying on target.${cite}`;
+        : ` Cooldown/ability-usage gaps we could measure are listed above; the rest is sequencing and target/uptime we don't yet break down — not a sim to run.`;
+      rtext = `PLAYSTYLE (~${r}%): the biggest chunk, and it's NOT gear (a sim would value your gear swaps at a few %) and NOT "press faster" -- it's how you play the same gear the field plays.${cite}`;
     } else if (underPress) {
       rtext = `THE REMAINDER (~${r}%): not a setup item -- it's GCD uptime and hitting your priority on more pulls (see the measured cast/idle gaps above). That's where the rest of your gap lives.`;
     } else {
