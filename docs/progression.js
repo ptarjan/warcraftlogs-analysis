@@ -90,7 +90,10 @@ async function nameSpells(ids) {
 // live report's fight list without serving a stale cache.
 // ----------------------------------------------------------------------------- //
 export async function progressionFindings(code, { encounterId = null, fresh = false } = {}) {
-  const fights = await reportFights(code, { fresh });
+  // The fight LIST is primed by the caller (one fresh fetch in live mode); read it
+  // from cache here. `fresh` governs the DEATHS query so a just-ended pull's deaths
+  // refresh on a live update, while a finished report stays fully cached.
+  const fights = await reportFights(code, { fresh: false });
   const enc = pickEncounter(fights, encounterId);
   if (!enc) return null;
   const pulls = [...enc.pulls].sort((a, b) => (a.startTime || 0) - (b.startTime || 0));

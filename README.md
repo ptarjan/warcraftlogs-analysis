@@ -69,13 +69,17 @@ hands the *group* a few actionable, named changes to get the kill — driven by
   individual deaths.
 - **Backtest:** it reads every pull to show the trend toward a kill, and flags a
   **roster change** that coincided with deeper progress.
-- **Live:** tick **Auto-reload** during raid — it re-polls the report's fight
-  list every 45s (the only cache-bypassing query; ended pulls' tables stay
-  cached) and re-suggests as pulls land, stopping when the boss dies.
+- **Live (opt-in):** tick **Auto-reload** during raid — it re-checks the report's
+  fight list every 60s (one cheap, cache-bypassing query) and only re-analyzes when
+  a pull is actually added or ends; it pauses entirely while the browser tab is
+  hidden and stops when the boss dies.
 
-Budget-bounded by design: ~6 WCL requests for a 30–60-pull night (one fight-list,
-one batched deaths query, one roster, and damage tables on only the deepest +
-most-recent pulls). Code: `docs/progression.js`.
+**Quota-bounded by design.** A finished report's pulls/deaths/roster/damage tables
+are immutable, so they're cached forever — opening (or backtesting over) a report
+costs ~6 WCL requests the first time and **zero** on re-open. The recent-nights
+picker is 1–2 cached character queries. The only repeated spend is the opt-in live
+poll: ~1 cheap request per 60s, paused when you're not looking. Code:
+`docs/progression.js`.
 
 ## Deploy (free)
 

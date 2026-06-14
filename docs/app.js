@@ -3,7 +3,7 @@
 // the result as a web report -- the prioritized list of changes up top, with
 // the supporting analyses as collapsible cards below.
 import { detectContext, detectPriority, DIFFICULTY, raidTeammates, slug, metricForSpec, setRunMetric, metricUnit,
-  parseReportRef, reportFights, recentReportsFor, encountersIn } from "./core.js";
+  parseReportRef, reportFights, recentReportsFor, encountersIn, mapLimit } from "./core.js";
 import { isAuthed, beginLogin, handleRedirectCallback, logout } from "./auth.js";
 import { NeedsAuth, myCharacters, primeRateReset, fmtRateWait } from "./wcl.js";
 import { paramsFromSearch, shareSearch, encodeSnapshot, decodeSnapshot, snapshotFromHash } from "./share.js";
@@ -719,7 +719,12 @@ const fmtDate = (ms) => { try { return new Date(ms).toLocaleDateString(undefined
 // Recent raid nights as quick-picks (best-effort), plus the paste-a-URL form.
 // Merges reports across ALL your characters (so an alt's raid night shows up too),
 // deduped by report code, newest first -- a much fuller list than one character's.
-const PROG_REPORTS_PER_CHAR = 25;   // pull plenty per character; dedup + cap below
+// Give MANY choices from FEW queries: one character's recentReports already
+// returns dozens of nights, so we scan just the 1-2 most-active characters (each
+// query is cached for a week) rather than fanning out across the roster and
+// bursting the hourly point budget into a 429.
+const PROG_PICKER_CHARS = 2;        // characters to scan for raid nights (bounded for quota)
+const PROG_REPORTS_PER_CHAR = 40;   // plenty of nights from each; dedup + cap below
 const PROG_REPORTS_SHOWN = 40;      // how many distinct nights to list
 async function renderProgPicker() {
   if (!progPicker) return;
@@ -733,16 +738,20 @@ async function renderProgPicker() {
   let chars = [];
   try { chars = await myCharacters(); } catch { chars = []; }
   if (run !== pickerRun) return;
-  // Gather across several of your characters concurrently, then dedupe by code.
-  const lists = await Promise.all(chars.slice(0, 6).map((c) =>
-    recentReportsFor(c.name, c.server, c.region, PROG_REPORTS_PER_CHAR).catch(() => [])));
+  // Gather across a few of your characters, but BOUND the concurrency (mapLimit) so
+  // we never burst the hourly point budget into a 429. recentReportsFor is a
+  // character query -> cached for a week, so this cost is first-load-only.
+  const lists = await mapLimit(chars.slice(0, PROG_PICKER_CHARS), 3, (c) =>
+    recentReportsFor(c.name, c.server, c.region, PROG_REPORTS_PER_CHAR).catch(() => []));
   if (run !== pickerRun) return;
   const byCode = new Map();
-  for (const list of lists) for (const rp of list) if (rp && rp.code && !byCode.has(rp.code)) byCode.set(rp.code, rp);
+  for (const list of (lists || [])) for (const rp of (list || [])) if (rp && rp.code && !byCode.has(rp.code)) byCode.set(rp.code, rp);
   const reps = [...byCode.values()].sort((a, b) => (b.startTime || 0) - (a.startTime || 0)).slice(0, PROG_REPORTS_SHOWN);
   if (!reps.length) {
     const m = document.createElement("div"); m.className = "muted";
-    m.textContent = "Paste a Warcraft Logs report URL above to analyze a night of pulls.";
+    m.textContent = chars.length
+      ? "Couldn't load your recent reports right now (you may be briefly rate-limited) — paste a report URL above to analyze a night of pulls."
+      : "Paste a Warcraft Logs report URL above to analyze a night of pulls.";
     progPicker.appendChild(m); return;
   }
   const grid = document.createElement("div");
@@ -800,38 +809,71 @@ function buildEncBar(hero, encs, chosen, live) {
   if (live) {
     const lf = document.createElement("span"); lf.className = "liveflag";
     const dot = document.createElement("span"); dot.className = "dot";
-    lf.append(dot, document.createTextNode("Live — auto-reloading every 45s"));
+    lf.append(dot, document.createTextNode(`Live — checks for new pulls every ${PROG_POLL_MS / 1000}s`));
     hero.encbar.appendChild(lf);
   }
 }
 
+// Live polling is the ONLY part of this flow that spends quota repeatedly, so it's
+// deliberately frugal: one cheap reportFights({fresh}) per tick, and if the fight
+// list is unchanged we do NOTHING else (no re-analysis, no re-render). We also pause
+// entirely while the tab is hidden. Everything else (a finished report's pulls,
+// deaths, tables) is immutable and cached forever, so a non-live run re-spends zero.
+const PROG_POLL_MS = 60000;
 let progCtx = null;       // { code, encounterId, live }
-let progPoll = null;      // pending setTimeout for the next live refresh
+let progPoll = null;      // pending setTimeout for the next live check
 let progLiveOn = false;
+let progSig = null;       // signature of the last-rendered fight list (skip no-op re-renders)
+let progVisListener = null;
 
-function stopPolling() { if (progPoll) { clearTimeout(progPoll); progPoll = null; } progLiveOn = false; }
-function progBusy(on) {
-  const gp = $("goprog"), ps = $("progstatus");
-  if (gp) { gp.disabled = on; gp.textContent = on ? "Analyzing…" : "Analyze pulls"; }
-  if (ps) ps.innerHTML = on ? '<span class="spin"></span>analyzing…' : "";
+// ids + endTimes + kill flags: changes EXACTLY when a pull is added or one ends.
+const fightsSignature = (fights) => (fights || []).map((f) => `${f.id}:${f.endTime || 0}:${f.kill ? 1 : 0}`).join(",");
+
+function stopPolling() {
+  if (progPoll) { clearTimeout(progPoll); progPoll = null; }
+  progLiveOn = false;
+  if (progVisListener) { document.removeEventListener("visibilitychange", progVisListener); progVisListener = null; }
+}
+function scheduleProgPoll() { if (progLiveOn) { if (progPoll) clearTimeout(progPoll); progPoll = setTimeout(pollProg, PROG_POLL_MS); } }
+
+// One live tick: a single fresh fight-list fetch. Re-analyze only if a pull was
+// added/ended; otherwise just wait. Skip the fetch entirely while the tab's hidden.
+async function pollProg() {
+  progPoll = null;
+  if (!progLiveOn) return;
+  if (typeof document !== "undefined" && document.hidden) {
+    if (!progVisListener) {
+      progVisListener = () => {
+        if (!document.hidden && progLiveOn) { document.removeEventListener("visibilitychange", progVisListener); progVisListener = null; pollProg(); }
+      };
+      document.addEventListener("visibilitychange", progVisListener);
+    }
+    return; // paused: no quota spent while you're not looking
+  }
+  let fights = [];
+  try { fights = await reportFights(progCtx.code, { fresh: true }); }  // the ONE fresh request per tick
+  catch { return scheduleProgPoll(); }                                  // transient -> retry next tick
+  if (!progLiveOn) return;
+  if (fightsSignature(fights) === progSig) return scheduleProgPoll();   // nothing new -> no re-fetch, no re-render
+  await renderProgFull();                                               // a pull changed -> re-analyze (downstream cached)
 }
 
-// One render pass: refresh the fight list (fresh on a live poll so the cache the
-// analysis reads is current), build the chooser, then stream the analysis into the
-// primary card. Returns the result (or null).
+// One render pass: build the chooser + stream the analysis into the primary card.
+// reportFights is read fresh:false here -- the caller (runProgression / pollProg)
+// already primed the cache with a single fresh fetch when live, so this adds no
+// network. Ended pulls' deaths/tables are immutable and cached. Returns the result.
 async function renderProgOnce(hero) {
-  const { code, encounterId, live } = progCtx;
+  const { code, encounterId } = progCtx;
   let fights = [];
-  try { fights = await reportFights(code, { fresh: live }); } catch (e) { /* analysis will surface the error */ }
+  try { fights = await reportFights(code, { fresh: false }); } catch (e) { /* analysis will surface the error */ }
+  progSig = fightsSignature(fights);
   const encs = encountersIn(fights);
   const chosen = encounterId || (encs[0] && encs[0].encounterID) || null;
-  buildEncBar(hero, encs, chosen, live);
+  buildEncBar(hero, encs, chosen, progLiveOn);
   const card = makeCard("What to change to kill it", { primary: true, prose: false });
   setCardState(card, "busy"); cur = card;
   try {
-    // fresh:false -- the fight list was just refreshed above (its fresh write
-    // updates the in-memory cache); ended pulls' deaths/tables are immutable.
-    const r = await progression.run(makeLog(card), { code }, { encounterId: chosen, fresh: false });
+    const r = await progression.run(makeLog(card), { code }, { encounterId: chosen, fresh: progLiveOn });
     setCardState(card, "done");
     hero.setStatus(r);
     return r;
@@ -843,7 +885,7 @@ async function renderProgOnce(hero) {
   }
 }
 
-// Full (re)render of the progression report -- also the live-poll body.
+// Full (re)render of the progression report -- also the live-poll re-render body.
 async function renderProgFull() {
   if (progPoll) { clearTimeout(progPoll); progPoll = null; }
   out.innerHTML = ""; cur = null;
@@ -862,9 +904,14 @@ async function renderProgFull() {
   }
   progBusy(false);
   statusEl.textContent = "Done.";
-  // Live: keep refreshing until the boss dies (or the user stops / leaves).
-  if (progLiveOn && !(r && r.killed)) progPoll = setTimeout(() => { if (progLiveOn) renderProgFull(); }, 45000);
-  if (progLiveOn && r && r.killed) { stopPolling(); hero.det.textContent += " — killed, live updates stopped ✓"; }
+  // Live: stop on the kill (the win); otherwise schedule the next frugal check.
+  if (progLiveOn && r && r.killed) { stopPolling(); hero.det.textContent += " — killed, live updates stopped ✓"; return; }
+  scheduleProgPoll();
+}
+function progBusy(on) {
+  const gp = $("goprog"), ps = $("progstatus");
+  if (gp) { gp.disabled = on; gp.textContent = on ? "Analyzing…" : "Analyze pulls"; }
+  if (ps) ps.innerHTML = on ? '<span class="spin"></span>analyzing…' : "";
 }
 
 // Entry: run the progression analyzer for a report (from the form, a quick-pick,
@@ -873,13 +920,16 @@ async function runProgression({ code, encounterId = null, live = false }) {
   if (!code) return;
   stopPolling();
   progLiveOn = live;
-  progCtx = { code, encounterId, live };
+  progCtx = { code, encounterId, live }; progSig = null;
   try { history.replaceState(null, "", location.pathname + `?report=${encodeURIComponent(code)}` + (encounterId ? `&enc=${encounterId}` : "") + (live ? "&live=1" : "")); } catch (e) { /* ignore */ }
   primeRateReset();
   if (modebar) modebar.style.display = "none";
   if (progForm) progForm.style.display = "none";
   if (progPicker) progPicker.style.display = "none";
   const intro = document.getElementById("intro"); if (intro) intro.style.display = "none";
+  // Live: prime the fight list with the ONE fresh fetch so the in-progress report
+  // isn't served from the permanent cache; non-live reads the (immutable) cache.
+  if (live) { try { await reportFights(code, { fresh: true }); } catch (e) { /* renderProgOnce surfaces it */ } }
   await renderProgFull();
 }
 
