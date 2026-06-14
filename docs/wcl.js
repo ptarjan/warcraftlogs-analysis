@@ -17,6 +17,15 @@ export class PrivateReport extends Error {}
 // to send the user through the connect flow instead of showing a network error.
 export class NeedsAuth extends Error {}
 
+// Raised when WCL's shared hourly point budget is used up (HTTP 429). Carries
+// `resetIn` (seconds until the budget refreshes) when we could learn it -- from
+// the 429's Retry-After or the reset clock primed by primeRateReset() -- so a
+// caller (pacing logic, the loop) can wait EXACTLY until the quota is back instead
+// of guessing. null `resetIn` means we couldn't read a clock this time.
+export class RateLimited extends Error {
+  constructor(message, resetIn = null) { super(message); this.resetIn = resetIn; }
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Abort a request that hangs on a dead socket instead of freezing forever (a
@@ -317,8 +326,14 @@ export async function rateLimit() {
     const d = (await _gqlRun("query { rateLimitData { limitPerHour pointsSpentThisHour pointsResetIn } }", 1)).rateLimitData;
     if (!d) return null;
     const limit = d.limitPerHour || 0, spent = d.pointsSpentThisHour || 0;
-    return { limit, spent, remaining: Math.max(0, limit - spent), resetIn: d.pointsResetIn || 0 };
-  } catch (e) { return null; }
+    return { limit, spent, remaining: Math.max(0, limit - spent), resetIn: d.pointsResetIn || 0, limited: false };
+  } catch (e) {
+    // Already throttled: don't lose the timing. Report remaining 0 + the exact
+    // reset clock so a caller waits precisely until the budget is back, not a
+    // round guess. `limited: true` distinguishes this from a real null (unknown).
+    if (e instanceof RateLimited) return { limit: 0, spent: 0, remaining: 0, resetIn: e.resetIn || 0, limited: true };
+    return null;
+  }
 }
 
 // `fresh: true` bypasses every read cache (in-memory, inflight, persistent) and
@@ -383,7 +398,7 @@ async function _gqlRun(query, retries = 6) {
       if (e instanceof NeedsAuth) throw e; // don't retry -- the user must reconnect
       // Network/transport failure -- worth retrying with backoff.
       last = e;
-      await sleep(1000 * (2 + attempt));
+      if (attempt < retries - 1) await sleep(1000 * (2 + attempt));
       continue;
     }
     if (j.errors) {
@@ -407,9 +422,14 @@ async function _gqlRun(query, retries = 6) {
       const eff = retryAfter || (_resetAt > Date.now() ? Math.ceil((_resetAt - Date.now()) / 1000) : null);
       const wait = fmtRateWait(eff);
       const when = wait ? `Try again in ~${wait}` : "Try again shortly";
-      last = new Error(`WCL rate limit reached — your hourly WCL point budget is used up. ${when}.`);
+      // RateLimited carries the exact reset clock so callers (rateLimit(), pacing
+      // loops) can wait precisely instead of guessing.
+      last = new RateLimited(`WCL rate limit reached — your hourly WCL point budget is used up. ${when}.`, eff);
       if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("wcl-ratelimit", { detail: { retryAfter: eff } }));
-      await sleep(eff ? Math.min(20000, eff * 1000) : Math.min(12000, 2000 * 2 ** attempt));
+      // No point sleeping after the final attempt -- we're about to throw `last`.
+      // Skipping it lets a single-try status probe (rateLimit) return immediately
+      // with the reset info instead of stalling on a 20s backoff.
+      if (attempt < retries - 1) await sleep(eff ? Math.min(20000, eff * 1000) : Math.min(12000, 2000 * 2 ** attempt));
       continue;
     }
     if (j.error) throw new Error(j.error); // other non-GraphQL error

@@ -25,7 +25,8 @@ export function mockFetch(routes) {
         return {
           ok: status < 400,
           status,
-          headers: { get: () => null },
+          // Optional response headers (e.g. Retry-After on a 429), case-insensitive.
+          headers: { get: (k) => (body.headers && body.headers[String(k).toLowerCase()] != null ? String(body.headers[String(k).toLowerCase()]) : null) },
           json: async () => body.json,
           text: async () => (body.text != null ? body.text : JSON.stringify(body.json)),
         };

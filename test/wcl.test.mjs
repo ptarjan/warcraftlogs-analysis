@@ -28,6 +28,30 @@ test("permission errors raise PrivateReport (so callers can skip)", async () => 
   await assert.rejects(() => gql("query{ b }"), (e) => e instanceof PrivateReport);
 });
 
+test("rateLimit surfaces the EXACT reset on a 429 (not bare null), so callers wait precisely", async () => {
+  const { rateLimit, clearGqlCache } = await import("../docs/wcl.js");
+  clearGqlCache();
+  // A 429 with a Retry-After header -- the direct-CLI path reads it for the clock.
+  globalThis.fetch = mockFetch([TOKEN,
+    ["/api/v2/client", { status: 429, headers: { "retry-after": 137 }, json: {} }]]);
+  const r = await rateLimit();
+  assert.ok(r, "must not be null -- the reset clock is known");
+  assert.equal(r.limited, true);
+  assert.equal(r.remaining, 0);
+  assert.equal(r.resetIn, 137);                 // exact seconds, not a guess
+});
+
+test("rateLimit reports a healthy budget with limited:false and the real resetIn", async () => {
+  const { rateLimit, clearGqlCache } = await import("../docs/wcl.js");
+  clearGqlCache();
+  globalThis.fetch = mockFetch([TOKEN, ["/api/v2/client",
+    { json: { data: { rateLimitData: { limitPerHour: 3600, pointsSpentThisHour: 600, pointsResetIn: 1800 } } } }]]);
+  const r = await rateLimit();
+  assert.equal(r.limited, false);
+  assert.equal(r.remaining, 3000);
+  assert.equal(r.resetIn, 1800);
+});
+
 test("concurrent identical queries are coalesced into one request", async () => {
   const { gql, clearGqlCache } = await import("../docs/wcl.js");
   clearGqlCache();
