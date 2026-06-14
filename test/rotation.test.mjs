@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable } = await import("../docs/rotation.js");
 
 test("castUsageGaps: flags a buff/pet cooldown the field presses more (by ability id)", () => {
   // 300s fight. Field casts a cooldown id 0.5/min (2.5/kill), you 0.2/min (1/kill).
@@ -77,6 +77,20 @@ test("classifyUnderUse: only fires when you NEVER press it (not a mild gap)", ()
 test("classifyUnderUse: no talent data -> never claim a talent fix", () => {
   const top = { name: "Rupture", you: 0, field: 2.1 };
   assert.equal(classifyUnderUse(top, null), null);
+});
+
+test("castable: a skipped talent (peers' hero tree) is NOT castable -> don't say press it more", () => {
+  // Guardian on Elune's Chosen vs Druid-of-the-Claw peers who press Ravage: Ravage
+  // is in the talent universe but the player never took it -> can't cast it.
+  const talent = { taken: new Set(["Mangle", "Lunar Beam"]), universe: new Set(["Ravage", "Lunar Beam"]) };
+  assert.equal(castable("Ravage", talent), false);     // skipped talent -> different build
+  assert.equal(castable("Lunar Beam", talent), true);  // talented -> you have it
+  assert.equal(castable("Mangle", talent), true);      // baseline (not in universe) -> you have it
+});
+
+test("castable: missing talent data -> keep it (can't prove a build mismatch)", () => {
+  assert.equal(castable("Ravage", null), true);
+  assert.equal(castable("Ravage", { taken: new Set() }), true);  // no universe -> unknown
 });
 
 test("fieldCastRates takes the per-ability median across peers (absent = 0)", () => {

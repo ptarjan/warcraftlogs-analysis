@@ -217,6 +217,21 @@ export function classifyUnderUse(top, talent) {
   return null;                              // baseline -> press it, don't respec
 }
 
+// Can the player actually cast this ability with the build they ran? True if they
+// TALENTED it, or it's BASELINE (not in the spec's talent universe at all). False
+// only for a talent they SKIPPED -- a different build (often the other hero tree).
+// Guards the bug where the rotation peer pool skews to a different hero tree and we
+// tell the player to "press <ability> more" for a button they can't cast (a Guardian
+// on Elune's Chosen told to press Ravage, a Druid of the Claw talent). A genuinely
+// skipped DAMAGE talent the whole field takes is surfaced separately as a RESPEC
+// finding (classifyUnderUse), not as "press it more". Missing talent data -> keep
+// it (can't prove a build mismatch, don't suppress a real fix).
+export function castable(name, talent) {
+  if (!talent || !talent.universe) return true;
+  if (talent.taken.has(name)) return true;
+  return !talent.universe.has(name);
+}
+
 // --- findings (data the prescription consumes) -------------------------------
 
 // Returns structured rotation findings. The key output is `proc`: a genuine
@@ -312,7 +327,7 @@ export async function run(log, name, server, region, className = "Monk",
                          specName = "Brewmaster", difficulty = 5) {
   const fnd = await rotationFindings(name, server, region, className, specName, difficulty);
   if (!fnd) { log("[error] could not read your casts/damage"); return; }
-  log(`Rotation analysis on ${fnd.boss} (your most-killed boss). ` +
+  log(`Rotation analysis on ${fnd.boss} (your most recent kill at current gear). ` +
       `Spec-agnostic: nothing about ${specName} is hard-coded.`);
 
   log("");
@@ -344,14 +359,17 @@ export async function run(log, name, server, region, className = "Monk",
   if (fnd.fieldOpener) log(`  peers' opener: ${fnd.fieldOpener.join(" > ")}`);
 
   const u = fnd.usage || { under: [], over: [] };
-  if (u.under.length || u.over.length) {
+  // Only recommend pressing abilities you can actually cast -- the peer pool can
+  // skew to a different hero tree and surface buttons your build doesn't have.
+  const under = u.under.filter((a) => castable(a.name, fnd.talent));
+  if (under.length || u.over.length) {
     log("");
     log(`=== ABILITY USAGE vs PEERS (casts/min, ${fnd.fieldPeers} peers) ===`);
-    for (const a of u.under.slice(0, 4))
+    for (const a of under.slice(0, 4))
       log(`  UNDER-USE  ${a.name.padEnd(20)} you ${a.you.toFixed(1)}/min  peers ${a.field.toFixed(1)}/min  <-- press it more`);
     for (const a of u.over.slice(0, 4))
       log(`  OVER-USE   ${a.name.padEnd(20)} you ${a.you.toFixed(1)}/min  peers ${a.field.toFixed(1)}/min  <-- peers barely press this`);
-    if (u.under.length) log("  -> Shift presses toward what peers actually cast.");
+    if (under.length) log("  -> Shift presses toward what peers actually cast.");
   }
 }
 
@@ -390,14 +408,21 @@ export function rotationLevers(rot) {
         `${f(top.field, 1)}/min -- a wasted talent. Work it into your rotation, or respec the point into ` +
         `something you'll actually use.${onGlobals}`));
     } else {
-      const under = u.under.slice(0, 2).map((a) => `${link(a.name)} (peers ${f(a.field, 1)}/min vs your ${f(a.you, 1)})`);
-      const wrongButton = u.over.length > 0;
-      const over = wrongButton
-        ? `; you over-press ${u.over.slice(0, 1).map((a) => `${link(a.name)} (your ${f(a.you, 1)}/min vs peers ${f(a.field, 1)})`).join("")}`
-        : "";
-      out.push(finding("Rotation", wrongButton ? DPS(5, 10) : DPS(3, 6),
-        `ROTATION: press ${under.join(" and ")} more${over} -- match your peers' ability priority ` +
-        `(verify in a log/sim).`));
+      // Only recommend pressing abilities the player can actually cast -- the peer
+      // pool can skew to a different hero tree (a Guardian on Elune's Chosen vs
+      // Druid-of-the-Claw peers who press Ravage). A skipped damage talent the field
+      // takes is the missing-talent branch above, not "press it more".
+      const underAbilities = u.under.filter((a) => castable(a.name, rot && rot.talent));
+      if (underAbilities.length) {
+        const under = underAbilities.slice(0, 2).map((a) => `${link(a.name)} (peers ${f(a.field, 1)}/min vs your ${f(a.you, 1)})`);
+        const wrongButton = u.over.length > 0;
+        const over = wrongButton
+          ? `; you over-press ${u.over.slice(0, 1).map((a) => `${link(a.name)} (your ${f(a.you, 1)}/min vs peers ${f(a.field, 1)})`).join("")}`
+          : "";
+        out.push(finding("Rotation", wrongButton ? DPS(5, 10) : DPS(3, 6),
+          `ROTATION: press ${under.join(" and ")} more${over} -- match your peers' ability priority ` +
+          `(verify in a log/sim).`));
+      }
     }
   }
   // Under-used DAMAGE COOLDOWNS -- a measured PLAYSTYLE lever (the kind that

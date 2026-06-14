@@ -13,7 +13,7 @@ import {
 import { timelineFindings } from "./timeline.js";
 import { gearFindings, gearLevers, itemInstance, sourceText } from "./gear.js";
 import { wowheadSpell, wowheadItem, wclReport } from "./links.js";
-import { rotationFindings, rotationLevers } from "./rotation.js";
+import { rotationFindings, rotationLevers, castable } from "./rotation.js";
 import { talentFindings, talentLevers } from "./talents.js";
 import { topParseFindings, topParseLevers } from "./topparse.js";
 
@@ -537,7 +537,10 @@ function renderPrescription(log, d) {
       // gear vs the field (cooldown usage, ability frequency/sequencing, target &
       // uptime). Concrete cooldown/usage gaps now surface as their OWN levers above;
       // name any remaining rotation divergence we measured.
-      const under = (rot && rot.usage && rot.usage.under) || [];
+      // Only cite abilities the player can actually cast -- the peer pool can skew
+      // to a different hero tree (don't tell a Guardian the gap is "press Ravage"
+      // when their build doesn't have it; that's a respec lever, not playstyle).
+      const under = ((rot && rot.usage && rot.usage.under) || []).filter((a) => castable(a.name, rot && rot.talent));
       const cite = under.length
         ? ` We can see part of it: you press ${under.slice(0, 2).map((a) => `${a.name} ${f(a.you, 1)}/min vs ${f(a.field, 1)}`).join(", ")}.`
         : ` Cooldown/ability-usage gaps we could measure are listed above; the rest is sequencing and target/uptime we don't yet break down — not a sim to run.`;
