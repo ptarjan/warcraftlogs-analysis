@@ -222,10 +222,31 @@ export function clearGqlCache() { _gqlCache.clear(); }
 const DISK_TTL_MS = 7 * 24 * 60 * 60 * 1000; // rankings: refresh ~weekly
 const _ttlFor = (q) => (_isImmutable(q) ? Infinity : DISK_TTL_MS);
 let _diskReady = null;   // Promise, set once init starts
-let _diskStore = null;   // { [query]: { t, d } } mirrored to disk
-let _diskFile = null;
+let _diskStore = null;   // { [query]: { t, d } } -- the whole cache, in memory
+let _diskFile = null;    // legacy monolith path (still READ for back-compat + migrated away)
+let _diskDir = null;     // directory of shard files -- the real on-disk store
 let _diskFs = null;
+let _diskPath = null;
 let _diskTimer = null;
+let _migrate = false;            // a legacy monolith was found -> distribute it into shards
+let _flushRetries = 0;           // bounded retries for a preserved (unreadable) shard
+const _dirty = new Set();        // shard ids with unpersisted puts (or pending migration)
+
+// The cache is SHARDED across many small files (one per query-hash bucket) instead
+// of one giant JSON. Why: a single ~400MB file had to be fully re-read, re-parsed
+// and re-written on every flush -- slow, memory-heavy, and (the disaster) if that
+// parse ever failed under concurrent load the catch wrote only THIS process's small
+// store, atomically clobbering the shared cache (396MB -> 38MB). Small shards parse
+// instantly, can't hit V8's ~512MB string ceiling (so total capacity is effectively
+// unbounded), only the touched shards rewrite, and a failed read can never lose more
+// than one tiny shard -- which the never-clobber guard below also refuses to do.
+const SHARD_BITS = 256;
+export function _shardId(query) {                // low byte of the FNV-1a hash, 2 hex chars
+  let h = 0x811c9dc5;
+  for (let i = 0; i < query.length; i++) { h ^= query.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return ((h >>> 0) & (SHARD_BITS - 1)).toString(16).padStart(2, "0");
+}
+const _shardFile = (id) => _diskPath.join(_diskDir, `${id}.json`);
 
 // Off unless the caller opts in (cli.mjs sets WCL_GQL_CACHE=1). This keeps the
 // tests -- which also run under Node -- on the pure in-memory path, and lets the
@@ -245,21 +266,35 @@ async function initDisk() {
     const fs = await import("node:fs");
     const path = await import("node:path");
     const os = await import("node:os");
-    _diskFs = fs;
+    _diskFs = fs; _diskPath = path;
     // Shared across git worktrees (which split one WCL point budget): a single
-    // cache in the user's home dir, not one file per worktree root. Override with
-    // WCL_GQL_CACHE_FILE (the tests do).
+    // cache location in the user's home dir, not one per worktree root. Override
+    // with WCL_GQL_CACHE_FILE (the tests do); shards live next to it.
     _diskFile = process.env.WCL_GQL_CACHE_FILE ||
       path.join(os.homedir(), ".cache", "warcraftlogs-analysis", "gql-cache.json");
-    try { fs.mkdirSync(path.dirname(_diskFile), { recursive: true }); } catch { /* ignore */ }
+    _diskDir = `${_diskFile}.shards`;
+    try { fs.mkdirSync(_diskDir, { recursive: true }); } catch { /* ignore */ }
     _diskStore = {};
+    const now = Date.now();
+    const load = (raw) => {
+      try {
+        for (const [q, e] of Object.entries(JSON.parse(raw))) {
+          if (e && (now - e.t) < _ttlFor(q) && (!_diskStore[q] || _diskStore[q].t < e.t)) {
+            _diskStore[q] = e; _gqlCache.set(q, e.d);
+          }
+        }
+      } catch { /* a corrupt shard is skipped -- every other shard still loads */ }
+    };
+    // Read every shard that exists -- these ARE the cache.
+    try { for (const f of fs.readdirSync(_diskDir)) if (f.endsWith(".json")) load(fs.readFileSync(path.join(_diskDir, f), "utf8")); } catch { /* none yet */ }
+    // Back-compat + one-time migration: an old monolithic gql-cache.json is read
+    // too, then its entries are distributed into shards (and it's removed) on the
+    // next flush. Marks the affected shards dirty so the migration actually writes.
     try {
-      const raw = JSON.parse(fs.readFileSync(_diskFile, "utf8"));
-      const now = Date.now();
-      for (const [q, e] of Object.entries(raw)) {
-        if (e && (now - e.t) < _ttlFor(q)) { _diskStore[q] = e; _gqlCache.set(q, e.d); }
-      }
-    } catch { /* no cache file yet */ }
+      load(fs.readFileSync(_diskFile, "utf8"));
+      _migrate = true;
+      for (const q of Object.keys(_diskStore)) _dirty.add(_shardId(q));
+    } catch { /* no monolith -- already sharded or first run */ }
   })();
   return _diskReady;
 }
@@ -267,38 +302,69 @@ async function initDisk() {
 function diskPut(query, data) {
   if (!_diskStore) return;
   _diskStore[query] = { t: Date.now(), d: data };
+  _dirty.add(_shardId(query));
   // Debounced write; the pending timer keeps the event loop alive, so the CLI
   // won't exit before the cache is flushed.
   clearTimeout(_diskTimer);
-  _diskTimer = setTimeout(_flushDisk, 300);
+  _diskTimer = setTimeout(_flushDisk, 1000);
 }
 
 function _flushDisk() {
   clearTimeout(_diskTimer);
-  if (!_diskStore || !_diskFs) return;
-  try {
-    // Re-read and MERGE before writing: other worktrees share this file, so we
-    // accumulate their entries instead of clobbering them (newest timestamp wins;
-    // stale entries pruned). Write to a temp file + rename so a concurrent reader
-    // never sees a half-written file.
-    const now = Date.now();
+  if (!_diskStore || !_diskFs || !_dirty.size) return;
+  const now = Date.now();
+  // Bucket our (non-expired) entries by shard once.
+  const ours = {};
+  for (const [q, e] of Object.entries(_diskStore)) {
+    if (now - e.t >= _ttlFor(q)) continue;
+    const s = _shardId(q);
+    (ours[s] || (ours[s] = {}))[q] = e;
+  }
+  const stillDirty = new Set();
+  for (const s of _dirty) {
+    const file = _shardFile(s);
     const merged = {};
+    // Merge with this shard's on-disk content (other worktrees write it too).
+    // NEVER-CLOBBER: if the file EXISTS but can't be read/parsed (a concurrent
+    // rename, transient I/O), do NOT write -- writing only our slice would wipe the
+    // other process's entries. Preserve it and retry. This is the guard whose
+    // absence (on the old monolith) caused the 396MB->38MB truncation.
     try {
-      const onDisk = JSON.parse(_diskFs.readFileSync(_diskFile, "utf8"));
-      for (const [q, e] of Object.entries(onDisk)) if (e && now - e.t < _ttlFor(q)) merged[q] = e;
-    } catch { /* no/invalid file -- just write ours */ }
-    for (const [q, e] of Object.entries(_diskStore)) if (!merged[q] || merged[q].t < e.t) merged[q] = e;
-    const tmp = `${_diskFile}.${process.pid}.tmp`;
-    _diskFs.writeFileSync(tmp, JSON.stringify(merged));
-    _diskFs.renameSync(tmp, _diskFile);
-    _diskStore = merged;
-  } catch {}
+      for (const [q, e] of Object.entries(JSON.parse(_diskFs.readFileSync(file, "utf8"))))
+        if (e && now - e.t < _ttlFor(q)) merged[q] = e;
+    } catch (err) {
+      if (!(err && err.code === "ENOENT")) { stillDirty.add(s); continue; }  // exists but unreadable -> keep it
+    }
+    for (const [q, e] of Object.entries(ours[s] || {})) if (!merged[q] || merged[q].t < e.t) merged[q] = e;
+    if (!Object.keys(merged).length) continue;   // nothing to persist for this shard
+    try {
+      const tmp = `${file}.${process.pid}.tmp`;
+      _diskFs.writeFileSync(tmp, JSON.stringify(merged));
+      _diskFs.renameSync(tmp, file);
+    } catch { stillDirty.add(s); try { _diskFs.unlinkSync(`${file}.${process.pid}.tmp`); } catch {} }
+  }
+  _dirty.clear();
+  for (const s of stillDirty) _dirty.add(s);
+  // Migration done (every shard with data was written) -> drop the legacy monolith
+  // so it can't be re-read or clobbered. Only when nothing is still pending.
+  if (_migrate && !stillDirty.size) {
+    try { _diskFs.unlinkSync(_diskFile); } catch {}
+    _migrate = false;
+  }
+  // Retry shards we preserved (transient read/write failure) -- but bounded, so a
+  // permanently-unreadable shard can't keep the process alive forever. A new put
+  // resets the budget (diskPut clears nothing, but a clean flush below does).
+  if (stillDirty.size && _flushRetries++ < 3) _diskTimer = setTimeout(_flushDisk, 2000);
+  else _flushRetries = 0;
 }
 
 // Test-only hooks: flush the debounced write now, and forget all disk state so a
-// fresh initDisk() re-reads the file (simulating a separate CLI run).
+// fresh initDisk() re-reads the shards (simulating a separate CLI run).
 export function _flushGqlDisk() { _flushDisk(); }
-export function _resetGqlDisk() { clearTimeout(_diskTimer); _diskReady = _diskStore = _diskFile = _diskFs = null; }
+export function _resetGqlDisk() {
+  clearTimeout(_diskTimer); _dirty.clear(); _migrate = false; _flushRetries = 0;
+  _diskReady = _diskStore = _diskFile = _diskDir = _diskFs = _diskPath = null;
+}
 
 // Absolute time (ms) the WCL point budget resets, learned from a 429's
 // Retry-After or primed up front (so connected sessions, where Retry-After is

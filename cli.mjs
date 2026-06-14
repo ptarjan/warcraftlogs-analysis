@@ -80,8 +80,16 @@ const _save = () => {
   _saveTimer = setTimeout(() => {
     // Merge with concurrent worktrees' writes, then atomic rename (temp+rename).
     try {
-      let merged = _store;
-      try { merged = { ...JSON.parse(fs.readFileSync(CACHE_FILE, "utf8")), ..._store }; } catch { /* ours */ }
+      let merged;
+      try {
+        merged = { ...JSON.parse(fs.readFileSync(CACHE_FILE, "utf8")), ..._store };
+      } catch (e) {
+        // NEVER-CLOBBER: if the file EXISTS but can't be read, writing only OUR
+        // store would wipe concurrent worktrees' entries. Skip this write and keep
+        // our store for the next flush. Only write ours when there's genuinely no file.
+        if (fs.existsSync(CACHE_FILE)) return;
+        merged = { ..._store };
+      }
       _store = merged;
       const tmp = `${CACHE_FILE}.${process.pid}.tmp`;
       fs.writeFileSync(tmp, JSON.stringify(merged));

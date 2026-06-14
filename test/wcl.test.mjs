@@ -124,5 +124,61 @@ test("disk cache: immutable report data never expires; rankings do", async () =>
     delete process.env.WCL_GQL_CACHE_FILE;
     _resetGqlDisk();
     try { fs.rmSync(file, { force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(`${file}.shards`, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+});
+
+// THE TRUNCATION GUARD: a shard that exists but can't be read/parsed must be
+// PRESERVED, never overwritten with only-our-slice. (On the old monolith, the
+// missing guard wiped the shared 396MB cache down to 38MB.)
+test("disk cache: an unreadable shard is preserved, not clobbered", async () => {
+  const { gql, clearGqlCache, _flushGqlDisk, _resetGqlDisk, _shardId } = await import("../docs/wcl.js");
+  const file = path.join(os.tmpdir(), `wcl-noclobber-${process.pid}.json`);
+  const dir = `${file}.shards`;
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* none */ }
+  process.env.WCL_GQL_CACHE = "1";
+  process.env.WCL_GQL_CACHE_FILE = file;
+  const q = "query{ collide }";
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const shardFile = path.join(dir, `${_shardId(q)}.json`);
+    fs.writeFileSync(shardFile, "{ this is not valid json");   // a corrupt/unreadable shard
+    clearGqlCache(); _resetGqlDisk();
+    globalThis.fetch = mockFetch([TOKEN, ["/api/v2/client", { json: { data: { v: 1 } } }]]);
+    await gql(q);                 // fetch + put into that shard
+    _flushGqlDisk();              // one flush: must NOT overwrite the unreadable shard
+    assert.equal(fs.readFileSync(shardFile, "utf8"), "{ this is not valid json", "unreadable shard preserved");
+  } finally {
+    delete process.env.WCL_GQL_CACHE; delete process.env.WCL_GQL_CACHE_FILE; _resetGqlDisk();
+    try { fs.rmSync(file, { force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+});
+
+// A legacy monolithic cache file is read, distributed into shards, and removed.
+test("disk cache: migrates a legacy monolith into shards, then removes it", async () => {
+  const { gql, clearGqlCache, _flushGqlDisk, _resetGqlDisk } = await import("../docs/wcl.js");
+  const file = path.join(os.tmpdir(), `wcl-migrate-${process.pid}.json`);
+  const dir = `${file}.shards`;
+  try { fs.rmSync(file, { force: true }); fs.rmSync(dir, { recursive: true, force: true }); } catch { /* none */ }
+  process.env.WCL_GQL_CACHE = "1";
+  process.env.WCL_GQL_CACHE_FILE = file;
+  const reportQ = 'query { reportData { report(code:"mig") { events(fightIDs:1) { data } } } }';
+  try {
+    fs.writeFileSync(file, JSON.stringify({ [reportQ]: { t: Date.now(), d: { kept: true } } }));
+    clearGqlCache(); _resetGqlDisk();
+    globalThis.fetch = () => { throw new Error("migrated entry must not refetch"); };
+    assert.deepEqual(await gql(reportQ), { kept: true }, "served from the legacy monolith");
+    _flushGqlDisk();
+    assert.equal(fs.existsSync(file), false, "monolith removed after migration");
+    assert.ok(fs.readdirSync(dir).some((f) => f.endsWith(".json")), "entry written into a shard");
+    // A fresh run serves it from the shard, no monolith, no network.
+    clearGqlCache(); _resetGqlDisk();
+    globalThis.fetch = () => { throw new Error("must come from the shard"); };
+    assert.deepEqual(await gql(reportQ), { kept: true });
+  } finally {
+    delete process.env.WCL_GQL_CACHE; delete process.env.WCL_GQL_CACHE_FILE; _resetGqlDisk();
+    try { fs.rmSync(file, { force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 });
