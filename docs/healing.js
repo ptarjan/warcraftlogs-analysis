@@ -76,12 +76,18 @@ export function manaLever(you) {
       `Smooth your spend (cheaper fillers between damage events, fewer overheals) so you aren't dry when a spike or your cooldowns land.`,
       "measured")];
   }
-  // Lots LEFT: finished with mana to spare on a damage-bound kill -- you had
-  // headroom to heal more (bigger/extra casts), i.e. effective HPS left on the table.
+  // Lots LEFT: finished with mana to spare. What that MEANS depends on overheal --
+  // "heal more" only recovers HPS if you're EFFICIENT (spare mana you could have
+  // turned into effective healing). If you're already spilling a lot, more casts =
+  // more overheal, not more effective HPS (and it would contradict the OVERHEALING
+  // item). So when overheal is high, spare mana just means mana wasn't your limiter
+  // (your HPS is damage-bound), and the fix is to heal SMARTER, not more.
   if (m.endPct >= 30) {
+    const spilling = (you.overhealPct || 0) >= 20;
     return [finding("Setup", INFO,
-      `MANA: you finished with ~${f(m.endPct, 0)}% mana unspent (low-water ${f(m.minPct, 0)}%) -- you had headroom to heal MORE ` +
-      `(bigger/extra casts, cover more of the damage) rather than bank mana. Unused mana at the end is effective healing left on the table.`,
+      spilling
+        ? `MANA: you finished with ~${f(m.endPct, 0)}% mana unspent -- mana wasn't your limiter (your HPS is bounded by the damage taken + overhealing, not mana). The lever isn't "cast more" (you already overheal ${f(you.overhealPct, 0)}%); it's healing SMARTER -- spend that spare mana on heals that LAND (see OVERHEALING), not more casts into full bars.`
+        : `MANA: you finished with ~${f(m.endPct, 0)}% mana unspent (low-water ${f(m.minPct, 0)}%) and you're efficient (only ${f(you.overhealPct || 0, 0)}% overheal) -- you had headroom to be more aggressive (bigger/earlier casts, cover more of the damage) rather than bank mana. That spare mana is effective healing left on the table.`,
       "measured")];
   }
   return [];

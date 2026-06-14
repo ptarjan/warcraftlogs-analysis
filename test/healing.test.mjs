@@ -47,8 +47,15 @@ test("manaLever: OOM and big leftover mana both fire as measured diagnostics; mi
     const oom = manaLever({ mana: { oom: 180000, endPct: 8, minPct: 2 } });
     assert.match(oom[0].text, /MANA/);
     assert.match(oom[0].text, /empty|dry|regen/i);
-    const left = manaLever({ mana: { oom: null, endPct: 40, minPct: 35 } });
-    assert.match(left[0].text, /headroom|unspent/i);
+    // Spare mana while EFFICIENT -> "be more aggressive" (real recoverable HPS).
+    const left = manaLever({ overhealPct: 10, mana: { oom: null, endPct: 40, minPct: 35 } });
+    assert.match(left[0].text, /more aggressive|headroom/i);
+    // Spare mana while ALREADY OVERHEALING -> NOT "cast more" (it'd overheal); the
+    // honest read is mana wasn't the limiter -> heal smarter. Don't contradict the
+    // OVERHEALING item.
+    const spilling = manaLever({ overhealPct: 35, mana: { oom: null, endPct: 40, minPct: 35 } });
+    assert.match(spilling[0].text, /smarter|wasn't your limiter/i);
+    assert.ok(!/more aggressive/.test(spilling[0].text), "don't tell an overhealer to cast more");
     assert.equal(manaLever({ mana: { oom: null, endPct: 10, minPct: 8 } }).length, 0, "spent most of it -> no lever");
     const recovered = manaLever({ mana: { oom: 30000, endPct: 55, minPct: 4 } });   // dipped to 4% but ended 55%
     assert.match(recovered[0].text, /headroom|unspent/i, "ended high -> headroom lever, NOT a 'ran dry' callout");
