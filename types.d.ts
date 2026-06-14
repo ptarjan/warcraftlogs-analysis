@@ -9,7 +9,8 @@ interface Window {
 }
 
 /** Which analysis a finding came from (splits "yours to do" from raid comp). */
-type Dim = "Execution" | "Rotation" | "Setup" | "Gear" | "Comp";
+type Dim = "Execution" | "Rotation" | "Setup" | "Gear" | "Comp"
+  | "Info" | "Survival" | "DPSCheck" | "Roster"; // progression.js (raid-night pull analyzer)
 
 /** impact (the ONLY sort key) + its matching display label, built together. */
 interface Score {

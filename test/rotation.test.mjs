@@ -5,7 +5,28 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, dotUptimeGaps } = await import("../docs/rotation.js");
+
+test("dotUptimeGaps: flags a clipped DoT, silent on a well-maintained one", () => {
+  const dots = [
+    { name: "Devouring Plague", guid: 335467, share: 0.15 },
+    { name: "Vampiric Touch", guid: 34914, share: 0.20 },
+  ];
+  // You clip DP (80% vs field 92%); VT is fine (95% vs 95%).
+  const youUp = { 335467: 80, 34914: 95 }, fieldUp = { 335467: 92, 34914: 95 };
+  const gaps = dotUptimeGaps(dots, youUp, fieldUp);
+  assert.equal(gaps.length, 1, "only the clipped DoT fires");
+  assert.equal(gaps[0].name, "Devouring Plague");
+  assert.equal(gaps[0].pct, Math.round(100 * 0.15 * 12 / 80));   // share*(field-you)/you
+  // A DoT within the noise band (<6pp) stays silent -> no false positive (Boxo case).
+  assert.equal(dotUptimeGaps(dots, { 335467: 90, 34914: 95 }, fieldUp).length, 0);
+  // Missing field data (too few peers) -> silent, not a guess.
+  assert.equal(dotUptimeGaps(dots, youUp, {}).length, 0);
+  // A CHANNEL/filler (Mind Flay) also ticks, but the field keeps it up only ~25% --
+  // not a maintained DoT, so being below the field there must NOT fire a clip lever.
+  const chan = [{ name: "Mind Flay", guid: 15407, share: 0.10 }];
+  assert.equal(dotUptimeGaps(chan, { 15407: 14 }, { 15407: 25 }).length, 0, "channel (low field uptime) never fires");
+});
 
 test("realOveruse: an over-press vs a ~0 field is a build difference, not a rotation error", () => {
   // Cross-tree field (heroMatched null): you press Thrash 5.8/min, peers 0.0 --

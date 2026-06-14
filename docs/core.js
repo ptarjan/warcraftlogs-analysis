@@ -235,6 +235,27 @@ export async function playerAbilities(code, fight, sourceId) {
     .sort((a, b) => b.total - a.total);
 }
 
+// A player's DoT/debuff UPTIME% on the PRIMARY (boss) target, per ability id.
+// DoT specs keep most of their damage in DoT uptime, which cast/cooldown levers
+// can't see -- this exposes it. ONE batched query (aliased Debuffs tables per id).
+// Gotcha: the Debuffs table with sourceID ALONE returns debuffs ON the player
+// (Sated/trinkets) -- you MUST add abilityID to get the player's APPLIED debuff,
+// which comes back as one aura PER TARGET; the boss is the max-uptime one. Memoized
+// by the gql cache (each (report,fight,Debuffs,src,ability) is a distinct unit).
+export async function dotUptimes(code, fight, sourceId, ids, durMs) {
+  if (!ids || !ids.length || !durMs) return {};
+  const aliases = ids.map((id, i) =>
+    `u${i}:table(fightIDs:${fight}, dataType:Debuffs, abilityID:${id}, sourceID:${sourceId})`).join(" ");
+  const r = (await gql(`query { reportData { report(code:"${code}") { ${aliases} } } }`)).reportData.report;
+  const out = {};
+  ids.forEach((id, i) => {
+    const auras = (r[`u${i}`] && r[`u${i}`].data.auras) || [];
+    const mx = auras.reduce((x, a) => Math.max(x, a.totalUptime || 0), 0); // primary (boss) target
+    out[id] = Math.round((100 * mx) / durMs);
+  });
+  return out;
+}
+
 // Fight window [start, end] in ms -- from the shared loader query.
 export async function fightWindow(code, fight) {
   const d = await reportCore(code, fight);
@@ -299,6 +320,17 @@ export async function reportFights(code, { fresh = false } = {}) {
 // sourceID -- we want every raider's death. Each event carries `fight` so we bucket
 // by pull client-side. `killingAbilityGameID` is the killing blow; `targetID` the
 // victim (resolve to a name via reportRoster).
+// Distinct boss encounters in a report's fights, for the progression UI's picker.
+// Dedupe by encounterID (keep first seen), drop trash pulls (encounterID 0/absent).
+export function encountersIn(fights) {
+  const seen = new Map();
+  for (const fight of (fights || [])) {
+    if (!fight || !fight.encounterID || seen.has(fight.encounterID)) continue;
+    seen.set(fight.encounterID, { encounterID: fight.encounterID, name: fight.name, difficulty: fight.difficulty });
+  }
+  return [...seen.values()];
+}
+
 export async function reportDeaths(code, fightIDs, { fresh = false } = {}) {
   const ids = `[${(fightIDs || []).join(",")}]`;
   const out = [];

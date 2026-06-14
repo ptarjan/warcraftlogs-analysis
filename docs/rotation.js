@@ -9,7 +9,7 @@
 //   - your opener sequence vs the field's
 import {
   playerMetrics, ilvlPeers, mapLimit, median, bestKill,
-  reportCore, playerAbilities, fightWindow, fightEvents, paginateEvents, f, DPS, finding, eventTable, runIsHealer,
+  reportCore, playerAbilities, dotUptimes, fightWindow, fightEvents, paginateEvents, f, DPS, finding, eventTable, runIsHealer,
 } from "./core.js";
 import { talentedAbilities, heroTreeOf } from "./talents.js";
 import { wowheadSpell } from "./links.js";
@@ -128,8 +128,11 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
     // ride on the playerMetrics table already loaded). The per-cast-damage lever
     // medians these across peers to see how hard the FIELD's same ability hits.
     // sourceID lets the caller resolve this peer's hero tree (same-tree matching).
+    // Peer DoT uptimes for the caller's DoT ids (so the field comparison is on the
+    // SAME DoTs as you) -- one batched query, only when asked.
+    const dotUp = (opts.dotIds && opts.dotIds.length) ? await dotUptimes(code, fight, m.sourceID, opts.dotIds, e - s) : {};
     return { opener: openerSequence(casts), procPerMin, empShare, castRate, allCastRate, name2id,
-             dmgBy: m.dmgBy, total: m.total, dur, sourceID: m.sourceID };
+             dmgBy: m.dmgBy, total: m.total, dur, sourceID: m.sourceID, dotUp };
   }
 
   // You: per-hit detail for the top damage abilities (bounded for API cost).
@@ -145,7 +148,16 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
   // Per-ability total damage (name -> total), so the cooldown lever can size a
   // missed cooldown by its MEASURED damage-per-cast rather than guessing.
   const dmgTotals = Object.fromEntries(abils.map((a) => [a.name, a.total]));
-  return { opener: openerSequence(casts), hits, dur, castRate, allCastRate, dmgTotals, total: m.total, sourceID: m.sourceID, name2id };
+  // DoTs = ticking abilities that carry real damage (>=3% of your total) -- class-
+  // agnostic, derived from the data (tickCount + share), not a hard-coded list. Fetch
+  // their boss uptime so the field comparison can flag a CLIPPED DoT (lost damage
+  // cast/cooldown levers can't see). { name, guid, share } + { guid: uptime% }.
+  const dmgTotal = abils.reduce((sm, a) => sm + (a.total || 0), 0) || 1;
+  const dots = abils.filter((a) => (a.tickCount || 0) > 0 && a.total / dmgTotal >= 0.03)
+    .map((a) => ({ name: a.name, guid: a.guid, share: a.total / dmgTotal }));
+  const dotUp = dots.length ? await dotUptimes(code, fight, m.sourceID, dots.map((d) => d.guid), e - s) : {};
+  return { opener: openerSequence(casts), hits, dur, castRate, allCastRate, dmgTotals, total: m.total,
+           sourceID: m.sourceID, name2id, dots, dotUp };
 }
 
 // Median casts/min per ability across the field's kills (absent in a kill = 0),
@@ -289,6 +301,30 @@ export function perCastGaps(yourAb, fieldAb, overallRatio, yourTotal,
 //                        of the Righteous), OR not a never-pressed case, OR no
 //                        talent data -> handle as an ordinary rotation/priority fix
 //                        (NEVER claim a missing talent we can't prove).
+// DoT-uptime gaps: a DoT you keep up LESS than the field loses its damage roughly
+// in proportion to the shortfall (its damage scales ~linearly with uptime). Pure ->
+// testable. `share` = the DoT's fraction of YOUR total damage (measured); closing
+// the gap scales that DoT up by field/you, so lost% = share*(field-you)/you*100.
+// Only a REAL clip (>= minGap pp below the field) worth >=1% fires -- so a
+// well-maintained DoT (uptime ~= the field) stays silent (no false positive).
+export function dotUptimeGaps(dots, youUp, fieldUp, { minGap = 6, minFieldUptime = 70 } = {}) {
+  const out = [];
+  for (const d of (dots || [])) {
+    const you = (youUp || {})[d.guid], field = (fieldUp || {})[d.guid];
+    if (you == null || field == null) continue;
+    // The field must actually MAINTAIN it. A channeled filler (Mind Flay) or a proc
+    // also "ticks", but the field keeps it up only ~25% -- being below them there is
+    // usage, not a clip. A real maintained DoT sits at high field uptime (SW:Pain
+    // ~100%). Gate on that so "don't clip your DoT" is never said about a channel.
+    if (field < minFieldUptime) continue;
+    if (field - you < minGap) continue;
+    const pct = Math.round((100 * (d.share || 0) * (field - you)) / Math.max(you, 1));
+    if (pct < 1) continue;
+    out.push({ name: d.name, guid: d.guid, you, field, pct });
+  }
+  return out.sort((a, b) => b.pct - a.pct);
+}
+
 export function classifyUnderUse(top, talent) {
   if (!top) return null;
   const neverPress = top.you < 0.2 && top.field >= 1.5;
@@ -349,7 +385,7 @@ export async function rotationFindings(name, server, region, className, specName
   const analyzed = (await mapLimit(cands, 4, async (r) => {
     try {
       const a = await analyzeKill(r.name, r.report.code, r.report.fightID, specName, className,
-                                  { onlyAbility: biggest.name });
+                                  { onlyAbility: biggest.name, dotIds: (you.dots || []).map((d) => d.guid) });
       if (!a) return null;
       const hero = yourHero ? await heroTreeOf(r.report.code, r.report.fightID, a.sourceID).catch(() => null) : null;
       return { ...a, hero };
@@ -450,9 +486,17 @@ export async function rotationFindings(name, server, region, className, specName
   // prescription can link every ability it names (under/over-press, proc, the
   // never-pressed field ability). Yours wins on collision.
   const abilityIds = Object.assign({}, ...peers.map((p) => p.name2id || {}), you.name2id || {});
+  // DoT-uptime gaps: field-median uptime per DoT vs yours -> a clipped DoT is lost
+  // damage the cast/cooldown levers can't see (THE missing lever for DoT specs).
+  const fieldUp = {};
+  for (const d of (you.dots || [])) {
+    const ups = peers.map((p) => (p.dotUp || {})[d.guid]).filter((x) => x != null);
+    if (ups.length >= 3) fieldUp[d.guid] = median(ups);
+  }
+  const dotGaps = dotUptimeGaps(you.dots || [], you.dotUp || {}, fieldUp);
   return {
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener,
-    usage, cooldowns, cdUsage, perCast, castGap, fieldPeers: peers.length, talent, abilityIds,
+    usage, cooldowns, cdUsage, perCast, dotGaps, castGap, fieldPeers: peers.length, talent, abilityIds,
     heroMatched: yourHero && peers.length ? (peers.every((p) => p.hero === yourHero) ? yourHero : null) : null,
     proc: { name: biggest.name, isReal, youPerMin: biggest.procPerMin, fieldPerMin: fieldProc, youEmp, fieldEmp },
   };
@@ -594,6 +638,15 @@ export function rotationLevers(rot) {
         `${cd.fieldPerFight.toFixed(0)}x -- ~${cd.pct}% of your damage. Use it on cooldown; it's a button you're ` +
         `skipping, not gear.`));
     }
+  }
+  // DoT UPTIME: a damage-over-time you keep up LESS than the field is lost damage
+  // that cast/cooldown levers can't see -- THE missing lever for DoT specs. Measured
+  // (boss uptime vs the field's), sized by the DoT's damage share x the shortfall.
+  for (const d of ((rot && rot.dotGaps) || []).slice(0, 2)) {
+    out.push(finding("Rotation", DPS(d.pct),
+      `DOT UPTIME: your ${wowheadSpell(d.guid, d.name)} is up ${d.you}% on the boss vs the field's ${d.field}% ` +
+      `-- ~${d.pct}% of your damage. Refresh it before it falls off (don't clip or let it drop in movement); ` +
+      `it's free damage you already have the buttons for.`, "measured"));
   }
   // EMPOWERMENT: your biggest hit lands in its high-damage window LESS than the
   // field. We only claim this when the EVIDENCE shows it -- your empowered-cast
