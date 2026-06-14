@@ -139,6 +139,31 @@ test("executionLevers: no press-faster when you out-cast the field (idle heurist
   assert.ok(!out.some((r) => /PRESS FASTER/.test(r.text)), "no press-faster lever when out-casting the field");
 });
 
+test("executionLevers: no press-faster when you idle LESS than peers in range (deficit is movement/mix)", () => {
+  // Dysphoric (Feral): pressExcess -2.0 (idles LESS in-range than peers) yet casts
+  // 37 vs 42/min. The deficit is movement (the uptime lever) + ability-mix, NOT idle
+  // GCDs -- so press-faster must NOT fire, and must NEVER print "you idle ~-2.0s/min
+  // MORE" (a flat contradiction of the data). The cast-deficit branch requires
+  // non-negative in-range idle.
+  const execd = { pressExcess: -2.0, rangeExcess: 4.4, worstRange: ["Boss"], overshootExcess: 0 };
+  const rot = { castGap: { you: 37, field: 42, pct: 12 } };
+  const out = executionLevers(execd, rot, 60);
+  assert.ok(!out.some((r) => /PRESS FASTER/.test(r.text)), "no press-faster when out-pressing peers in range");
+  assert.ok(!out.some((r) => /-\d.*MORE than peers/.test(r.text)), "never a negative 'idle MORE' figure");
+});
+
+test("executionLevers: cast deficit with ~zero in-range idle reframes off the 'idle MORE' headline", () => {
+  // Slow-but-not-idle: you press as much as peers in range (pressExcess ~0) but your
+  // damaging-cast rate trails -- micro-gaps, not big pauses. The lever still fires
+  // (speedPct>=3) but the headline must not assert "you idle ~0.0s/min MORE".
+  const execd = { pressExcess: 0.1, rangeExcess: 0, worstRange: [], overshootExcess: 0 };
+  const rot = { castGap: { you: 50, field: 60, pct: 17 } };
+  const [press] = executionLevers(execd, rot, 40);
+  assert.ok(press && /PRESS FASTER/.test(press.text), "press-faster still fires on a real cast deficit");
+  assert.doesNotMatch(press.text, /idle ~0?\.\ds\/min MORE/, "no spurious '~0s/min MORE idle' claim");
+  assert.match(press.text, /in-range idle matches theirs/);
+});
+
 test("HEALER: press-faster is suppressed (idle GCDs are correct play), but latency/movement keep firing", () => {
   // A healer with a real cast deficit AND idle time would get "PRESS FASTER" on a
   // damage run -- but holding a global rather than dumping an overheal is right, so

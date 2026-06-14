@@ -368,7 +368,13 @@ export function executionLevers(execd, rot, peerGapPct = null, activePct = null)
   // the actual healer levers are efficiency (overhealing) + mana (see healing.js).
   // latency + movement/uptime levers below still apply (a healer out of range is
   // really losing healing), so only this PRESS-FASTER push is suppressed.
-  if (!runIsHealer() && !noIdle && (execd.pressExcess >= 1.0 || speedPct >= 3) && !(speedPct < 3 && outpacesField)) {
+  // A cast deficit only counts as "press faster" when you aren't ALREADY idling
+  // LESS than peers in range (pressExcess < 0). If you out-press them in range yet
+  // cast fewer/min, the missing casts are MOVEMENT (the uptime lever owns them) or
+  // ability-MIX (rotation/remainder), not idle GCDs you can fill -- and a headline
+  // "you idle ~-2.0s/min MORE" would flatly contradict the data (Dysphoric, Feral).
+  const deficitIsPressable = speedPct >= 3 && execd.pressExcess >= 0;
+  if (!runIsHealer() && !noIdle && (execd.pressExcess >= 1.0 || deficitIsPressable) && !(speedPct < 3 && outpacesField)) {
     const castEst = Math.round(speedPct / 2);
     const headroomCap = (peerGapPct && peerGapPct > 0) ? Math.max(1, Math.ceil(peerGapPct * 0.6)) : Infinity;
     const pct = Math.min(Math.max(idlePct, castEst) || 1, headroomCap, 12);
@@ -385,8 +391,14 @@ export function executionLevers(execd, rot, peerGapPct = null, activePct = null)
     const cause = latencyHigh
       ? "gaps between GCDs (partly input latency -- see the INPUT LATENCY item)."
       : "not latency (yours matches theirs), just gaps between GCDs.";
-    out.push(finding("Execution", DPS(pct),
-      `PRESS FASTER (every boss): you idle ~${f(execd.pressExcess, 1)}s/min MORE than peers while in range and not moving -- ${cause}${cite} Always queue your next ability so a GCD never sits empty.`, "measured"));
+    // Only claim "you idle MORE" when you measurably do (pressExcess positive). When
+    // the lever fired on the cast deficit while your in-range idle MATCHES the field
+    // (pressExcess ~0), the gap is micro-gaps between GCDs, not big pauses -- say that
+    // instead of printing a ~0s/min (or contradictory negative) idle figure.
+    const headline = execd.pressExcess >= 0.5
+      ? `PRESS FASTER (every boss): you idle ~${f(execd.pressExcess, 1)}s/min MORE than peers while in range and not moving -- ${cause}${cite} Always queue your next ability so a GCD never sits empty.`
+      : `PRESS FASTER (every boss): your damaging-cast rate trails the field even though your in-range idle matches theirs -- ${cause}${cite} Tighten the gaps between GCDs so each global fires the moment it's ready.`;
+    out.push(finding("Execution", DPS(pct), headline, "measured"));
   }
   out.push(...latencyLever(execd));
   if (execd.rangeExcess >= 1.0 || execd.worstRange.length) {
