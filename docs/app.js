@@ -137,9 +137,16 @@ function applyMode() {
   const picker = $("picker"); if (picker && !showPlayer) picker.style.display = "none";
   if (progForm) progForm.style.display = showProg ? "" : "none";
   if (progPicker && !showProg) progPicker.style.display = "none";
+  // Once you're connected the marketing/EXAMPLE intro is just taking up space the
+  // picker (your characters / your raid nights) can use -- hide it when authed.
+  const intro = document.getElementById("intro"); if (intro) intro.style.display = authed ? "none" : "";
   if (modebar) for (const t of modebar.querySelectorAll(".modetab")) t.classList.toggle("active", t.dataset.mode === mode);
 }
-function setMode(m) { mode = m; applyMode(); renderMode(); }
+// Remember the active tab in the URL so a reload / browser-back keeps you on it.
+function syncModeUrl() {
+  try { history.replaceState(null, "", location.pathname + (mode === "progression" ? "?mode=progression" : "")); } catch (e) { /* ignore */ }
+}
+function setMode(m) { mode = m; syncModeUrl(); applyMode(); renderMode(); }
 if (modebar) for (const t of modebar.querySelectorAll(".modetab")) t.onclick = () => setMode(t.dataset.mode);
 
 async function renderMode() {
@@ -258,6 +265,9 @@ function runResume(c) {
     return;
   }
   if (progDeepLink()) return;          // ?report= link -> raid-progression flow
+  // Restore the active tab from the URL (?mode=progression) so a reload / browser
+  // back keeps you on the flow you were using.
+  if (new URLSearchParams(location.search).get("mode") === "progression") mode = "progression";
   if (!(await deepLink())) renderMode();
 })();
 
@@ -515,7 +525,7 @@ function addBackBar() {
   const b = document.createElement("button");
   b.type = "button";
   b.className = "linkbtn back";
-  b.textContent = isAuthed() ? "← Your characters" : "← New search";
+  b.textContent = !isAuthed() ? "← New search" : (mode === "progression" ? "← Raid reports" : "← Your characters");
   b.onclick = goBack;
   bar.appendChild(b);
   out.appendChild(bar); // first child of the freshly-cleared #out -> sits on top
@@ -585,11 +595,10 @@ function goBack() {
   stopPolling();             // stop any live progression refresh
   activeHero = null;
   out.innerHTML = ""; cur = null;
-  // Drop the deep-link params so a reload doesn't immediately re-run the analysis.
-  try { history.replaceState(null, "", location.pathname); } catch (e) { /* ignore */ }
-  const intro = document.getElementById("intro");
-  if (intro) intro.style.display = "";
-  renderMode();              // re-shows the form + your-characters picker (or Connect prompt)
+  // Drop the per-run deep-link params (so a reload doesn't re-run the analysis) but
+  // KEEP the active tab so back lands you on the flow you were using.
+  syncModeUrl();
+  renderMode();              // re-shows the active tab's form + picker (or Connect prompt)
   window.scrollTo(0, 0);
 }
 
@@ -705,9 +714,13 @@ async function runAnalysis({ name, server, region, serverLabel }) {
 // Raid PROGRESSION flow: analyze a report's pulls and stream the group's "what to
 // change to kill the boss" list. Auto-reloads live as new pulls land.
 // --------------------------------------------------------------------------- //
-const fmtDate = (ms) => { try { return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" }); } catch { return ""; } };
+const fmtDate = (ms) => { try { return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); } catch { return ""; } };
 
 // Recent raid nights as quick-picks (best-effort), plus the paste-a-URL form.
+// Merges reports across ALL your characters (so an alt's raid night shows up too),
+// deduped by report code, newest first -- a much fuller list than one character's.
+const PROG_REPORTS_PER_CHAR = 25;   // pull plenty per character; dedup + cap below
+const PROG_REPORTS_SHOWN = 40;      // how many distinct nights to list
 async function renderProgPicker() {
   if (!progPicker) return;
   const run = ++pickerRun;
@@ -715,14 +728,18 @@ async function renderProgPicker() {
   progPicker.innerHTML = "";
   const h = document.createElement("div");
   h.className = "picker-h";
-  h.textContent = "Recent raid nights — or paste a report URL above";
+  h.textContent = "Recent raid nights — or paste any report URL above";
   progPicker.appendChild(h);
   let chars = [];
   try { chars = await myCharacters(); } catch { chars = []; }
   if (run !== pickerRun) return;
-  let reps = [];
-  if (chars.length) { try { reps = await recentReportsFor(chars[0].name, chars[0].server, chars[0].region, 12); } catch { reps = []; } }
+  // Gather across several of your characters concurrently, then dedupe by code.
+  const lists = await Promise.all(chars.slice(0, 6).map((c) =>
+    recentReportsFor(c.name, c.server, c.region, PROG_REPORTS_PER_CHAR).catch(() => [])));
   if (run !== pickerRun) return;
+  const byCode = new Map();
+  for (const list of lists) for (const rp of list) if (rp && rp.code && !byCode.has(rp.code)) byCode.set(rp.code, rp);
+  const reps = [...byCode.values()].sort((a, b) => (b.startTime || 0) - (a.startTime || 0)).slice(0, PROG_REPORTS_SHOWN);
   if (!reps.length) {
     const m = document.createElement("div"); m.className = "muted";
     m.textContent = "Paste a Warcraft Logs report URL above to analyze a night of pulls.";
@@ -732,9 +749,9 @@ async function renderProgPicker() {
   grid.className = "picker-grid";
   for (const rp of reps) {
     const b = document.createElement("button"); b.type = "button"; b.className = "charbtn";
-    const cn = document.createElement("span"); cn.className = "cn"; cn.textContent = rp.title || (rp.zone && rp.zone.name) || "Raid night";
+    const cn = document.createElement("span"); cn.className = "cn"; cn.textContent = (rp.zone && rp.zone.name) || rp.title || "Raid night";
     const cs = document.createElement("span"); cs.className = "cs";
-    cs.textContent = [fmtDate(rp.startTime), rp.zone && rp.zone.name].filter(Boolean).join(" · ");
+    cs.textContent = [fmtDate(rp.startTime), rp.title].filter(Boolean).join(" · ");
     b.append(cn, cs);
     b.onclick = () => runProgression({ code: rp.code, live: false });
     grid.appendChild(b);

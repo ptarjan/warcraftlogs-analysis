@@ -26,14 +26,20 @@ const fightsFixture = () => Array.from({ length: 14 }, (_, i) => {
   };
 });
 
-// Deaths: ability 500 ("Doom") kills Bob in pulls 5-14 (10 pulls); 501 kills Sue in
-// 5-12 (8); a one-off ability 999 kills Carl in pull 3 ONLY (recurrence gate).
+// Deaths: ability 500 ("Doom") kills Bob EARLY (30s in, long before the wipe) in
+// pulls 5-14 (10 pulls); 501 kills Sue early in 5-12 (8); a one-off ability 999
+// kills Carl in pull 3 ONLY (recurrence gate). "Early" = well before endTime, so
+// these are leading causes, not the wipe cascade. Each pull also has a tail death
+// (everyone-dies-at-the-wipe) that must NOT be blamed on a player.
 function deathsFixture() {
   const out = [];
+  const start = (fid) => fid * 1000;
   const end = (fid) => fid * 1000 + 300000;
-  for (let fid = 5; fid <= 14; fid++) out.push({ fight: fid, timestamp: end(fid) - 5000, targetID: 20, killingAbilityGameID: 500 });
-  for (let fid = 5; fid <= 12; fid++) out.push({ fight: fid, timestamp: end(fid) - 4000, targetID: 21, killingAbilityGameID: 501 });
-  out.push({ fight: 3, timestamp: end(3) - 3000, targetID: 22, killingAbilityGameID: 999 });
+  for (let fid = 5; fid <= 14; fid++) out.push({ fight: fid, timestamp: start(fid) + 30000, targetID: 20, killingAbilityGameID: 500 });
+  for (let fid = 5; fid <= 12; fid++) out.push({ fight: fid, timestamp: start(fid) + 35000, targetID: 21, killingAbilityGameID: 501 });
+  out.push({ fight: 3, timestamp: start(3) + 30000, targetID: 22, killingAbilityGameID: 999 });
+  // Wipe-tail deaths (consequence, not cause): everyone goes down together at the end.
+  for (let fid = 3; fid <= 14; fid++) for (const t of [20, 21, 22, 23, 24]) out.push({ fight: fid, timestamp: end(fid) - 3000, targetID: t, killingAbilityGameID: 777 });
   return out;
 }
 
@@ -165,6 +171,38 @@ test("progressionFindings: a killed boss short-circuits to 'down', no blocker in
   assert.equal(r.findings.length, 1);
   assert.equal(r.findings[0].dim, "Info");
   assert.match(r.findings[0].text, /down/i);
+});
+
+test("progressionFindings: when the whole raid dies AT the wipe, no player is blamed", async () => {
+  // The 'everyone dies 12/12 because we wipe' case: every death is in the final
+  // seconds (consequence, not cause). No field kill times either -> the DPS check
+  // can't size a gap. The result must NOT name players/mechanics; it must say the
+  // raid goes down together (a wall), not invent individual blame.
+  clearGqlCache();
+  globalThis.fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("oauth/token")) return resp({ access_token: "t", expires_in: 3600 });
+    if (u.includes("wowhead.com")) return resp({ name: "spell" });
+    if (u.includes("/api/v2/")) {
+      const q = JSON.parse(opts.body).query || "";
+      if (/dmg:\s*table/.test(q)) return resp({ data: coreData() });
+      if (/dataType:\s*Deaths/.test(q)) {
+        const out = [];
+        for (let fid = 1; fid <= 14; fid++) for (const t of [20, 21, 22, 23, 24]) out.push({ fight: fid, timestamp: fid * 1000 + 300000 - 2000, targetID: t, killingAbilityGameID: 777 });
+        return resp({ data: { reportData: { report: { events: { data: out, nextPageTimestamp: null } } } } });
+      }
+      if (/masterData/.test(q)) return resp({ data: { reportData: { report: { masterData: { actors: ROSTER } } } } });
+      if (/characterRankings/.test(q)) return resp({ data: { worldData: { encounter: { characterRankings: { rankings: [] } } } } }); // no field reference
+      if (/fights\s*\{/.test(q)) return resp({ data: { reportData: { report: { fights: fightsFixture() } } } });
+      return resp({ data: {} });
+    }
+    throw new Error("no route " + u);
+  };
+  const r = await prog.progressionFindings("ABC123DEF4");
+  assert.ok(!r.findings.some((f) => f.dim === "Survival" || f.dim === "Mechanic"), "no per-player or per-mechanic blame");
+  const texts = r.findings.map((f) => f.text).join("\n");
+  assert.doesNotMatch(texts, /Bob|Sue|12\/12|10\/12/, "does not blame individuals for the wipe");
+  assert.match(texts, /together|wall/i, "frames it as a wall, not individual deaths");
 });
 
 test("progressionFindings: a whole night stays within a small request budget", async () => {

@@ -60,10 +60,13 @@ hands the *group* a few actionable, named changes to get the kill — driven by
 
 - **Input:** paste a Warcraft Logs **report URL** (or pick a recent raid night).
 - **What it finds:** the **wall** (where recent wipes keep ending — phase +
-  boss-% bucket), the **recurring killing-blow mechanic** and who keeps dying to
-  it (named), repeat-dying players, and — when the raid is damage-light and not
-  death-capped — a **DPS check** sized from an estimated boss HP vs the field's
-  own kill time (no hard-coded enrage), naming the lowest contributors.
+  boss-% bucket); **leading causes** — the mechanic and players whose **early**
+  deaths (well before the wipe, not the everyone-dies-at-the-end cascade) tip
+  pulls over; and a **DPS check** sized from an estimated boss HP vs the field's
+  own kill time (no hard-coded enrage), naming the lowest contributors. Crucially
+  it does **not** blame the players who die *in* the wipe — when the whole raid
+  goes down together at the wall, that's a DPS/enrage or raid-wide mechanic, not
+  individual deaths.
 - **Backtest:** it reads every pull to show the trend toward a kill, and flags a
   **roster change** that coincided with deeper progress.
 - **Live:** tick **Auto-reload** during raid — it re-polls the report's fight

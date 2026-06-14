@@ -148,57 +148,58 @@ export async function progressionFindings(code, { encounterId = null, fresh = fa
     ]);
   } catch { /* best-effort: deaths/roster unavailable -> skip survival lever */ }
   const endById = new Map(analyzed.map((p) => [p.id, p.endTime]));
-  const phaseById = new Map(analyzed.map((p) => [p.id, p.lastPhase || 0]));
+  const nA = analyzed.length;
 
-  // Per-ability: how many distinct pulls it got a killing blow in, and who it hit.
-  // Per-player: how many distinct pulls they died in, and whether in the cascade.
-  const byAbility = new Map();   // id -> { pulls:Set, victims:Map(name->count) }
-  const byPlayer = new Map();    // name -> { pulls:Set, cls, cascade:Set }
+  // CAUSE vs CONSEQUENCE. When a pull wipes, the whole raid dies in the final
+  // seconds (enrage / reset / a raid-wide finisher) — so "everyone died 12/12" is
+  // the WIPE, not a per-player problem, and blaming those players is noise. Only an
+  // EARLY death (well before the pull ended) is a leading cause worth naming: losing
+  // a player before the wipe is what tips the pull. The tail cluster is the wall,
+  // handled by the DPS check / wall note below. Class/encounter-agnostic.
+  const isEarly = (ev) => (endById.get(ev.fight) - ev.timestamp) > DEATH_WINDOW_MS;
+
+  const byAbility = new Map();   // id -> { pulls:Set, victims:Map(name->count) }  (early only)
+  const byPlayer = new Map();    // name -> { pulls:Set, cls }                     (early only)
   for (const ev of deaths) {
     const fid = ev.fight;
-    if (fid == null || !endById.has(fid)) continue;
+    if (fid == null || !endById.has(fid) || !isEarly(ev)) continue;   // skip wipe-tail deaths
     const v = victimOf(ev, roster);
     if (v.cls && /^(NPC|Pet|Boss)$/i.test(v.cls)) continue;
     const aid = killerAbility(ev);
-    const inCascade = (endById.get(fid) - ev.timestamp) <= DEATH_WINDOW_MS;
     if (aid) {
       const a = byAbility.get(aid) || { pulls: new Set(), victims: new Map() };
       a.pulls.add(fid); a.victims.set(v.name, (a.victims.get(v.name) || 0) + 1); byAbility.set(aid, a);
     }
-    const p = byPlayer.get(v.name) || { pulls: new Set(), cls: v.cls, cascade: new Set() };
-    p.pulls.add(fid); if (inCascade) p.cascade.add(fid); byPlayer.set(v.name, p);
+    const p = byPlayer.get(v.name) || { pulls: new Set(), cls: v.cls };
+    p.pulls.add(fid); byPlayer.set(v.name, p);
   }
-  const nA = analyzed.length;
-  // Median deaths in the final cascade -> survival vs DPS-check discriminator.
-  const cascadeCounts = analyzed.map((p) =>
-    deaths.filter((ev) => ev.fight === p.id && (endById.get(p.id) - ev.timestamp) <= DEATH_WINDOW_MS).length);
-  result.medCascadeDeaths = cascadeCounts.length ? median(cascadeCounts) : 0;
 
-  // Name the few abilities/players we'll actually surface.
+  // Name the few abilities/players we'll actually surface (recurrence-gated).
   const topAbilities = [...byAbility.entries()].filter(([, a]) => a.pulls.size >= RECUR_MIN)
     .sort((a, b) => b[1].pulls.size - a[1].pulls.size).slice(0, 2);
   const repeatPlayers = [...byPlayer.entries()].filter(([, p]) => p.pulls.size >= Math.max(RECUR_MIN, Math.ceil(nA / 2)))
     .sort((a, b) => b[1].pulls.size - a[1].pulls.size).slice(0, 4);
   const spellNames = await nameSpells(new Set(topAbilities.map(([id]) => id)));
+  result.hasEarlyCause = !!(topAbilities.length || repeatPlayers.length);
 
   // ---- Survival / mechanic findings (data-derived, named) --------------------- //
   for (const [aid, a] of topAbilities) {
     const victims = [...a.victims.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([n]) => n);
     const link = wowheadSpell(aid, spellNames[aid] || `spell ${aid}`);
-    result.findings.push(finding("Survival", BLOCK(pct(a.pulls.size, nA)),
-      `**Avoid ${link}** — it landed a killing blow in ${a.pulls.size} of the last ${nA} wipes` +
+    result.findings.push(finding("Mechanic", BLOCK(pct(a.pulls.size, nA)),
+      `**Avoid ${link}** — it kills someone EARLY (before the wipe) in ${a.pulls.size} of the last ${nA} pulls` +
       (victims.length ? ` (most-hit: ${victims.join(", ")})` : "") +
-      `. Assign/teach this mechanic before pushing further.`));
+      `. An early death here is what tips the pull — assign or handle this mechanic.`));
   }
   if (repeatPlayers.length) {
     const who = repeatPlayers.map(([n, p]) => `${n}${p.cls ? ` (${p.cls})` : ""} ${p.pulls.size}/${nA}`).join(", ");
-    const worst = repeatPlayers[0][1].pulls.size;
-    result.findings.push(finding("Survival", BLOCK(pct(worst, nA)),
-      `**Repeat deaths** are ending pulls: ${who}. Survival or positioning fix for these players (or swap an assignment) is worth more than any DPS gain right now.`));
+    result.findings.push(finding("Survival", BLOCK(pct(repeatPlayers[0][1].pulls.size, nA)),
+      `**Early deaths** are tipping pulls: ${who} die well before the wipe (not in the final cascade). ` +
+      `Losing a player early snowballs the pull — a survival/positioning fix or assignment swap here beats any DPS gain.`));
   }
 
   // ---- DPS / soft-enrage check (best-effort, only the deepest+recent pulls) ---- //
-  try { await dpsCheck(result, analyzed, deaths, endById); } catch { /* leave it out */ }
+  try { await dpsCheck(result, analyzed); } catch { /* leave it out */ }
 
   // ---- Roster / "what changed" backtest --------------------------------------- //
   try { rosterDelta(result, pulls, roster); } catch { /* optional */ }
@@ -206,8 +207,15 @@ export async function progressionFindings(code, { encounterId = null, fresh = fa
   // Sort biggest blocker first; cap to a FEW. INFO notes (impact 0) sink to the end.
   result.findings.sort((a, b) => b.impact - a.impact);
   result.findings = result.findings.slice(0, MAX_FINDINGS);
-  if (!result.findings.length) result.findings.push(finding("Info", NOTE,
-    `No recurring wipe cause stood out across the last ${nA} pulls — deaths are scattered. Pick ONE mechanic to clean up and re-run after a few more pulls.`));
+  if (!result.findings.length) {
+    // Nothing recurring early AND no DPS gap we could size -> the wipes are the raid
+    // going down TOGETHER at the wall, not individual mistakes. Say that plainly
+    // instead of inventing per-player blame.
+    const wallTxt = result.wall ? ` at ~${result.wall.rem}% boss health${result.multiPhase ? ` (phase ${result.wall.phase})` : ""}` : "";
+    result.findings.push(finding("Info", NOTE,
+      `No one keeps dying early — your pulls end with the raid going down together${wallTxt}. ` +
+      `That's a DPS/enrage wall or a raid-wide mechanic to out-gear or solve, not individual deaths.`));
+  }
   return result;
 }
 
@@ -215,7 +223,7 @@ export async function progressionFindings(code, { encounterId = null, fresh = fa
 // boss's effective HP (damage dealt / fraction killed) and compare the raid DPS to
 // what the FIELD's kill time implies is needed. NO hard-coded enrage -- the field's
 // own kill duration is the reference. Names the lowest contributors on that pull.
-async function dpsCheck(result, analyzed, deaths, endById) {
+async function dpsCheck(result, analyzed) {
   const deepest = result.deepest;
   if (!deepest) return;
   const recent = analyzed[analyzed.length - 1];
@@ -240,14 +248,13 @@ async function dpsCheck(result, analyzed, deaths, endById) {
   const deficit = Math.max(0, ((requiredDps - raidDps) / requiredDps) * 100);
   result.dps = { raidDps, requiredDps, deficit, fieldKillMin: secs(killMs) / 60, killedPct: Math.round(fractionKilled * 100) };
 
-  // Only a real lever if there's a meaningful deficit AND the wipes aren't a death
-  // cascade (then it's survival, not damage). A clean raid that runs out of boss
-  // health is the damage-gated case.
-  if (deficit < 5 || result.medCascadeDeaths >= 3) {
-    if (deficit >= 5) result.notes.push(
-      `Damage looks ~${Math.round(deficit)}% light too, but deaths are wiping you first — fix survival, then re-check the enrage.`);
-    return;
-  }
+  // Fire only on a meaningful deficit. We do NOT suppress it just because people
+  // died — when the raid dies TOGETHER at the wall (no recurring EARLY cause), that
+  // cluster IS the enrage/DPS wall, so the deficit is exactly the lever. If there's
+  // also a real early-death cause, note that it comes first; impact-sort orders them.
+  if (deficit < 5) return;
+  if (result.hasEarlyCause) result.notes.push(
+    `Damage is also ~${Math.round(deficit)}% light — but fix the early deaths first, then re-check the wall.`);
   // Bottom contributors on the deepest pull, relative to the raid median (named).
   const dpsList = entries.map((e) => ({ name: e.name, cls: e.type, dps: (e.total || 0) / durSec }))
     .filter((x) => x.dps > 0).sort((a, b) => a.dps - b.dps);
