@@ -8,7 +8,7 @@
 import {
   ENCHANTABLE_SLOTS, DIFFICULTY, characterZone, characterEncounter, playerMetrics,
   ilvlPeers, PEER_SAMPLE, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry, bestRank, bestKill,
-  DPS, INFO, finding, fieldDelta, metricUnit,
+  DPS, INFO, finding, fieldDelta, metricUnit, throughputWord,
 } from "./core.js";
 import { timelineFindings } from "./timeline.js";
 import { gearFindings, gearLevers, itemInstance, sourceText } from "./gear.js";
@@ -539,7 +539,7 @@ function renderPrescription(log, d) {
       ? ". You're already ahead of your item-level bracket -- the top parses are the target."
       : isEliteParse(d.medP)
       ? ` -- but the field here is the TOP parses at your item level, and at your ${d.medP}th percentile most of that gap is raid comp + execution on optimal pulls, not a setup you're getting wrong. The fixes below are the concrete part you control.`
-      : ` -- and they have your exact item level, so that ${peerGap}% is DPS you could realistically gain. The fixes below are sized to add up to it.`;
+      : ` -- and they have your exact item level, so that ${peerGap}% is ${metricUnit()} you could realistically gain. The fixes below are sized to add up to it.`;
     log(`Measured on ${gearBossLink}: you (ilvl ~${d.curIlvl}) do ${k(you.dps)} ${metricUnit()} -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
         (topGap != null ? `, ${topGap}% behind the top parses` : "") + tail);
   }
@@ -650,12 +650,12 @@ function renderPrescription(log, d) {
       // form) would print a meaningless "0% vs 0%".
       const hasEmp = pr && pr.youEmp != null && pr.fieldEmp != null && pr.fieldEmp >= 0.05;
       const cite = hasEmp && pr.fieldEmp - pr.youEmp >= 0.12
-        ? ` We can see the biggest piece: only ${ep(pr.youEmp)} of your ${pr.name} casts land empowered vs the field's ${ep(pr.fieldEmp)} (see the EMPOWERMENT item) -- the rest is per-cast damage (crit/stats + comp & fight amps).`
+        ? ` We can see the biggest piece: only ${ep(pr.youEmp)} of your ${pr.name} casts land empowered vs the field's ${ep(pr.fieldEmp)} (see the EMPOWERMENT item) -- the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps).`
         : hasEmp
-        ? ` We checked the obvious culprit: your ${pr.name} lands empowered ${pr.youEmp >= pr.fieldEmp ? "as often as" : "nearly as often as"} the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}), so it's NOT timing -- the gap is per-cast damage (crit/stat scaling, plus comp re-attribution and this boss's damage-taken windows you don't fully control).`
+        ? ` We checked the obvious culprit: your ${pr.name} lands empowered ${pr.youEmp >= pr.fieldEmp ? "as often as" : "nearly as often as"} the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}), so it's NOT timing -- the gap is per-cast ${throughputWord()} (crit/stat scaling, plus comp re-attribution and fight amp windows you don't fully control).`
         : under.length
         ? ` We can see part of it: you press ${under.slice(0, 2).map((a) => `${a.name} ${f(a.you, 1)}/min vs ${f(a.field, 1)}`).join(", ")}.`
-        : ` The cooldown/ability gaps we could measure are listed above; the rest is per-cast damage (crit/stats + comp & fight amps) we can't pin to one ability.`;
+        : ` The cooldown/ability gaps we could measure are listed above; the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps) we can't pin to one ability.`;
       rtext = `PLAYSTYLE (~${r}%): the biggest chunk, and it's NOT gear (a sim would value your gear swaps at a few %) and NOT "press faster" -- it's how you play the same gear the field plays.${cite}`;
     } else if (kind === "underpress") {
       rtext = `THE REMAINDER (~${r}%): not a setup item -- it's GCD uptime and hitting your priority on more pulls (see the measured cast/idle gaps above). That's where the rest of your gap lives.`;
