@@ -9,7 +9,7 @@
 //   - your opener sequence vs the field's
 import {
   playerMetrics, ilvlPeers, mapLimit, median, bestKill,
-  reportCore, fightWindow, fightEvents, paginateEvents, f, DPS, finding, eventTable, runIsHealer,
+  reportCore, playerAbilities, fightWindow, fightEvents, paginateEvents, f, DPS, finding, eventTable, runIsHealer,
 } from "./core.js";
 import { talentedAbilities, heroTreeOf } from "./talents.js";
 import { wowheadSpell } from "./links.js";
@@ -55,14 +55,12 @@ export function empoweredShare(nonCritAmounts, { minHits = 6, factor = 1.5 } = {
 // fightWindow, fightEvents, paginateEvents) so a kill's tables/events are fetched
 // once across rotation, diagnose, and analyze. -------------------------------
 
-// One player's damage abilities (guid/name/total), highest total first -- from the
-// shared loader's DamageDone table (className arg ignored; the table is unfiltered).
-async function damageAbilities(code, fight, name, className) {
-  const es = (await reportCore(code, fight)).dmg.data.entries || [];
-  const e = es.find((x) => x.name === name) || es[0];
-  if (!e) return [];
-  return (e.abilities || []).filter((a) => a.guid != null && a.total > 0)
-    .sort((a, b) => b.total - a.total);
+// One player's damage abilities (guid/name/total), highest total first. Uses the
+// sourceID-FILTERED table (core.playerAbilities), NOT the shared unfiltered one --
+// the latter truncates to ~5 abilities/actor, which for a caster drops the core
+// casts and makes the cast rate / rotation comparison undercount badly.
+async function damageAbilities(code, fight, sourceId) {
+  return playerAbilities(code, fight, sourceId);
 }
 
 // Per-hit stats from raw damage events. Separates crit-driven big hits (a stat
@@ -92,7 +90,7 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
   const dur = (e - s) / 1000;
 
   // Opener from cast events (names via the damage-ability map is enough here).
-  const abils = await damageAbilities(code, fight, m.name, className);
+  const abils = await damageAbilities(code, fight, m.sourceID);
   const id2name = Object.fromEntries(abils.map((a) => [a.guid, a.name]));
   const name2id = Object.fromEntries(abils.map((a) => [a.name, a.guid]));
   const rawCasts = (await fightEvents(code, fight, m.sourceID, s, e)).casts.filter((x) => !x.fake);

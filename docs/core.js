@@ -219,6 +219,22 @@ export async function playerMetrics(code, fight, name, specName, className) {
   return metricsFromTables(d.dmg.data, d.casts.data, name, specName);
 }
 
+// A player's FULL damage-ability breakdown, from a sourceID-FILTERED DamageDone
+// table. reportCore's UNFILTERED table truncates to ~5 abilities PER ACTOR -- and
+// for a caster those top-5-by-total often DROP the core casts (a Frost Mage's
+// Frostbolt / Ice Lance / Glacial Spike were missing), so any cast rate built from
+// it undercounts APM ~5x (a mage read "9 casts/min" when it's really ~50) and the
+// rotation comparison can't see the real buttons. The filtered table returns them
+// all. Memoized by the gql cache (one fetch per report+fight+source; the loader
+// test keys units by sourceID). Entries: { name, guid, total, uses, ... }, by total.
+export async function playerAbilities(code, fight, sourceId) {
+  const q = `query { reportData { report(code:"${code}") {
+    table(fightIDs:${fight}, dataType:${throughputTable()}, sourceID:${sourceId}) } } }`;
+  const t = (await gql(q)).reportData.report.table.data;
+  return (t.entries || []).filter((a) => a.guid != null && a.total > 0)
+    .sort((a, b) => b.total - a.total);
+}
+
 // Fight window [start, end] in ms -- from the shared loader query.
 export async function fightWindow(code, fight) {
   const d = await reportCore(code, fight);

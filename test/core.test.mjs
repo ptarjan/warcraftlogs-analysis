@@ -84,3 +84,16 @@ test("analysis modules select peers/field + fetch ONLY via named core functions"
     assert.doesNotMatch(src, /\bgql\s*\(/, `${file}: fetch via named core functions, never raw gql`);
   }
 });
+
+// The unfiltered reportCore DamageDone table truncates to ~5 abilities/actor, which
+// for a caster drops the core casts (a Frost Mage's Frostbolt/Ice Lance/Glacial
+// Spike) and makes the cast rate undercount APM ~5x (read "9 casts/min" vs ~50).
+// rotation MUST read its ability list from the per-player sourceID-filtered table
+// (core.playerAbilities), never the truncated unfiltered one. Locks the fix.
+test("rotation builds its ability list from the sourceID-filtered table, not the truncated one", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const src = readFileSync(fileURLToPath(new URL("../docs/rotation.js", import.meta.url)), "utf8");
+  assert.match(src, /playerAbilities\s*\(/, "rotation must use core.playerAbilities (full, sourceID-filtered list)");
+  assert.doesNotMatch(src, /reportCore\([^)]*\)\s*\)\s*\.dmg\.data\.entries/, "must not read the truncated unfiltered dmg entries for abilities");
+});
