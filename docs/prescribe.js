@@ -212,7 +212,12 @@ export function executionLevers(execd, rot, peerGapPct = null) {
     const castEst = Math.round(speedPct / 2);
     const headroomCap = (peerGapPct && peerGapPct > 0) ? Math.max(1, Math.ceil(peerGapPct * 0.6)) : Infinity;
     const pct = Math.min(Math.max(idlePct, castEst) || 1, headroomCap, 12);
-    const cite = (cg && cg.field > 0)
+    // Only cite the cast rate as "lower" when it actually IS lower. A player can
+    // idle more (pressExcess>=1) yet cast AS MANY or MORE damaging abilities/min
+    // than the field (e.g. 69 vs 65) -- their idle gaps don't show up as a cast
+    // deficit. In that case the deficit citation is false ("your lower cast rate
+    // 69 vs 65"), so drop it; the measured idle-time headline stands on its own.
+    const cite = (cg && cg.field > 0 && (speedPct >= 3 || cg.you < cg.field))
       ? (speedPct >= 3
           ? ` You cast ${f(cg.you, 0)} damaging abilities/min vs the field's ${f(cg.field, 0)} -- ~${speedPct}% of that is raw speed (the rest is the rotation fix); the % here estimates the DPS it's worth.`
           : ` (Your lower cast rate -- ${f(cg.you, 0)} vs ${f(cg.field, 0)}/min -- is mostly the rotation fix above, not raw speed.)`)

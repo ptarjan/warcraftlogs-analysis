@@ -50,6 +50,18 @@ test("executionLevers: high overshoot flips press-faster off the 'not latency' c
   assert.ok(out.some((r) => /INPUT LATENCY/.test(r.text))); // and the latency lever fires
 });
 
+test("executionLevers: doesn't claim a 'lower cast rate' when you cast as many/more than the field", () => {
+  // Idle gaps (pressExcess) can coexist with an equal-or-higher cast count.
+  // The press-faster headline still fires, but the cast-deficit citation must
+  // not appear -- "your lower cast rate -- 69 vs 65" is a false statement.
+  const execd = { pressExcess: 2.7, rangeExcess: 0, worstRange: [], overshootExcess: 0 };
+  const rot = { castGap: { you: 69, field: 65, pct: 0 } };
+  const [press] = executionLevers(execd, rot, 22);
+  assert.match(press.text, /PRESS FASTER/);               // headline still fires (measured idle)
+  assert.doesNotMatch(press.text, /lower cast rate/);     // but no false deficit claim
+  assert.doesNotMatch(press.text, /69 vs 65/);
+});
+
 test("latencyLever: fires only above the threshold, never below", () => {
   assert.equal(latencyLever({ overshootExcess: 40 }).length, 1);
   assert.match(latencyLever({ overshootExcess: 40 })[0].text, /SpellQueueWindow/);
