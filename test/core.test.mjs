@@ -6,7 +6,15 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { bestRank } = await import("../docs/core.js");
+const { bestRank, isHealer } = await import("../docs/core.js");
+
+test("isHealer flags every healing spec, by spec name across classes", () => {
+  for (const s of ["Holy", "Discipline", "Restoration", "Mistweaver", "Preservation"])
+    assert.equal(isHealer(s), true, `${s} is a healer`);
+  // DPS/tank specs are not healers (incl. specs that share a class with a healer)
+  for (const s of ["Shadow", "Retribution", "Balance", "Frost", "Brewmaster", "Guardian", "Protection", "Devastation"])
+    assert.equal(isHealer(s), false, `${s} is not a healer`);
+});
 
 const r = (ilvl, t, id) => ({ bracketData: ilvl, startTime: t, _id: id });
 

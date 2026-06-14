@@ -5,6 +5,14 @@ import { gql } from "./wcl.js";
 
 export const DIFFICULTY = { 2: "LFR", 3: "Normal", 4: "Heroic", 5: "Mythic" };
 
+// The 5 healing spec NAMES cover all 7 healer specs (Holy = Priest+Paladin,
+// Restoration = Druid+Shaman). A healer has no DPS rotation, so the DPS tool
+// doesn't apply -- we say so instead of emitting nonsense (e.g. "press Smite
+// 45/min, 205% behind"). Spec->role is stable game metadata, not a stat weight.
+const HEALER_SPECS = new Set(["Holy", "Discipline", "Restoration", "Mistweaver", "Preservation"]);
+/** @param {string} specName @returns {boolean} */
+export const isHealer = (specName) => HEALER_SPECS.has(specName);
+
 // Slots the field actually enchants (verify each season). Display only.
 export const ENCHANTABLE_SLOTS = {
   0: "Head", 4: "Chest", 6: "Legs", 7: "Feet", 8: "Wrist",
