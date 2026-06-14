@@ -360,12 +360,15 @@ export function reconcileImpacts(impacts, target) {
 // per-lever guesses), what that gap is made of, then the change-list split into
 // "yours to do" vs raid comp. Pure presentation -- the analysis already happened.
 function renderPrescription(log, d) {
-  const { rx, you, field, execd, rot, tp, gf, priority } = d;
+  const { rx, you, field, tp, execd, rot } = d;
   const isComp = (r) => r.dim === "Comp";                  // raid-dependent, not yours to press
   const yours = rx.filter((r) => r.impact > 0 && !isComp(r));
   const k = (n) => `${f((n || 0) / 1000, 1)}k`;
   const peerGap = (you && you.dps && field && field.dpsMed) ? Math.round(((field.dpsMed - you.dps) / you.dps) * 100) : null;
   const topGap = (tp && tp.dpsGapPct) ? Math.round(tp.dpsGapPct) : null;
+  // You out-cast the field, so the "GCD uptime lost" heuristic is contradicted --
+  // the REMAINDER below uses this to frame the gap as damage-per-cast, not activity.
+  const outpaces = rot && rot.castGap && rot.castGap.field > 0 && rot.castGap.you >= rot.castGap.field;
 
   log("");
   log(`=== How to parse better — ${d.name}-${d.server} (${d.specName} ${d.className}), ilvl ~${d.curIlvl} ===`);
@@ -395,20 +398,10 @@ function renderPrescription(log, d) {
   } else {
     log(`VERDICT: build, gear, enchants, and rotation all match the field -- there's NO setup or talent fix to make. Your gap is ${compList0.length ? "comp + " : ""}execution (press faster / uptime). Tighten your play; there's no gear/talent shortcut.`);
   }
-  if (yours.length) log(`Biggest fix YOU control: ${rxHeadline(yours[0].text)} -- start here.`);
-  // What the gap is made of -- MEASURED quantities (no per-lever DPS guess).
-  const facts = [];
-  // Skip the "GCD uptime lost" fact when the cast count shows you out-press the
-  // field (its dominant component is the press-lost heuristic, which the cast
-  // count contradicts -- see executionLevers). Otherwise it reads as a real lever
-  // when it isn't.
-  const outpaces = rot && rot.castGap && rot.castGap.field > 0 && rot.castGap.you >= rot.castGap.field;
-  if (execd && execd.totalExcess >= 1 && !outpaces) facts.push(`Execution -- you lose ${f(execd.totalExcess, 1)}s/min of GCD uptime vs peers`);
-  if (rot && rot.usage && rot.usage.under.length) { const a = rot.usage.under[0]; facts.push(`Rotation -- you press ${a.name} ${f(a.you, 1)}/min vs the field's ${f(a.field, 1)}`); }
-  if (tp && tp.routing && (tp.routing.top - tp.routing.you) >= 5) facts.push(`Routing -- ${f(tp.routing.you, 0)}% of your damage hits adds vs the top parses' ${f(tp.routing.top, 0)}%`);
-  if (tp && tp.buffGaps) { const g = tp.buffGaps.find((x) => x.comp); if (g) facts.push(`Comp -- you're missing ${g.name} (${f(g.you, 0)}% vs ${f(g.top, 0)}% uptime; raid-dependent)`); }
-  if (gf && gf.swaps.length) facts.push(`Gear -- ${gf.swaps.length} ${priority}-itemized upgrade${gf.swaps.length > 1 ? "s" : ""} the field runs (DPS value needs a sim)`);
-  if (facts.length) { log("--- What the gap is made of (measured) ---"); for (const ff of facts) log(`  ${ff}`); }
+  // (No "biggest fix" / "what the gap is made of" summary here -- the VERDICT
+  // above names the situation and the numbered list below IS the breakdown,
+  // sorted biggest-first with each lever's measured detail. Restating it read as
+  // duplication.)
   log(`(Field = top-ranked players at your item level; top parses = the rank-1 kills.)`);
 
   // Split the list by what's YOURS to do vs raid comp. The whole point is "what

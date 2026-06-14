@@ -164,10 +164,10 @@ export function topParseLevers(tp) {
   const out = [];
   // Raid-comp amps missing from your kill (a buff on you / debuff on the boss).
   // You can't press these -- it's who's in the raid -- sized by the effect's value.
+  // Per-line text stays terse -- the "Raid comp" section header already explains
+  // these are roster gaps, not execution, so don't repeat that on every row.
   for (const e of (tp.comp ? tp.comp.missing : [])) {
-    out.push(finding("Comp", COMP(e.est),
-      `COMP: your kill is missing ${e.label} (${e.effect}) -- bring ${e.who}. ` +
-      `A raid-comp gap, not execution; it lifts the whole raid's damage.`));
+    out.push(finding("Comp", COMP(e.est), `Missing ${e.label} (${e.effect}) — bring ${e.who}.`));
   }
   // Damage routing: measured extra cleave/funnel the top parses get.
   const route = tp.routing ? tp.routing.top - tp.routing.you : 0;
