@@ -255,7 +255,7 @@ const _reportCoreBody = (fight) => `
     casts: table(fightIDs:${fight}, dataType:Casts)
     combatant: events(fightIDs:${fight}, dataType:CombatantInfo, limit:50) { data }
     fightWin: fights(fightIDs:${fight}) { startTime endTime }`;
-const _reportCoreQuery = (code, fight) =>
+export const _reportCoreQuery = (code, fight) =>
   `query { reportData { report(code:"${code}") {${_reportCoreBody(fight)} } } }`;
 
 // Memoized by query string via the gql cache; the loader test enforces "each
@@ -264,37 +264,51 @@ export async function reportCore(code, fight) {
   return (await gql(_reportCoreQuery(code, fight))).reportData.report;
 }
 
-// REQUEST BUNDLING: pre-warm many peers' reportCore in ONE aliased request instead
-// of one request each. WCL bills ~flat per REQUEST, so bundling N reports cuts the
-// dominant peer-fetch cost ~N-fold (and is never worse: same data, fewer round-trips).
-// Each batched result is split back to its individual reportCore query key via
-// primeQueryCache, so later reportCore() calls hit the cache and stay separately
-// reusable. Fail-soft: a cache hit is skipped; any batch error (complexity cap,
-// cache-only) just leaves those reports to be fetched individually as before. Node
-// only -- the browser keeps per-request behavior (its own budget + IndexedDB cache).
+// REQUEST BUNDLING -- the core "fewest POSTs" optimization. WCL bills ~flat per
+// REQUEST, and the dominant cost is per-peer fetches (reportCore + timeline events +
+// buff uptimes) repeated for ~10 peers x ~8 bosses. So pre-warm them in ONE aliased
+// multi-report request instead of one each, then split the result back to each
+// report's INDIVIDUAL query key (primeQueryCache) so the normal accessors hit the
+// cache and stay separately reusable (cross-character/section). Fail-soft and never
+// worse: a cache hit is skipped; any batch error (WCL complexity cap, cache-only)
+// just leaves those reports to be fetched individually as before. Node only -- the
+// browser keeps per-request behavior (its own budget + IndexedDB cache).
+//
+// Each "entry" is { q, code, body }: q = the individual accessor's exact query string
+// (the cache key to prime), code = report code, body = the report-block selection.
+async function _bundlePrime(entries, batch) {
+  for (let i = 0; i < entries.length; i += batch) {
+    const group = entries.slice(i, i + batch);
+    const aliased = group.map((e, j) => `b${j}: reportData { report(code:"${e.code}") {${e.body} } }`).join("\n");
+    try {
+      const res = await gql(`query {\n${aliased}\n}`, 2, { fresh: true }); // fail fast to the per-report fallback; don't persist the bundle itself
+      group.forEach((e, j) => { const rd = res && res[`b${j}`]; if (rd && rd.report) primeQueryCache(e.q, { reportData: rd }); });
+    } catch (_) { /* rejected / cache-only -> the individual accessor fetches it as before */ }
+  }
+}
+const _uncached = (entries) => {           // dedupe + drop already-cached
+  const seen = new Set(), out = [];
+  for (const e of entries) { if (!e || seen.has(e.q) || isCached(e.q)) continue; seen.add(e.q); out.push(e); }
+  return out;
+};
+
+// Bundle peers' reportCore (dmg/casts/CombatantInfo/fights). pairs: [{code, fight}].
 export async function prefetchReportCores(pairs, { batch = 4 } = {}) {
   if (!IS_NODE) return;
-  // Dedupe and drop already-cached reports (nothing to fetch for those).
-  const seen = new Set();
-  const todo = [];
-  for (const p of pairs || []) {
-    if (!p || p.code == null || p.fight == null) continue;
-    const q = _reportCoreQuery(p.code, p.fight);
-    if (seen.has(q) || isCached(q)) continue;
-    seen.add(q); todo.push({ code: p.code, fight: p.fight, q });
-  }
-  for (let i = 0; i < todo.length; i += batch) {
-    const group = todo.slice(i, i + batch);
-    const aliased = group.map((p, j) =>
-      `b${j}: reportData { report(code:"${p.code}") {${_reportCoreBody(p.fight)} } }`).join("\n");
-    try {
-      const res = await gql(`query {\n${aliased}\n}`, 2, { fresh: true }); // few retries: fail fast to the per-report fallback; don't persist the bundle
-      group.forEach((p, j) => {
-        const rd = res && res[`b${j}`];
-        if (rd && rd.report) primeQueryCache(p.q, { reportData: rd });   // store under the individual key
-      });
-    } catch (e) { /* bundle rejected / cache-only -> fall back to individual reportCore() */ }
-  }
+  await _bundlePrime(_uncached((pairs || []).filter((p) => p && p.code != null && p.fight != null)
+    .map((p) => ({ q: _reportCoreQuery(p.code, p.fight), code: p.code, body: _reportCoreBody(p.fight) }))), batch);
+}
+// Bundle peers' timeline events (casts+autos). specs: [{code, fight, sourceId, start, end}].
+export async function prefetchFightEvents(specs, { batch = 4 } = {}) {
+  if (!IS_NODE) return;
+  await _bundlePrime(_uncached((specs || []).filter((s) => s && s.code != null)
+    .map((s) => ({ q: _fightEventsQuery(s.code, s.fight, s.sourceId, s.start, s.end), code: s.code, body: _fightEventsBody(s.fight, s.sourceId, s.start, s.end) }))), batch);
+}
+// Bundle peers' buff-uptime tables. specs: [{code, fight, sourceId}].
+export async function prefetchBuffUptimes(specs, { batch = 4 } = {}) {
+  if (!IS_NODE) return;
+  await _bundlePrime(_uncached((specs || []).filter((s) => s && s.code != null)
+    .map((s) => ({ q: _buffUptimesQuery(s.code, s.fight, s.sourceId), code: s.code, body: _buffUptimesBody(s.fight, s.sourceId) }))), batch);
 }
 
 // Damage + cast metrics for one player on one fight (className arg ignored -- the
@@ -407,12 +421,16 @@ export async function paginateEvents(code, fight, sourceId, dataType, abilityId 
 // fetched once. Each is well under the 10k page limit for a single player (a
 // second page is rare and handled). Melee autos = ability 1; if empty
 // (hunters/casters) fall back to Auto Shot (75).
-export async function fightEvents(code, fight, sourceId, start, end) {
+const _fightEventsBody = (fight, sourceId, start, end) => {
   const win = `, startTime: ${start}, endTime: ${end}`;
-  const q = `query { reportData { report(code:"${code}") {
+  return `
     casts: events(fightIDs:${fight}, sourceID:${sourceId}, dataType:Casts, limit:10000${win}) { data nextPageTimestamp }
-    autos: events(fightIDs:${fight}, sourceID:${sourceId}, dataType:DamageDone, abilityID:1, limit:10000${win}) { data nextPageTimestamp } } } }`;
-  const r = (await gql(q)).reportData.report;
+    autos: events(fightIDs:${fight}, sourceID:${sourceId}, dataType:DamageDone, abilityID:1, limit:10000${win}) { data nextPageTimestamp }`;
+};
+export const _fightEventsQuery = (code, fight, sourceId, start, end) =>
+  `query { reportData { report(code:"${code}") {${_fightEventsBody(fight, sourceId, start, end)} } } }`;
+export async function fightEvents(code, fight, sourceId, start, end) {
+  const r = (await gql(_fightEventsQuery(code, fight, sourceId, start, end))).reportData.report;
   let casts = r.casts.data, autos = r.autos.data;
   if (r.casts.nextPageTimestamp) casts = casts.concat(await paginateEvents(code, fight, sourceId, "Casts", null, r.casts.nextPageTimestamp, end));
   if (r.autos.nextPageTimestamp) autos = autos.concat(await paginateEvents(code, fight, sourceId, "DamageDone", 1, r.autos.nextPageTimestamp, end));
@@ -557,10 +575,12 @@ export function parseReportRef(input) {
 }
 
 // Self-buff uptime % keyed by buff name (match by keyword to compare).
+const _buffUptimesBody = (fight, sourceId) => `
+    table(fightIDs:${fight}, dataType:Buffs, sourceID:${sourceId})`;
+export const _buffUptimesQuery = (code, fight, sourceId) =>
+  `query { reportData { report(code:"${code}") {${_buffUptimesBody(fight, sourceId)} } } }`;
 export async function buffUptimes(code, fight, sourceId) {
-  const q = `query { reportData { report(code:"${code}") {
-    table(fightIDs:${fight}, dataType:Buffs, sourceID:${sourceId}) } } }`;
-  const d = (await gql(q)).reportData.report.table.data;
+  const d = (await gql(_buffUptimesQuery(code, fight, sourceId))).reportData.report.table.data;
   const tt = d.totalTime;
   const out = {};
   // name -> { pct, guid }: keep the aura's spell id so flask/food findings can

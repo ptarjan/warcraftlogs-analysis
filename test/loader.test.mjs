@@ -102,6 +102,31 @@ test("each report table/event is fetched at most once across a full run", async 
   for (const q of queries) for (const u of unitsOf(q)) cover.set(u, (cover.get(u) || 0) + 1);
   const dupes = [...cover.entries()].filter(([, c]) => c > 1).sort((a, b) => b[1] - a[1]);
   assert.deepEqual(dupes, [], `these report tables were fetched more than once in a single run:\n${dupes.map(([u, c]) => `  ${u} x${c}`).join("\n")}`);
+
+  // STRUCTURAL COST GUARD: the whole run must stay under a request ceiling. WCL bills
+  // ~flat per REQUEST, so request COUNT is the cost. Peer fetches (reportCore /
+  // timeline events / buff uptimes) are BUNDLED (prefetch* in core.js) to keep this
+  // low. If this fails, you almost certainly added an UN-bundled per-peer/per-boss
+  // fetch -- route it through a prefetch bundler instead of a loop of individual
+  // gql() calls. Re-baseline the ceiling ONLY with a deliberate justification.
+  assert.ok(queries.length <= 120,
+    `full mocked run made ${queries.length} requests (ceiling 120). Expensive un-bundled fetches were added -- bundle them (prefetchReportCores/prefetchFightEvents/prefetchBuffUptimes), don't loop individual gql() calls.`);
+});
+
+// CACHE-KEY STABILITY: the bundled prefetchers prime results under the SAME query
+// string the individual accessors use, so existing cached reports (and whole cached
+// characters) keep hitting. That only holds if these strings never drift -- a single
+// whitespace change orphans EVERY cached report and re-fetches it, burning the budget.
+// Locked byte-for-byte here (verified to reproduce 1500+ real cached keys exactly).
+test("cache-key stability: report query strings are frozen (changing them orphans the cache)", async () => {
+  const { _reportCoreQuery, _fightEventsQuery, _buffUptimesQuery, setRunMetric } = await import("../docs/core.js");
+  setRunMetric("dps");
+  assert.equal(_reportCoreQuery("AbCd", 3),
+    'query { reportData { report(code:"AbCd") {\n    dmg: table(fightIDs:3, dataType:DamageDone)\n    casts: table(fightIDs:3, dataType:Casts)\n    combatant: events(fightIDs:3, dataType:CombatantInfo, limit:50) { data }\n    fightWin: fights(fightIDs:3) { startTime endTime } } } }');
+  assert.equal(_fightEventsQuery("AbCd", 3, 7, 100, 200),
+    'query { reportData { report(code:"AbCd") {\n    casts: events(fightIDs:3, sourceID:7, dataType:Casts, limit:10000, startTime: 100, endTime: 200) { data nextPageTimestamp }\n    autos: events(fightIDs:3, sourceID:7, dataType:DamageDone, abilityID:1, limit:10000, startTime: 100, endTime: 200) { data nextPageTimestamp } } } }');
+  assert.equal(_buffUptimesQuery("AbCd", 3, 7),
+    'query { reportData { report(code:"AbCd") {\n    table(fightIDs:3, dataType:Buffs, sourceID:7) } } }');
 });
 
 // Request BUNDLING: N peers' reportCore fetched in ONE aliased request (the per-request

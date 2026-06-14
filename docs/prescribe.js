@@ -7,7 +7,7 @@
 // need its own peer aggregates, then sorts + splits + renders.
 import {
   ENCHANTABLE_SLOTS, DIFFICULTY, characterZone, characterEncounter, playerMetrics,
-  ilvlPeers, PEER_SAMPLE, secondaryStats, buffUptimes, bossDebuffs, median, f, detectPriority, mapLimit, collectUpTo, topEntry, bestRank, bestKill,
+  ilvlPeers, PEER_SAMPLE, secondaryStats, buffUptimes, prefetchBuffUptimes, bossDebuffs, median, f, detectPriority, mapLimit, collectUpTo, topEntry, bestRank, bestKill,
   DPS, INFO, finding, fieldDelta, metricUnit, throughputWord, runIsHealer, runIsSupport, healingBreakdown, manaStats,
 } from "./core.js";
 import { timelineFindings } from "./timeline.js";
@@ -69,6 +69,14 @@ async function fieldGearConsumables(name, server, region, encounter, difficulty,
   // timeline / rotation use -- one fetch shared, not a divergent copy). Then fetch
   // each peer's gear/buffs/stats concurrently (bounded).
   const cands = await ilvlPeers(name, server, region, encounter, difficulty, className, specName);
+  // Bundle the peers' buff-uptime tables into ONE request before the loop -- sourceID
+  // rides the already-prewarmed reportCore, so building the specs is free. The +3
+  // buffer stays lazy (collectUpTo); its buffs are fetched only if it's needed.
+  const bSpecs = (await mapLimit(cands.slice(0, PEER_SAMPLE), 8, async (r) => {
+    const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
+    return m ? { code: r.report.code, fight: r.report.fightID, sourceId: m.sourceID } : null;
+  })).filter(Boolean);
+  await prefetchBuffUptimes(bSpecs);
   // Stop once PEER_SAMPLE succeed -- fetch the candidate buffer only to backfill failures.
   const peers = await collectUpTo(cands, PEER_SAMPLE, 5, async (r) => {
     const code = r.report.code, fight = r.report.fightID;

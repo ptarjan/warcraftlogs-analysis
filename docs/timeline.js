@@ -4,7 +4,7 @@
 import { gql } from "./wcl.js";
 import {
   characterZone, characterEncounter, playerMetrics, ilvlPeers, PEER_SAMPLE, median, f, mapLimit, collectUpTo,
-  fightWindow, fightEvents,
+  fightWindow, fightEvents, prefetchFightEvents,
 } from "./core.js";
 
 function estimateGcd(gapsMs) {
@@ -78,6 +78,17 @@ async function fightMetrics(code, fight, sourceId, className = "Monk") {
 
 async function peerMetricsFor(name, server, region, encounter, difficulty, className, specName) {
   const cands = await ilvlPeers(name, server, region, encounter, difficulty, className, specName);
+  // Bundle the peers' timeline events (casts+autos) into ONE request before the loop.
+  // sourceID + fight window are free here (they ride the already-prewarmed reportCore),
+  // so build the event specs for the PEER_SAMPLE we'll use and prefetch them together.
+  // The +3 buffer stays lazy (collectUpTo); its events are fetched only if it's needed.
+  const specs = (await mapLimit(cands.slice(0, PEER_SAMPLE), 8, async (r) => {
+    const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
+    if (!m) return null;
+    const [s, e] = await fightWindow(r.report.code, r.report.fightID);
+    return { code: r.report.code, fight: r.report.fightID, sourceId: m.sourceID, start: s, end: e };
+  })).filter(Boolean);
+  await prefetchFightEvents(specs);
   // fightMetrics paginates events (heavy), so a smaller concurrency cap. Stop once
   // PEER_SAMPLE succeed -- fetch the candidate buffer only to backfill failures.
   return collectUpTo(cands, PEER_SAMPLE, 4, async (r) => {
