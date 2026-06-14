@@ -438,9 +438,15 @@ function renderPrescription(log, d) {
     log(`NOTE: your most recent ${d.difficultyName} kill is ~${d.gearAgeDays} days old (ilvl ${d.curIlvl}). The enchant/gem/gear/consumable findings reflect THAT kill -- if you've enchanted/re-gemmed/upgraded since, some are already done. Re-run after a fresh kill for an accurate setup check.`);
   }
   if (peerGap != null) {
-    const vsField = peerGap > 0 ? `${peerGap}% behind` : `${Math.abs(peerGap)}% ahead of`;
+    const ahead = peerGap <= 0;
+    const vsField = ahead ? `${Math.abs(peerGap)}% ahead of` : `${peerGap}% behind`;
+    // Spell out what the gap means: same-gear players already do it, so it's
+    // gainable, and the list below is sized to sum to it.
+    const tail = ahead
+      ? ". You're already ahead of your item-level bracket -- the top parses are the target."
+      : ` -- and they have your exact item level, so that ${peerGap}% is DPS you could realistically gain. The fixes below are sized to add up to it.`;
     log(`Measured on ${gearBossLink}: you (ilvl ~${d.curIlvl}) do ${k(you.dps)} ${metricUnit()} -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
-        (topGap != null ? `, ${topGap}% behind the top parses` : "") + `. That gap is your headroom.`);
+        (topGap != null ? `, ${topGap}% behind the top parses` : "") + tail);
   }
   // A blunt, character-specific VERDICT: name the situation so the report never
   // reads like a template -- and always points at an action (respec / the few
