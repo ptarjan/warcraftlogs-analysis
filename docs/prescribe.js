@@ -7,7 +7,7 @@
 // need its own peer aggregates, then sorts + splits + renders.
 import {
   ENCHANTABLE_SLOTS, DIFFICULTY, characterZone, characterEncounter, playerMetrics,
-  ilvlPeers, PEER_SAMPLE, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry, bestRank,
+  ilvlPeers, PEER_SAMPLE, secondaryStats, buffUptimes, median, f, detectPriority, mapLimit, topEntry, bestRank, bestKill,
   DPS, INFO, finding, fieldDelta, metricUnit,
 } from "./core.js";
 import { timelineFindings } from "./timeline.js";
@@ -668,14 +668,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
     const bk = await bestIlvlKill(name, server, region, r.encounter.id, difficulty);
     if (bk) kills.push({ ilvl: bk[2] || 0, boss: r, code: bk[0], fight: bk[1], startTime: bk[3] || 0, rankPercent: bk[4] });
   }
-  const { ilvl: curIlvl, boss: gearBoss, code, fight, startTime: gearKillStart } = pickBenchmarkKill(kills);
-  // How old is that gear snapshot? Enchant/gem/gear/consumable findings reflect THIS
-  // kill, so if it's stale, say so -- some may already be fixed.
-  const gearAgeDays = gearKillStart ? Math.floor((Date.now() - gearKillStart) / 86400000) : null;
-  // Stat priority derived from what the field stacks -- never hard-coded. The
-  // caller (app/CLI) already detected it; reuse it instead of re-sampling the
-  // field's secondary stats (a whole peer fetch) again.
-  const priority = knownPriority || await detectPriority(className, specName, difficulty, gearBoss.encounter.id);
+  const { ilvl: curIlvl, boss: gearBoss, code, fight } = pickBenchmarkKill(kills);
   // The PRESCRIPTION is the payoff -- it must survive a mid-run rate limit, not be
   // the section that gets cut. So EVERY data input is fail-soft: a throttled (or
   // private-log) fetch drops just its own levers, and we render the rest from what
@@ -683,10 +676,32 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // than nothing. The reason is logged so a thin list isn't mistaken for "clean".
   const skipped = [];
   const soft = async (what, p) => { try { return await p; } catch (e) { skipped.push(what); return null; } };
+  // SETUP (gear/enchants/gems/trinkets/consumables) is read off the SAME kill the
+  // gear audit / rotation / talents use -- core.bestKill (your most RECENT kill at
+  // current gear) -- NOT the benchmark kill. The benchmark (median-parse) kill answers
+  // "how do you perform"; your latest kill answers "what are you wearing NOW". They're
+  // usually the same, but diverge when your median-parse kill isn't your latest (often
+  // a slightly different ilvl within the band) -- and then reading setup off the
+  // benchmark made the prescription recommend a trinket the gear audit shows you
+  // already wearing. Using bestKill keeps the prescription consistent with the audit.
+  const current = (await soft("your current-gear kill", bestKill(name, server, region, difficulty)))
+    || { code, fight, fightID: fight, startTime: 0 };
+  const curCode = current.code || code;
+  const curFight = current.fight != null ? current.fight : (current.fightID != null ? current.fightID : fight);
+  const sameKill = curCode === code && curFight === fight;
+  // Staleness of that SETUP snapshot (the current kill): if even your latest kill is
+  // old, some enchant/gem/gear/consumable findings may already be done.
+  const gearAgeDays = current.startTime ? Math.floor((Date.now() - current.startTime) / 86400000) : null;
+  // Stat priority derived from what the field stacks -- never hard-coded. The
+  // caller (app/CLI) already detected it; reuse it instead of re-sampling the
+  // field's secondary stats (a whole peer fetch) again.
+  const priority = knownPriority || await detectPriority(className, specName, difficulty, gearBoss.encounter.id);
   let you = null, my = null;
   try {
-    you = await playerMetrics(code, fight, name, specName, className);
-    if (you) my = await mySetup(code, fight, you.sourceID, you.gear, priority, className);
+    you = await playerMetrics(code, fight, name, specName, className);            // benchmark kill: the DPS gap
+    // Setup from your CURRENT kill (reuse the benchmark fetch when they're the same).
+    const cm = sameKill ? you : await playerMetrics(curCode, curFight, name, specName, className);
+    if (cm) my = await mySetup(curCode, curFight, cm.sourceID, cm.gear, priority, className);
   } catch (e) { skipped.push("your gear/consumables"); }
 
   const field = await soft("the peer field (consumables/enchants/stat gap)",
