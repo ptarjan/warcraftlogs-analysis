@@ -7,7 +7,12 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { DPS, COMP, INFO } = await import("../docs/core.js");          // shared Finding currency
+const { DPS, COMP, INFO, finding } = await import("../docs/core.js");          // shared Finding currency
+
+test("finding tags its basis: estimate by default, measured on opt-in", () => {
+  assert.equal(finding("Gear", DPS(2), "x").basis, "est");          // levers must opt IN to "measured"
+  assert.equal(finding("Execution", DPS(3), "y", "measured").basis, "measured");
+});
 const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill } = await import("../docs/prescribe.js");
 const { embellishmentRx, gemLever } = await import("../docs/gear.js");          // gear-domain lever
 

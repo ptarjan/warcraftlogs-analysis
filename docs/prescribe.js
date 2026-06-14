@@ -259,13 +259,13 @@ export function executionLevers(execd, rot, peerGapPct = null, activePct = null)
       ? "gaps between GCDs (partly input latency -- see the INPUT LATENCY item)."
       : "not latency (yours matches theirs), just gaps between GCDs.";
     out.push(finding("Execution", DPS(pct),
-      `PRESS FASTER (every boss): you idle ~${f(execd.pressExcess, 1)}s/min MORE than peers while IN melee range -- ${cause}${cite} Always queue your next ability so a GCD never sits empty.`));
+      `PRESS FASTER (every boss): you idle ~${f(execd.pressExcess, 1)}s/min MORE than peers while IN melee range -- ${cause}${cite} Always queue your next ability so a GCD never sits empty.`, "measured"));
   }
   out.push(...latencyLever(execd));
   if (execd.rangeExcess >= 1.0 || execd.worstRange.length) {
     const where = execd.worstRange.length ? " Worst on: " + execd.worstRange.join(", ") + "." : "";
     out.push(finding("Execution", DPS(Math.round(Math.max(execd.rangeExcess, 0.1) / 60 * 100)),
-      `UPTIME on specific fights: you're out of melee ~${f(execd.rangeExcess, 1)}s/min more than peers (intermissions excluded).${where} Pre-position and use your mobility / gap-closers to stay on target through mechanics.`));
+      `UPTIME on specific fights: you're out of melee ~${f(execd.rangeExcess, 1)}s/min more than peers (intermissions excluded).${where} Pre-position and use your mobility / gap-closers to stay on target through mechanics.`, "measured"));
   }
   return out;
 }
@@ -438,7 +438,9 @@ function renderPrescription(log, d) {
   const compList = rx.filter((r) => isComp(r));
   const concrete = rx.filter((r) => r.impact > 0 && !isComp(r));   // sized fixes (sorted desc)
   const infoList = rx.filter((r) => r.impact === 0 && !isComp(r)); // INFO notes (no DPS, end)
-  const line = (r, i) => log(`  ${i + 1}. [${r.label.padStart(9)}]  ${r.text}`);
+  // Tag each line's basis so a number never masquerades: "measured" = from your
+  // log (idle/uptime/routing/remainder); the rest are estimates a sim would price.
+  const line = (r, i) => log(`  ${i + 1}. [${r.label.padStart(9)}]  ${r.text}${r.basis === "measured" ? "  [measured]" : "  [est.]"}`);
 
   // RECONCILE the change-list to the measured gap so it ADDS UP instead of being a
   // bag of independent guesses. gap = comp + your concrete fixes + an explicit
@@ -488,14 +490,14 @@ function renderPrescription(log, d) {
     } else {
       rtext = `THE REMAINDER (~${r}%): small and unattributed -- sim-only tuning (exact trinket/stat effect sizes) and kill-to-kill variance. No single button.`;
     }
-    renderYou.push({ dim: "Execution", impact: residual, label: pctLabel(residual), text: rtext });
+    renderYou.push({ dim: "Execution", impact: residual, label: pctLabel(residual), text: rtext, basis: "measured" });
   }
   const youOut = renderYou.concat(infoList);
 
   log("");
   log(gap > 0
-    ? `--- Do these to your character now -- each % is that fix's share of your measured ${gap}% gap; concrete fixes + comp + the remainder sum to it (gear/trinket/rotation are sim estimates) ---`
-    : "--- Do these to your character now (biggest first; gear/rotation % are sim estimates, the rest measured) ---");
+    ? `--- Do these to your character now -- each % is that fix's share of your measured ${gap}% gap. [measured] = computed from your log; [est.] = a category/effect estimate a sim would price exactly ---`
+    : "--- Do these to your character now (biggest first; [measured] = from your log, [est.] = sim would price it) ---");
   if (!youOut.length) {
     log("  You match your peers on gear, enchants, consumables, stats, and execution. The rest is comp + farm kills.");
   }

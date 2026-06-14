@@ -185,7 +185,7 @@ export function topParseLevers(tp) {
   if (tp.routing && route >= 5 && tp.routing.addNames.length) {
     out.push(finding("Comp", DPS(Math.round(route)),
       `ROUTING: top parses put ${f(tp.routing.top, 0)}% of damage on ${tp.routing.addNames.join(", ")} ` +
-      `(you ${f(tp.routing.you, 0)}%). Cleave/funnel those instead of tunneling the boss.`));
+      `(you ${f(tp.routing.you, 0)}%). Cleave/funnel those instead of tunneling the boss.`, "measured"));
   }
   // Potions: pre-pot + a second combat potion (a setup fix you apply yourself).
   if (tp.potions && tp.potions.top > tp.potions.you) {

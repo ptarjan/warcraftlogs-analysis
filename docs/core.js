@@ -91,9 +91,14 @@ export const DPS = (lo, hi = lo) => ({ impact: (lo + hi) / 2, label: hi > lo ? `
 export const COMP = (pct) => ({ impact: pct, label: `~${pct}% comp` });
 /** @type {Score} */
 export const INFO = { impact: 0, label: "info" };
-// Assemble one finding: finding("Gear", DPS(1, 3), "STAT via ...").
-/** @param {Dim} dim @param {Score} score @param {string} text @returns {Finding} */
-export const finding = (dim, score, text) => ({ dim, ...score, text });
+// Assemble one finding: finding("Gear", DPS(1, 3), "STAT via ...", "est").
+// `basis` is how the impact % was derived, kept honest on every line:
+//   "measured" -- computed from YOUR log (idle time, cast/uptime gaps, routing).
+//   "est"      -- a category/effect estimate (gear/stat/consumable/comp/rotation
+//                 priority); the exact DPS needs a sim. Default "est" -- a lever
+//                 must opt IN to claiming it's measured.
+/** @param {Dim} dim @param {Score} score @param {string} text @param {"measured"|"est"} [basis] @returns {Finding} */
+export const finding = (dim, score, text, basis = "est") => ({ dim, ...score, text, basis });
 
 // --------------------------------------------------------------------- //
 // Low-level fetchers
