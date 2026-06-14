@@ -450,13 +450,14 @@ function renderPrescription(log, d) {
   const gap = (peerGap != null && peerGap > 0) ? peerGap : 0;
   const compImpact = compList.reduce((s, r) => s + (r.impact || 0), 0);
   const renderYou = concrete.map((r) => ({ ...r }));
-  let residual = 0;
+  let residual = 0, fixableTotal = 0;
   if (gap > 0) {
     const target = Math.max(0, gap - compImpact);                 // the plausibly-yours share
     const { scaled, residual: res } = reconcileImpacts(renderYou.map((r) => r.impact), target);
     renderYou.forEach((r, i) => { r.impact = scaled[i]; r.label = pctLabel(scaled[i]); });
     renderYou.sort((a, b) => b.impact - a.impact);
     residual = res;
+    fixableTotal = scaled.reduce((s, v) => s + (v || 0), 0);      // your concrete, post-scale
   }
   // The remainder we can't pin to a specific fix. This is NOT just cosmetic: a big
   // remainder means the analysis FAILS to explain the measured gap -- usually a
@@ -493,6 +494,18 @@ function renderPrescription(log, d) {
     renderYou.push({ dim: "Execution", impact: residual, label: pctLabel(residual), text: rtext, basis: "measured" });
   }
   const youOut = renderYou.concat(infoList);
+
+  // Where your gap actually lives, in one line -- so a big gap with small per-item
+  // fixes reads honestly (a player far behind on comp + diffuse setup shouldn't
+  // look like they have nothing to do). Splits the measured gap into the part you
+  // can fix, the raid-comp part, and what's still unexplained.
+  if (gap > 0) {
+    const compShare = Math.min(Math.round(compImpact), gap);
+    log("");
+    log(`Your ${gap}% gap breaks down as: ~${Math.round(fixableTotal)}pp you can fix (the list below)` +
+        (compShare > 0 ? ` · ~${compShare}pp raid comp` : "") +
+        (residual >= 1 ? ` · ~${Math.round(residual)}pp not yet explained` : "") + ".");
+  }
 
   log("");
   log(gap > 0

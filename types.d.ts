@@ -21,6 +21,8 @@ interface Score {
 interface Finding extends Score {
   dim: Dim;
   text: string;
+  /** How impact was derived: "measured" (from the log) vs "est" (a sim would price it). */
+  basis?: "measured" | "est";
 }
 
 /** Parsed Wowhead item data (gear.js itemStats): secondary stats + where it's from. */

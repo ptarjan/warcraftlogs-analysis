@@ -3,7 +3,7 @@
 // Wowhead proxy) and compares slot-by-slot to the field. Ported from gear.py.
 import { itemTooltip, itemXml, zoneTooltip, npcTooltip } from "./wcl.js";
 import {
-  playerMetrics, collectPeers, f, mapLimit, topEntry, bestKill, DPS, finding,
+  playerMetrics, collectPeers, f, mapLimit, topEntry, bestKill, DPS, finding, metricUnit,
 } from "./core.js";
 import { wowheadItem } from "./links.js";
 
@@ -418,6 +418,20 @@ export function gemLever(gf) {
   return [finding("Gear", DPS(1, 2), msg)];
 }
 
+// A stat-gain lever's size scales with the ACTUAL rating gained, so a +260 swap
+// outranks a +86 one instead of every gear line showing the same flat band (the
+// old DPS(1,3) made magnitude uninformative across pieces and players). Linear in
+// rating is the right first order for secondaries. reconcileImpacts later rescales
+// the whole list to the MEASURED gap, so this only needs the RELATIVE sizes right;
+// ~75 rating/point keeps a typical swap near the old ~2% so gear-vs-rotation stays
+// balanced. Floor 0.5 (a tiny gain still shows), cap 5 (no one piece dominates
+// before reconciliation). Pure -- unit-tested.
+export function statScore(gain) {
+  const impact = Math.min(5, Math.max(0.5, (gain || 0) / 75));
+  const lo = Math.max(1, Math.round(impact - 1)), hi = Math.max(lo, Math.round(impact + 1));
+  return { impact, label: hi > lo ? `~${lo}-${hi}% ${metricUnit()}` : `~${lo}% ${metricUnit()}` };
+}
+
 // All gear levers as findings: priority-stat drop swaps, re-stats, embellishment.
 export function gearLevers(gf, priority) {
   if (!gf) return [];
@@ -425,10 +439,10 @@ export function gearLevers(gf, priority) {
   const out = [];
   for (const sw of gf.swaps) {
     const from = sourceText(sw.source, sw.instance, sw.dropChance);
-    out.push(finding("Gear", DPS(1, 3), `${PRI} via ${sw.slot}: replace ${wowheadItem(sw.fromId, sw.fromName)} with ${wowheadItem(sw.toId, sw.toName)} (+${sw.gain} ${priority}${from} -- sim to confirm).`));
+    out.push(finding("Gear", statScore(sw.gain), `${PRI} via ${sw.slot}: replace ${wowheadItem(sw.fromId, sw.fromName)} with ${wowheadItem(sw.toId, sw.toName)} (+${sw.gain} ${priority}${from} -- sim to confirm).`));
   }
   for (const rs of gf.restats) {
-    out.push(finding("Gear", DPS(1, 2), `${PRI} via ${rs.slot}: ${wowheadItem(rs.itemId, rs.itemName)} is selectable -- recraft to ${rs.achievable} ${priority} (you have ${rs.current}).`));
+    out.push(finding("Gear", statScore((rs.achievable || 0) - (rs.current || 0)), `${PRI} via ${rs.slot}: ${wowheadItem(rs.itemId, rs.itemName)} is selectable -- recraft to ${rs.achievable} ${priority} (you have ${rs.current}).`));
   }
   const embRx = embellishmentRx(gf);
   if (embRx) out.push(embRx);

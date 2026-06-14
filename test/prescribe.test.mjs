@@ -14,7 +14,17 @@ test("finding tags its basis: estimate by default, measured on opt-in", () => {
   assert.equal(finding("Execution", DPS(3), "y", "measured").basis, "measured");
 });
 const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill } = await import("../docs/prescribe.js");
-const { embellishmentRx, gemLever } = await import("../docs/gear.js");          // gear-domain lever
+const { embellishmentRx, gemLever, statScore } = await import("../docs/gear.js");          // gear-domain lever
+
+test("statScore: bigger stat gains rank above smaller ones (not a flat band)", () => {
+  const big = statScore(260), small = statScore(86);
+  assert.ok(big.impact > small.impact, "a +260 swap must outweigh a +86 swap");
+  assert.match(big.label, /% (DPS|HPS)/);
+  // Floor so a tiny gain still shows, cap so one piece can't dominate pre-reconcile.
+  assert.equal(statScore(10).impact, 0.5);
+  assert.equal(statScore(99999).impact, 5);
+  assert.equal(statScore(0).impact, 0.5);
+});
 
 test("executionLevers: press-faster doesn't pipe the raw cast gap into DPS%", () => {
   // 44% fewer casts must NOT become a ~44% DPS lever -- it's damped (~half) and
