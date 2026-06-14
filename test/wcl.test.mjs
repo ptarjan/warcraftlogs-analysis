@@ -52,6 +52,65 @@ test("rateLimit reports a healthy budget with limited:false and the real resetIn
   assert.equal(r.resetIn, 1800);
 });
 
+const budgetMock = (remaining, resetIn = 1800) => mockFetch([TOKEN, ["/api/v2/client",
+  { json: { data: { rateLimitData: { limitPerHour: 3600, pointsSpentThisHour: 3600 - remaining, pointsResetIn: resetIn } } } }]]);
+
+test("acquireFetchLock: only ONE process holds it; release frees it; dead/stale owners are stolen", async () => {
+  const { acquireFetchLock } = await import("../docs/wcl.js");
+  const lockFile = path.join(os.tmpdir(), `wcl-lock-test-${process.pid}.json`);
+  process.env.WCL_GQL_CACHE_FILE = lockFile;                 // lock lives next to the cache file
+  const lockPath = path.join(path.dirname(lockFile), "fetch.lock");
+  try {
+    fs.rmSync(lockPath, { force: true });
+    const rel1 = await acquireFetchLock();
+    assert.ok(rel1, "first acquirer gets the lock");
+    assert.equal(await acquireFetchLock(), null, "second concurrent acquirer is denied");
+    rel1();
+    const rel2 = await acquireFetchLock();
+    assert.ok(rel2, "after release the lock is available again");
+    rel2();
+    // A lock owned by a DEAD pid is stolen.
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: 999999999, t: Date.now() }));
+    const rel3 = await acquireFetchLock();
+    assert.ok(rel3, "a dead owner's lock is stolen");
+    rel3();
+    // A STALE lock (old timestamp, even if pid looks alive) is stolen.
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, t: Date.now() - 60 * 60 * 1000 }));
+    const rel4 = await acquireFetchLock({ staleMs: 15 * 60 * 1000 });
+    assert.ok(rel4, "a stale lock is stolen");
+    rel4();
+  } finally {
+    delete process.env.WCL_GQL_CACHE_FILE;
+    fs.rmSync(lockPath, { force: true });
+  }
+});
+
+test("acquireFetchGate: denies below the reserve, allows above it", async () => {
+  const { acquireFetchGate, clearGqlCache } = await import("../docs/wcl.js");
+  const lockFile = path.join(os.tmpdir(), `wcl-gate-test-${process.pid}.json`);
+  process.env.WCL_GQL_CACHE_FILE = lockFile;
+  const lockPath = path.join(path.dirname(lockFile), "fetch.lock");
+  try {
+    fs.rmSync(lockPath, { force: true });
+    // Below reserve -> denied, no lock taken.
+    clearGqlCache(); globalThis.fetch = budgetMock(100);
+    const low = await acquireFetchGate({ reserve: 400 });
+    assert.equal(low.ok, false);
+    assert.match(low.reason, /reserve/);
+    assert.equal(fs.existsSync(lockPath), false, "no lock taken when denied");
+    // Above reserve -> allowed, lock taken, then released.
+    clearGqlCache(); globalThis.fetch = budgetMock(2000);
+    const ok = await acquireFetchGate({ reserve: 400 });
+    assert.equal(ok.ok, true);
+    assert.equal(ok.remaining, 2000);
+    assert.ok(fs.existsSync(lockPath), "lock held while fetching");
+    ok.release();
+  } finally {
+    delete process.env.WCL_GQL_CACHE_FILE;
+    fs.rmSync(lockPath, { force: true });
+  }
+});
+
 test("concurrent identical queries are coalesced into one request", async () => {
   const { gql, clearGqlCache } = await import("../docs/wcl.js");
   clearGqlCache();

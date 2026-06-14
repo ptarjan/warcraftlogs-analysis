@@ -417,6 +417,61 @@ export async function rateLimit() {
   }
 }
 
+// --- single-fetcher lock + budget gate (Node/CLI) --------------------------------
+// Enforce the single-writer rule in CODE, not just convention: at most ONE process
+// may fetch (spend the shared budget) at a time, and only while a reserve of points
+// remains. Anything denied degrades to cache-only. The lock is a file next to the
+// cache; a dead or stale owner is stolen so a crashed run can't wedge it forever.
+const _pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return !!e && e.code === "EPERM"; } };
+
+async function _lockPath() {
+  const path = await import("node:path");
+  const os = await import("node:os");
+  const cacheFile = process.env.WCL_GQL_CACHE_FILE ||
+    path.join(os.homedir(), ".cache", "warcraftlogs-analysis", "gql-cache.json");
+  return path.join(path.dirname(cacheFile), "fetch.lock");
+}
+
+// Become the single fetcher. Returns a release() on success, or null if a live,
+// recent process already holds the lock. Steals a dead/stale lock (crashed owner).
+export async function acquireFetchLock({ staleMs = 15 * 60 * 1000 } = {}) {
+  if (!IS_NODE) return () => {};
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const file = await _lockPath();
+  try { fs.mkdirSync(path.dirname(file), { recursive: true }); } catch { /* ignore */ }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const fd = fs.openSync(file, "wx");                  // atomic exclusive create
+      fs.writeSync(fd, JSON.stringify({ pid: process.pid, t: Date.now() }));
+      fs.closeSync(fd);
+      const release = () => { try { if (JSON.parse(fs.readFileSync(file, "utf8")).pid === process.pid) fs.unlinkSync(file); } catch { /* gone/stolen */ } };
+      process.once("exit", release);
+      return release;
+    } catch (e) {
+      if (!e || e.code !== "EEXIST") throw e;
+      let owner = null; try { owner = JSON.parse(fs.readFileSync(file, "utf8")); } catch { /* unreadable */ }
+      const dead = !owner || (owner.pid && !_pidAlive(owner.pid)) || (owner.t && Date.now() - owner.t > staleMs);
+      if (dead) { try { fs.unlinkSync(file); } catch { /* raced */ } continue; }  // steal + retry
+      return null;                                          // held by a live, recent fetcher
+    }
+  }
+  return null;
+}
+
+// Combined gate the CLI calls before enabling --allow-fetch: a budget reserve PLUS
+// the single-fetcher lock. Returns { ok, reason, release, remaining }. When !ok the
+// caller stays cache-only (no spend) and shows `reason`.
+export async function acquireFetchGate({ reserve = 400 } = {}) {
+  const rl = await rateLimit();
+  if (rl && rl.limited) return { ok: false, reason: `WCL budget exhausted -- resets in ~${fmtRateWait(rl.resetIn) || "?"}` };
+  if (rl && rl.remaining != null && rl.remaining < reserve)
+    return { ok: false, reason: `only ${Math.round(rl.remaining)} WCL pts left (below the ${reserve} reserve) -- resets in ~${fmtRateWait(rl.resetIn) || "?"}` };
+  const release = await acquireFetchLock();
+  if (!release) return { ok: false, reason: "another run already holds the fetch lock (single-writer)" };
+  return { ok: true, release, remaining: rl ? rl.remaining : null };
+}
+
 // `fresh: true` bypasses every read cache (in-memory, inflight, persistent) and
 // does NOT persist the result -- for polling a LIVE report whose fight list is
 // still growing during a raid. The immutability heuristic (_isImmutable) keys off

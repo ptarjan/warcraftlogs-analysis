@@ -41,8 +41,7 @@ async function main() {
     if (a.startsWith("--")) { const k = a.slice(2); opt[k] = BOOL_FLAGS.has(k) ? true : argv[++i]; }
     else positional.push(a);
   }
-  // Cache-only by default; --allow-fetch opts in to spending the WCL point budget.
-  if (opt["allow-fetch"]) process.env.WCL_ALLOW_FETCH = "1";
+  // Cache-only by default; --allow-fetch opts in (honored only if the gate clears).
   if (opt["cache-only"]) process.env.WCL_CACHE_ONLY = "1";
   if (!positional[0]) {
     console.error('usage: node progression-cli.mjs <report-url-or-code> [--enc <encounterId>] [--allow-fetch]\n' +
@@ -51,8 +50,13 @@ async function main() {
   }
 
   const { parseReportRef } = await import("./docs/core.js");
-  const { primeRateReset } = await import("./docs/wcl.js");
+  const { primeRateReset, acquireFetchGate } = await import("./docs/wcl.js");
   const progression = await import("./docs/progression.js");
+  if (opt["allow-fetch"] && !opt["cache-only"]) {
+    const gate = await acquireFetchGate();
+    if (gate.ok) { process.env.WCL_ALLOW_FETCH = "1"; console.log(`[budget] fetching enabled (~${Math.round(gate.remaining)} WCL pts available).`); }
+    else console.log(`[budget] NOT fetching: ${gate.reason}. Running cache-only.`);
+  }
   await primeRateReset();
 
   const { code } = parseReportRef(positional[0]);

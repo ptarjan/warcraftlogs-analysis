@@ -160,6 +160,12 @@ from WCL (which spends your shared hourly point budget). This is the single-writ
 only the run you explicitly bless spends the budget, so background/parallel/agent runs
 can't drain it. The browser app is unaffected (it always fetches, on your own token).
 
+`--allow-fetch` is a *request* — it's only honored after a **budget gate** clears:
+(1) a points **reserve** must remain (won't bottom out the budget), and (2) a
+**single-fetcher lock** (a file next to the cache) must be free, so two `--allow-fetch`
+runs can't fetch at once. If either fails, the run prints why and stays cache-only. A
+crashed run's lock is auto-stolen (dead-PID / stale check), so it can't wedge forever.
+
 Class, spec, difficulty, and gear priority are **auto-detected from your logs**
 (same as the web app) — the flags only override individual fields. `cli.mjs`
 shims the one browser global the analyses use (`localStorage`, for gear.js's item

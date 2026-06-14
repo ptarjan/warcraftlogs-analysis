@@ -123,8 +123,7 @@ for (let i = 0; i < argv.length; i++) {
 // Fetching the WCL network (= spending the shared hourly point budget) is OPT-IN:
 // pass --allow-fetch to permit it; otherwise this run is cache-only and an uncached
 // query fails fast (no accidental budget spend). --cache-only forces read-only.
-// Must be set before any wcl.js call below (primeRateReset / detectContext).
-if (opt["allow-fetch"]) process.env.WCL_ALLOW_FETCH = "1";
+// --allow-fetch is only HONORED after the budget gate below clears (reserve + lock).
 if (opt["cache-only"]) process.env.WCL_CACHE_ONLY = "1";
 const [name, server, region] = positional;
 if (!name || !server || !region) {
@@ -142,10 +141,20 @@ const { detectContext, detectPriority, DIFFICULTY, metricForSpec, setRunMetric, 
 // Learn WCL's point-reset clock up front (one cheap query, while still under
 // budget) so if we exhaust the shared budget mid-run the error can say WHEN it
 // resets ("try again in ~N min") instead of a vague "try again shortly".
-const { primeRateReset } = await import("./docs/wcl.js");
-await primeRateReset();
+const { primeRateReset, acquireFetchGate } = await import("./docs/wcl.js");
 
 const log = (line = "") => console.log(line);
+
+// Budget gate: --allow-fetch is a REQUEST to spend the shared hourly budget, but we
+// only honor it if a reserve of points remains AND no other run holds the fetch lock
+// (single-writer). Otherwise stay cache-only -- never overspend, never double-fetch.
+if (opt["allow-fetch"] && !opt["cache-only"]) {
+  const gate = await acquireFetchGate();
+  if (gate.ok) { process.env.WCL_ALLOW_FETCH = "1"; log(`[budget] fetching enabled (~${Math.round(gate.remaining)} WCL pts available).`); }
+  else log(`[budget] NOT fetching: ${gate.reason}. Running cache-only.`);
+}
+// Learn WCL's point-reset clock up front so a mid-run 429 can say WHEN it resets.
+await primeRateReset();
 
 // Auto-detect class / spec / difficulty / priority from the character's own
 // logs (mirrors the browser app). NEVER assume a class -- the analysis filters
