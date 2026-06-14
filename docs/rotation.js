@@ -382,14 +382,19 @@ export async function rotationFindings(name, server, region, className, specName
   if (!best) return null;
   const boss = best.encounter;
   const you = await analyzeKill(name, best.code, best.fight, specName, className, { topN: 5 });
-  if (!you || !you.hits.length) return null;
+  // Don't bail on empty hits: a PET-heavy spec (Demonology Warlock) has PETS as its
+  // top damage abilities, whose per-hit events live under the PET's sourceID -- so
+  // `hits` (the empowerment/biggest-hit analysis) comes back empty. That analysis is
+  // a BONUS; the usage/cooldown/DoT/pet/castGap levers don't need it. Bailing here
+  // killed ALL rotation levers for Demo Lock. Make empowerment optional instead.
+  if (!you) return null;
 
   // The empowerment candidate is your HARDEST hitter (biggest per-cast) -- the hit
   // whose strength matters most, and the one a missed buff/combo window most hurts.
   // We measure the FIELD's empowered share of THIS ability so "your big hit lands
   // weak" can only fire on real under-empowerment, never on a uniform stat gap.
-  const biggest = [...you.hits].sort((a, b) => b.med - a.med)[0];
-  const isReal = biggest.procBig >= 2;        // outsized NON-crit cluster = a real empowered version
+  const biggest = you.hits.length ? [...you.hits].sort((a, b) => b.med - a.med)[0] : null;
+  const isReal = biggest ? biggest.procBig >= 2 : false;   // null biggest -> no empowerment analysis
 
   // The ilvl-matched field, via the shared core.ilvlPeers (same set overview /
   // timeline / prescribe use, so the fetches dedupe). It feeds the empowered-share
@@ -411,7 +416,7 @@ export async function rotationFindings(name, server, region, className, specName
   const analyzed = (await mapLimit(cands, 4, async (r) => {
     try {
       const a = await analyzeKill(r.name, r.report.code, r.report.fightID, specName, className,
-                                  { onlyAbility: biggest.name, dotIds: (you.dots || []).map((d) => d.guid) });
+                                  { onlyAbility: biggest ? biggest.name : "__noempower__", dotIds: (you.dots || []).map((d) => d.guid) });
       if (!a) return null;
       const hero = yourHero ? await heroTreeOf(r.report.code, r.report.fightID, a.sourceID).catch(() => null) : null;
       return { ...a, hero };
@@ -425,7 +430,7 @@ export async function rotationFindings(name, server, region, className, specName
   // timing, so we stay silent.
   const empShares = peers.map((p) => p.empShare).filter((x) => x != null);
   const fieldEmp = (isReal && empShares.length >= 3) ? median(empShares) : null;
-  const youEmp = biggest.empShare;
+  const youEmp = biggest ? biggest.empShare : null;
   const fieldOpener = peers.length ? peers[0].opener : null;
   const fieldRate = fieldCastRates(peers.map((p) => p.castRate || {}));
   const usage = usageDivergence(you.castRate || {}, fieldRate);
@@ -496,7 +501,7 @@ export async function rotationFindings(name, server, region, className, specName
     // lever can decide WHY it's behind: a lower empowered share -> timing (empower
     // it more); equal shares -> uniform per-cast stats (leave it in the remainder).
     for (const pc of perCast) {
-      if (pc.name === biggest.name) Object.assign(pc, { youEmp, fieldEmp });
+      if (biggest && pc.name === biggest.name) Object.assign(pc, { youEmp, fieldEmp });
     }
   }
   // Your talented abilities, so the prescription can tell a skipped talent from a
@@ -529,7 +534,7 @@ export async function rotationFindings(name, server, region, className, specName
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener,
     usage, cooldowns, cdUsage, perCast, dotGaps, petGap, castGap, fieldPeers: peers.length, talent, abilityIds,
     heroMatched: yourHero && peers.length ? (peers.every((p) => p.hero === yourHero) ? yourHero : null) : null,
-    proc: { name: biggest.name, isReal, youPerMin: biggest.procPerMin, fieldPerMin: fieldProc, youEmp, fieldEmp },
+    proc: { name: biggest ? biggest.name : null, isReal, youPerMin: biggest ? biggest.procPerMin : 0, fieldPerMin: fieldProc, youEmp, fieldEmp },
   };
 }
 
@@ -542,13 +547,16 @@ export async function run(log, name, server, region, className = "Monk",
   log(`Rotation analysis on ${fnd.boss} (your most recent kill at current gear). ` +
       `Spec-agnostic: nothing about ${specName} is hard-coded.`);
 
-  log("");
-  log(`=== YOUR ${runIsHealer() ? "BIGGEST HEALS" : "HARDEST-HITTING ABILITIES"} (per cast) ===`);
-  for (const h of [...fnd.hits].sort((a, b) => b.med - a.med))
-    log(`  ${h.name.padEnd(20)} median ${Math.round(h.med).toLocaleString().padStart(8)}  ` +
-        `max ${Math.round(h.max).toLocaleString().padStart(8)}  (${Math.round(h.critPct)}% crit, ` +
-        `${h.procBig} non-crit big hits)`);
-  log(`  -> biggest single-hit ability: ${fnd.biggest.name}`);
+  // Pet-heavy specs (Demo Lock) have no player-sourced per-hit data -> no hits.
+  if (fnd.hits.length && fnd.biggest) {
+    log("");
+    log(`=== YOUR ${runIsHealer() ? "BIGGEST HEALS" : "HARDEST-HITTING ABILITIES"} (per cast) ===`);
+    for (const h of [...fnd.hits].sort((a, b) => b.med - a.med))
+      log(`  ${h.name.padEnd(20)} median ${Math.round(h.med).toLocaleString().padStart(8)}  ` +
+          `max ${Math.round(h.max).toLocaleString().padStart(8)}  (${Math.round(h.critPct)}% crit, ` +
+          `${h.procBig} non-crit big hits)`);
+    log(`  -> biggest single-hit ability: ${fnd.biggest.name}`);
+  }
 
   log("");
   if (!fnd.proc.isReal) {
