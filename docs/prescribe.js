@@ -27,9 +27,9 @@ export function rxHeadline(text) {
   return head.length > 72 ? head.slice(0, 69) + "…" : head;
 }
 
-async function bestIlvlKill(name, server, region, encounterId, difficulty) {
+async function bestIlvlKill(name, server, region, encounterId, difficulty, specName) {
   const er = await characterEncounter(name, server, region, encounterId, difficulty);
-  const best = bestRank(er && er.ranks);
+  const best = bestRank(er && er.ranks, specName);
   if (!best) return null;
   return [best.report.code, best.report.fightID, best.bracketData, best.startTime || 0, best.rankPercent];
 }
@@ -860,7 +860,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // is current; the staleness NOTE below flags it if that kill is itself old.
   const kills = [];
   for (const r of ranks) {
-    const bk = await bestIlvlKill(name, server, region, r.encounter.id, difficulty);
+    const bk = await bestIlvlKill(name, server, region, r.encounter.id, difficulty, specName);
     if (bk) kills.push({ ilvl: bk[2] || 0, boss: r, code: bk[0], fight: bk[1], startTime: bk[3] || 0, rankPercent: bk[4] });
   }
   const { ilvl: curIlvl, boss: gearBoss, code, fight } = pickBenchmarkKill(kills);

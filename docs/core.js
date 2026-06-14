@@ -661,10 +661,18 @@ export async function secondaryStats(code, fight, sourceId, className) {
 // take the latest by startTime. bestRank does this for one encounter's ranks;
 // bestKill does it across every boss you've killed.
 const RECENT_ILVL_BAND = 1; // kills within this many ilvls count as "current gear"
-export const bestRank = (ranks) => {
-  if (!ranks || !ranks.length) return null;
-  const maxIl = Math.max(...ranks.map((r) => r.bracketData || 0));
-  return ranks.filter((r) => (r.bracketData || 0) >= maxIl - RECENT_ILVL_BAND)
+// Most-recent kill within RECENT_ILVL_BAND of the player's top ilvl. `specName`
+// (optional) restricts to kills the player played on THAT spec -- a spec-flexer's
+// off-spec kills must NOT seed a benchmark/measurement for the detected spec (the
+// bug: an Unholy DK's median-parse kill was a FROST one, so prescribe measured 0%
+// pet damage / 0 Scourge Strike against UNHOLY peers). Each WCL rank carries `spec`;
+// we filter only when that data is present, so spec-less callers/mocks are unchanged.
+export const bestRank = (ranks, specName) => {
+  let rs = ranks || [];
+  if (specName != null && rs.some((r) => r.spec != null)) rs = rs.filter((r) => r.spec === specName);
+  if (!rs.length) return null;
+  const maxIl = Math.max(...rs.map((r) => r.bracketData || 0));
+  return rs.filter((r) => (r.bracketData || 0) >= maxIl - RECENT_ILVL_BAND)
     .reduce((a, b) => ((b.startTime || 0) > (a.startTime || 0) ? b : a));
 };
 

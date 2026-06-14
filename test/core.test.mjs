@@ -157,3 +157,20 @@ test("detectContext: a spec-flexer is detected on the most-recent kill's spec, n
   assert.equal(ctx.className, "DeathKnight");
   assert.equal(ctx.specName, "Unholy", "detected the most-recent kill's spec (Unholy), not the older Frost parse");
 });
+
+// Kill SELECTION must also be spec-consistent: a flexer's off-spec kills must not seed
+// the benchmark/measurement kill. The bug (one layer past detection): an Unholy DK's
+// median-parse kill was a FROST one, so prescribe measured 0% pet damage and 0 Scourge
+// Strike against UNHOLY peers (Frost has no ghoul / presses Obliterate). bestRank with a
+// specName filters to that spec using each rank's `spec` field.
+test("bestRank: specName restricts to that spec's kills; graceful when spec data is absent", () => {
+  const ranks = [
+    { spec: "Frost",  bracketData: 290, startTime: 500, report: { code: "F2", fightID: 1 }, rankPercent: 95 }, // most recent overall, Frost
+    { spec: "Unholy", bracketData: 290, startTime: 400, report: { code: "U1", fightID: 1 }, rankPercent: 60 },
+    { spec: "Frost",  bracketData: 290, startTime: 100, report: { code: "F1", fightID: 1 }, rankPercent: 90 },
+  ];
+  assert.equal(bestRank(ranks).report.code, "F2", "unfiltered = most-recent overall (Frost)");
+  assert.equal(bestRank(ranks, "Unholy").report.code, "U1", "Unholy filter skips the more-recent Frost kills");
+  const noSpec = ranks.map(({ spec, ...r }) => r);
+  assert.equal(bestRank(noSpec, "Unholy").report.code, "F2", "no spec data -> unfiltered (graceful)");
+});
