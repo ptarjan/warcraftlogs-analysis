@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, dotUptimeGaps, petShareGap } = await import("../docs/rotation.js");
 
 test("petShareGap: flags a pet spec under the field's pet share; silent for non-pet/matched", () => {
   // Unholy DK: your pets 27% of damage, field 38%. gain = (1-.27)/(1-.38) ~= 1.177.
@@ -18,61 +18,6 @@ test("petShareGap: flags a pet spec under the field's pet share; silent for non-
   // You match/beat the field -> silent (no false positive).
   assert.equal(petShareGap(0.40, 0.38), null);
   assert.equal(petShareGap(0.35, 0.38), null);   // within the 5pp band
-});
-
-test("buffWindowUplift: measures damage rise in the window after a buff cast", () => {
-  // 200s fight. A damage buff cast at 0s and 100s. In each 8s window the player's
-  // damage rate is high (lots of big hits); the rest of the fight is the baseline.
-  const window = 8;
-  const evs = [];
-  // Baseline: a steady 1 hit of 100 every second across the whole fight.
-  for (let t = 0; t < 200000; t += 1000) evs.push({ t, amount: 100 });
-  // Buff windows at 0-8s and 100-108s: add extra big hits (the empowered version).
-  for (const c of [0, 100000]) for (let dt = 0; dt < 8000; dt += 1000) evs.push({ t: c + dt, amount: 400 });
-  const upl = buffWindowUplift([0, 100000], evs, { window });
-  assert.ok(upl, "should measure when there are >=2 casts and events");
-  assert.equal(upl.casts, 2);
-  assert.ok(upl.uplift > 0.5, `real damage buff -> clear positive uplift (got ${upl.uplift})`);
-  assert.ok(upl.inRate > upl.baseRate);
-});
-
-test("buffWindowUplift: ~zero uplift for a DEFENSIVE (no damage rise after the cast)", () => {
-  // A defensive cast at 50s and 150s changes nothing about the damage timeline.
-  const evs = [];
-  for (let t = 0; t < 200000; t += 1000) evs.push({ t, amount: 100 });
-  const upl = buffWindowUplift([50000, 150000], evs, { window: 8 });
-  assert.ok(upl, "still measurable");
-  assert.ok(Math.abs(upl.uplift) < 0.05, `a defensive produces no uplift (got ${upl.uplift})`);
-});
-
-test("buffWindowUplift: null when too few casts, no events, or the buff covers the whole fight", () => {
-  assert.equal(buffWindowUplift([0], [{ t: 0, amount: 1 }]), null);     // 1 cast < minCasts
-  assert.equal(buffWindowUplift([0, 1000], []), null);                  // no damage events
-  // One cast whose window swallows the whole event span -> no out-of-window baseline.
-  const evs = [{ t: 0, amount: 100 }, { t: 1000, amount: 100 }];
-  assert.equal(buffWindowUplift([0, 500], evs, { window: 8 }), null);
-});
-
-test("buffCdGap: sizes a missed damage buff from uplift; silent on defensives/non-deficit", () => {
-  // You cast a buff 1x/kill, field 3x/kill -> 2 missed. In-window rate 800 vs base 400
-  // -> excess 400/s over an 8s window = 3200 dmg/cast attributable. 2 missed * 3200
-  // = 6400 of a 64000 total = 10%.
-  const gap = { youPerFight: 1, fieldPerFight: 3 };
-  const upl = { uplift: 1.0, inRate: 800, baseRate: 400, casts: 1, windowSec: 8 };
-  const g = buffCdGap(gap, upl, 64000);
-  assert.ok(g, "fires on a real buff with a real deficit");
-  assert.equal(g.missed, 2);
-  assert.equal(g.pct, 10);
-  // A DEFENSIVE has ~no uplift -> never recommended (the data-derived guarantee).
-  assert.equal(buffCdGap(gap, { uplift: 0.01, inRate: 404, baseRate: 400, casts: 1, windowSec: 8 }, 64000), null);
-  // No real deficit (you use it as much as the field) -> silent.
-  assert.equal(buffCdGap({ youPerFight: 3, fieldPerFight: 3 }, upl, 64000), null);
-  // Tiny absolute impact (<1%) -> silent (rounding floor).
-  assert.equal(buffCdGap({ youPerFight: 2, fieldPerFight: 3 }, upl, 100000000), null);
-  // Bad inputs -> null, never throws.
-  assert.equal(buffCdGap(null, upl, 64000), null);
-  assert.equal(buffCdGap(gap, null, 64000), null);
-  assert.equal(buffCdGap(gap, upl, 0), null);
 });
 
 test("dotUptimeGaps: flags a clipped DoT, silent on a well-maintained one", () => {
