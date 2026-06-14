@@ -17,7 +17,7 @@
 // rule is actually about.
 import {
   playerMetrics, topRankings, buffUptimes, bossDebuffs, median, f, mapLimit, bestKill,
-  DPS, COMP, finding,
+  DPS, COMP, finding, runIsHealer,
 } from "./core.js";
 import { wowheadSpell } from "./links.js";
 
@@ -186,9 +186,13 @@ export function topParseLevers(tp, compDeltas = null) {
     const cite = cd ? ` (measured: peers with it do ${Math.round(cd.pct)}% more, n=${cd.nHave}/${cd.nNot})` : "";
     out.push(finding("Comp", COMP(pct), `Missing ${wowheadSpell(e.spell, e.label)} (${e.effect}) — bring ${e.who}.${cite}`, cd ? "measured" : "est"));
   }
-  // Damage routing: measured extra cleave/funnel the top parses get.
+  // Damage routing: measured extra cleave/funnel the top parses get. This is a
+  // DPS-only lever -- it compares where you put your DAMAGE. For a healer it would
+  // tell a Mistweaver to "cleave/funnel instead of tunneling the boss" to raise
+  // their HPS, which is nonsense (their throughput is healing, not target choice).
+  // Suppress entirely for healers, regardless of the broader healer-analysis design.
   const route = tp.routing ? tp.routing.top - tp.routing.you : 0;
-  if (tp.routing && route >= 5 && tp.routing.addNames.length) {
+  if (!runIsHealer() && tp.routing && route >= 5 && tp.routing.addNames.length) {
     out.push(finding("Comp", DPS(Math.round(route)),
       `ROUTING: top parses put ${f(tp.routing.top, 0)}% of damage on ${tp.routing.addNames.join(", ")} ` +
       `(you ${f(tp.routing.you, 0)}%). Cleave/funnel those instead of tunneling the boss.`, "measured"));

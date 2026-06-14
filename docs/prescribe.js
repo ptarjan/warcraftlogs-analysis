@@ -716,7 +716,7 @@ function renderPrescription(log, d) {
 
   if (compList.length) {
     log("");
-    log("--- Raid comp (real DPS, but a roster/buff gap — NOT something you change on your character) ---");
+    log(`--- Raid comp (real ${metricUnit()}, but a roster/buff gap — NOT something you change on your character) ---`);
     compList.forEach(line);
   }
   log("");

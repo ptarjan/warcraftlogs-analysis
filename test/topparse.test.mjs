@@ -5,7 +5,8 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { raidCoverage, nonBossShare, potionCount, RAID_DAMAGE } = await import("../docs/topparse.js");
+const { raidCoverage, nonBossShare, potionCount, RAID_DAMAGE, topParseLevers } = await import("../docs/topparse.js");
+const { setRunMetric } = await import("../docs/core.js");
 
 const aura = (pct, guid = 1) => ({ pct, guid });
 
@@ -65,4 +66,21 @@ test("nonBossShare falls back to the biggest target when the name doesn't match"
 test("potionCount keyword-matches potion casts (case-insensitive)", () => {
   assert.equal(potionCount({ "Tempered Potion": 2, "Tiger Palm": 50, "potion of unwavering focus": 1 }), 3);
   assert.equal(potionCount({}), 0);
+});
+
+test("topParseLevers: damage-ROUTING lever is suppressed for healers (HPS run)", () => {
+  // A damage-target-distribution lever told a Mistweaver to "cleave/funnel instead
+  // of tunneling the boss" to raise HPS -- nonsense for a healer. It must fire for
+  // DPS and stay silent for healers, independent of the broader healer design.
+  const tp = { comp: { missing: [] }, routing: { top: 75, you: 60, addNames: ["Add A", "Add B"] } };
+  try {
+    setRunMetric("dps");
+    const dps = topParseLevers(tp);
+    assert.ok(dps.some((r) => /^ROUTING/.test(r.text)), "ROUTING should fire for DPS");
+    setRunMetric("hps");
+    const hps = topParseLevers(tp);
+    assert.ok(!hps.some((r) => /^ROUTING/.test(r.text)), "ROUTING must NOT fire for a healer");
+  } finally {
+    setRunMetric("dps");                            // never leak the global to other tests
+  }
 });
