@@ -9,7 +9,7 @@
 //   - your opener sequence vs the field's
 import {
   playerMetrics, ilvlPeers, mapLimit, median, bestKill,
-  reportCore, playerAbilities, dotUptimes, petDamage, fightWindow, fightEvents, paginateEvents, f, DPS, finding, eventTable, runIsHealer,
+  reportCore, playerAbilities, dotUptimes, petDamage, fightWindow, fightEvents, paginateEvents, f, DPS, finding, eventTable, runIsHealer, throughputWord,
 } from "./core.js";
 import { talentedAbilities, heroTreeOf } from "./talents.js";
 import { wowheadSpell } from "./links.js";
@@ -665,7 +665,7 @@ export function rotationLevers(rot) {
       seenCd.add(cd.name);
       out.push(finding("Rotation", DPS(cd.pct),
         `COOLDOWN: you cast ${link(cd.name)} ${cd.youCasts.toFixed(1)}x this fight (${f(cd.you, 1)}/min) vs the field's ` +
-        `${cd.fieldCasts.toFixed(1)}x (${f(cd.field, 1)}/min) -- ~${cd.pct}% of your damage. Use it on cooldown ` +
+        `${cd.fieldCasts.toFixed(1)}x (${f(cd.field, 1)}/min) -- ~${cd.pct}% of your ${throughputWord()}. Use it on cooldown ` +
         `(or line it up with your burst); it's a button you're skipping, not gear.`));
     }
   }
@@ -674,7 +674,7 @@ export function rotationLevers(rot) {
       seenCd.add(cd.name);
       out.push(finding("Rotation", DPS(cd.pct),
         `COOLDOWN: you cast ${wowheadSpell(cd.id, cd.name)} ${cd.youPerFight.toFixed(0)}x/kill vs the field's ` +
-        `${cd.fieldPerFight.toFixed(0)}x -- ~${cd.pct}% of your damage. Use it on cooldown; it's a button you're ` +
+        `${cd.fieldPerFight.toFixed(0)}x -- ~${cd.pct}% of your ${throughputWord()}. Use it on cooldown; it's a button you're ` +
         `skipping, not gear.`));
     }
   }
@@ -683,7 +683,7 @@ export function rotationLevers(rot) {
   if (rot && rot.petGap) {
     const g = rot.petGap;
     out.push(finding("Rotation", DPS(g.pct),
-      `PET DAMAGE: your pets do ${g.you}% of your damage vs the field's ${g.field}% -- ~${g.pct}% behind. ` +
+      `PET ${throughputWord().toUpperCase()}: your pets do ${g.you}% of your ${throughputWord()} vs the field's ${g.field}% -- ~${g.pct}% behind. ` +
       `Use your pet cooldowns more: summon on cooldown, keep the pet active/transformed, and line up your ` +
       `big pet windows (Army/Gargoyle/burst). It's a major damage source you're under-using, not gear.`, "measured"));
   }
@@ -693,8 +693,8 @@ export function rotationLevers(rot) {
   for (const d of ((rot && rot.dotGaps) || []).slice(0, 2)) {
     out.push(finding("Rotation", DPS(d.pct),
       `DOT UPTIME: your ${wowheadSpell(d.guid, d.name)} is up ${d.you}% on the boss vs the field's ${d.field}% ` +
-      `-- ~${d.pct}% of your damage. Refresh it before it falls off (don't clip or let it drop in movement); ` +
-      `it's free damage you already have the buttons for.`, "measured"));
+      `-- ~${d.pct}% of your ${throughputWord()}. Refresh it before it falls off (don't clip or let it drop in movement); ` +
+      `it's free ${throughputWord()} you already have the buttons for.`, "measured"));
   }
   // EMPOWERMENT: your biggest hit lands in its high-damage window LESS than the
   // field. We only claim this when the EVIDENCE shows it -- your empowered-cast
