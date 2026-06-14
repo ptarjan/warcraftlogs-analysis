@@ -106,10 +106,12 @@ export async function timelineFindings(name, server, region, encounter, difficul
     return fm ? { fm, ilvl: rk.bracketData || 0 } : null;
   });
   const yourFms = perKill.filter(Boolean).map((x) => x.fm);
-  const ilvls = perKill.filter(Boolean).map((x) => x.ilvl);
   if (!yourFms.length) return null;
-  const peers = await peerMetricsFor(encounter.id, difficulty, className, specName,
-    ilvls.length ? Math.max(...ilvls) : 0);
+  // Target the field at your TOP ilvl across ALL kills of this boss (not just the
+  // analyzed ones) -- the same value overview uses -- so the two sections select
+  // the identical peer set and their reportCore fetches COALESCE.
+  const peerIlvl = Math.max(...er.ranks.map((r) => r.bracketData || 0)) || 0;
+  const peers = await peerMetricsFor(encounter.id, difficulty, className, specName, peerIlvl);
   const ymed = (k) => median(yourFms.map((x) => x[k]));
   const pmed = (k) => (peers.length ? median(peers.map((x) => x[k])) : NaN);
   const keys = ["lostPerMin", "rangeLostPerMin", "pressLostPerMin", "autoDownPct", "overshootMs"];

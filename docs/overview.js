@@ -22,11 +22,15 @@ export async function overview(log, name, server, region, difficulty) {
   return { zr, killed };
 }
 
-// Peers within +/- ilvlWindow of targetIlvl, with full metrics.
+// Peers within +/- ilvlWindow of targetIlvl, with full metrics. The defaults
+// MATCH timeline's peerMetricsFor (n/window/pages/limit) on purpose: identical
+// collectPeers args mean the same peers are selected, so their reportCore fetches
+// COALESCE with timeline's (which already runs every boss) -- making the per-boss
+// peer pull effectively free and letting the overview uncap to all bosses.
 async function collectIlvlPeers(encounterId, difficulty, className, specName,
-  targetIlvl, n = 12, ilvlWindow = 2, pages = 6) {
+  targetIlvl, n = 6, ilvlWindow = 3, pages = 7) {
   const cands = await collectPeers({ encounters: encounterId, difficulty, className, specName,
-    limit: n + 4, pages, ilvl: targetIlvl, window: ilvlWindow });
+    limit: n + 3, pages, ilvl: targetIlvl, window: ilvlWindow });
   const metrics = await mapLimit(cands, 5, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
     if (m) m.rankDur = (r.duration || 0) / 1000;
@@ -46,7 +50,10 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
   log("");
   log(`--- ${encounter.name} | your best-ilvl kill: ilvl ${ilvl}, ${f(you.dur, 0)}s, ${f(you.dps, 0)} ${metricUnit().toLowerCase()}, ${f(best.rankPercent, 0)}%ile ---`);
 
-  const peers = await collectIlvlPeers(encounter.id, difficulty, className, specName, ilvl || 0);
+  // Target the field at your TOP ilvl on this boss -- same value timeline uses --
+  // so the peer set (and its fetches) coalesce with timeline's.
+  const peerIlvl = Math.max(...er.ranks.map((r) => r.bracketData || 0)) || ilvl || 0;
+  const peers = await collectIlvlPeers(encounter.id, difficulty, className, specName, peerIlvl);
   if (!peers.length) {
     log("  (no item-level-matched peers found)");
     return;
@@ -119,12 +126,11 @@ async function difficultyInflation(log, name, server, region, encounter, classNa
 }
 
 export async function run(log, name, server, region, className = "Monk", specName = "Brewmaster",
-  difficulty = 5, bosses = 3, inflation = false) {
+  difficulty = 5, bosses = Infinity, inflation = false) {
   const { killed } = await overview(log, name, server, region, difficulty);
-  // The list above shows every boss; the deep per-boss comparison (which fetches
-  // a fresh peer set per boss) is the expensive part, so it's capped. Pick the
-  // MOST RECENT bosses (current gear/play), not the first in raid order --
-  // recentKills reuses the cached per-boss data the other sections fetch.
+  // Deep-compare EVERY killed boss (most recent first). It's affordable because
+  // each boss's peers + your-kill data come from the same fetches timeline already
+  // makes for all bosses -- the collectPeers args now match, so they coalesce.
   const recent = await recentKills(name, server, region, difficulty);
   for (const r of recent.slice(0, bosses)) {
     try {
