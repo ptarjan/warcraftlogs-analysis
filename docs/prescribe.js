@@ -370,15 +370,15 @@ function renderPrescription(log, d) {
   // the REMAINDER below uses this to frame the gap as damage-per-cast, not activity.
   const outpaces = rot && rot.castGap && rot.castGap.field > 0 && rot.castGap.you >= rot.castGap.field;
 
-  log("");
-  log(`=== How to parse better — ${d.name}-${d.server} (${d.specName} ${d.className}), ilvl ~${d.curIlvl} ===`);
+  // No title line here -- the report hero (name · realm · region + spec/difficulty
+  // pills) and the card's own "What to change" header already say who this is.
   if (d.medP != null) log(`You parse ${d.medP}th percentile on ${d.difficultyName} (median of the ${d.nBosses} current-tier ${d.difficultyName} boss${d.nBosses === 1 ? "" : "es"} you've killed; best ${d.bestP}th on ${d.topParse.encounter.name}).`);
   if (d.skipped && d.skipped.length) {
     log(`NOTE: partial list -- couldn't load ${d.skipped.join(", ")} (likely the WCL rate limit). This isn't the full picture; re-run when the budget resets for the rest.`);
   }
   if (peerGap != null) {
     const vsField = peerGap > 0 ? `${peerGap}% behind` : `${Math.abs(peerGap)}% ahead of`;
-    log(`Measured on ${d.gearBoss.encounter.name}: you do ${k(you.dps)} ${metricUnit()} -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
+    log(`Measured on ${d.gearBoss.encounter.name}: you (ilvl ~${d.curIlvl}) do ${k(you.dps)} ${metricUnit()} -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
         (topGap != null ? `, ${topGap}% behind the top parses` : "") + `. That gap is your headroom.`);
   }
   // A blunt, character-specific VERDICT: name the situation so the report never
