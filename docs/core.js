@@ -605,6 +605,43 @@ export async function bossDebuffs(code, fight) {
   return out;
 }
 
+// What the player was primarily TANKING, derived from DAMAGE-TAKEN: the enemy NPC
+// that dealt them the most damage is the one meleeing its threat target -- i.e. YOU.
+// So a tank's damage-taken is dominated by ONE enemy (the boss or the add they hold);
+// a DPS's is diffuse raid mechanics. We tally the player's damage-taken events by
+// ATTACKER (excluding self-damage -- Brewmaster Stagger, thorns -- and friendly
+// sources), and return the top attacker { name, share } ONLY when it dominates
+// (>= minShare): that's a tank holding a target. Diffuse damage -> null, so the signal
+// speaks up only when there genuinely IS a tank assignment to read -- no isTank needed,
+// it's measured. Bounded to maxPages (a clear winner shows in any sample). Class-agnostic.
+export async function tankTarget(code, fight, sourceId, { minShare = 0.4, maxPages = 2 } = {}) {
+  const tally = new Map();
+  let total = 0, start = null, actors = null;
+  for (let page = 0; page < maxPages; page++) {
+    const q = `query { reportData { report(code:"${code}") {
+      events(fightIDs:${fight}, dataType:DamageTaken, sourceID:${sourceId}, limit:10000${start != null ? `, startTime:${start}` : ""}) { data nextPageTimestamp }
+      ${actors == null ? "masterData { actors { id name type } }" : ""} } } }`;
+    let r;
+    try { r = (await gql(q)).reportData.report; } catch (e) { break; }
+    if (actors == null) actors = new Map(((r.masterData && r.masterData.actors) || []).map((a) => [a.id, a]));
+    for (const e of ((r.events && r.events.data) || [])) {
+      const atk = e.sourceID;
+      if (atk === sourceId) continue;                       // self-damage (Stagger/thorns), not tanking
+      const a = actors.get(atk);
+      if (!a || a.type === "Player") continue;              // friendly/raid damage, not what you hold
+      const amt = e.amount || 0;
+      if (amt > 0) { tally.set(a.name, (tally.get(a.name) || 0) + amt); total += amt; }
+    }
+    const np = r.events && r.events.nextPageTimestamp;
+    if (np == null) break;
+    start = np;
+  }
+  if (!total) return null;
+  const top = [...tally.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (!top) return null;
+  return top[1] / total >= minShare ? { name: top[0], share: Math.round((100 * top[1]) / total) } : null;
+}
+
 // Crit/haste/mastery/vers ratings from the shared loader's CombatantInfo data, so
 // it rides on the playerMetrics query for the same kill (className arg ignored).
 export async function secondaryStats(code, fight, sourceId, className) {

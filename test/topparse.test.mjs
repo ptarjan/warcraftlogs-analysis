@@ -114,3 +114,22 @@ test("topParseLevers: damage-ROUTING lever is suppressed for healers (HPS run)",
     setRunMetric("dps");                            // never leak the global to other tests
   }
 });
+
+test("topParseLevers: routing is a TANK-ASSIGNMENT note (comp) when you tanked a different target", () => {
+  // Data-derived (no isTank): if your damage-taken shows you were tanking an enemy that
+  // ISN'T one of the adds the field funnels, the gap is your assignment, not a free swap.
+  const assigned = { comp: { missing: [] },
+    routing: { top: 75, you: 60, addNames: ["Add A", "Add B"], tank: { name: "The Boss", share: 61 } } };
+  const r1 = topParseLevers(assigned).find((r) => /^ROUTING/.test(r.text));
+  assert.equal(r1.dim, DIM.COMP, "tanked a different target -> assignment, lands in the comp box");
+  assert.match(r1.text, /TANKING The Boss/);
+  assert.match(r1.text, /assignment/i);
+  // You WERE tanking one of the funnel adds but still under-funnel -> a real choice gap (yours).
+  const onAdd = { comp: { missing: [] },
+    routing: { top: 75, you: 60, addNames: ["Add A", "Add B"], tank: { name: "Add A", share: 55 } } };
+  const r2 = topParseLevers(onAdd).find((r) => /^ROUTING/.test(r.text));
+  assert.equal(r2.dim, DIM.ROTATION, "tanking the funnel add -> still your target choice");
+  // No clear tank target (a DPS eating diffuse mechanics -> tank null) -> stays a yours lever.
+  const dps = { comp: { missing: [] }, routing: { top: 75, you: 60, addNames: ["Add A"], tank: null } };
+  assert.equal(topParseLevers(dps).find((r) => /^ROUTING/.test(r.text)).dim, DIM.ROTATION);
+});

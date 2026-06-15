@@ -16,7 +16,7 @@
 // list), NOT a spec's rotation/stat weights -- which is what the no-hard-coding
 // rule is actually about.
 import {
-  playerMetrics, topRankings, buffUptimes, bossDebuffs, median, topN, f, mapLimit, bestKill,
+  playerMetrics, topRankings, buffUptimes, bossDebuffs, tankTarget, median, topN, f, mapLimit, bestKill,
   DPS, COMP, INFO, finding, DIM, runIsHealer, metricUnit,
 } from "./core.js";
 import { wowheadSpell } from "./links.js";
@@ -128,7 +128,15 @@ export async function topParseFindings(name, server, region, difficulty, classNa
     const youHits = new Set([...youRoute.byAdd.keys()]);
     const addNames = topN(addAgg)
       .map(([n]) => n).filter((n) => !youHits.has(n)).slice(0, 3);
-    routing = { you: youRoute.pct, top: median(topRoutes.map((r) => r.pct)), addNames };
+    // Only spend the damage-taken fetch when there's actually a routing GAP to explain
+    // (and addNames to compare against) -- and only for DAMAGE runs. Reads what YOU were
+    // tanking so the lever can tell an assignment gap from a target-choice gap.
+    const route = median(topRoutes.map((r) => r.pct)) - youRoute.pct;
+    let tank = null;
+    if (!runIsHealer() && route >= 5 && addNames.length) {
+      try { tank = await tankTarget(mine.code, mine.fight, you.sourceID); } catch (e) { /* no read -> stays a choice lever */ }
+    }
+    routing = { you: youRoute.pct, top: median(topRoutes.map((r) => r.pct)), addNames, tank };
     potions = { you: potionCount(you.casts), top: Math.round(median(tops.map((t) => potionCount(t.m.casts)))) };
   }
 
@@ -199,20 +207,32 @@ export function topParseLevers(tp, compDeltas = null) {
         `Missing ${link} (${e.effect}) — bring ${e.who}. (unsized — this field gave no with/without split to measure it).`, "measured"));
     }
   }
-  // Damage routing: measured extra cleave/funnel the top parses get. This is YOURS
-  // to fix -- WHICH targets you put your damage on is a priority decision you make,
-  // not a roster gap (so it's DIM.ROTATION, in the "do these to your character" list,
-  // NOT DIM.COMP -- a "raid comp, not yours to change" label would flatly contradict
-  // the advice "cleave the add instead of tunneling"). Caveat: how MUCH add-damage is
-  // available is fight/comp-dependent, so we hedge the amount, not the action. It's a
-  // DPS-only lever (it compares where you put DAMAGE) -- for a healer it would tell a
-  // Mistweaver to "cleave the add to raise HPS", which is nonsense; suppress for healers.
+  // Damage routing: measured extra cleave/funnel the top parses get. WHO you damage is
+  // usually a target-PRIORITY choice (yours, DIM.ROTATION) -- but for a TANK it's your
+  // ASSIGNMENT: your damage goes to what you hold threat on, and who tanks which add is
+  // a raid decision, not a free swap. We tell them apart from the DATA (no isTank): if
+  // your damage-TAKEN shows one enemy dominating (= you were tanking it) and it's NOT
+  // one of the adds the field funnels, the gap is assignment -> reframe + DON'T size it
+  // as yours. Otherwise it's a genuine choice/funnel gap -> the sized "cleave more" lever.
+  // DPS-only (compares where you put DAMAGE); suppressed for healers (nonsense for HPS).
   const route = tp.routing ? tp.routing.top - tp.routing.you : 0;
   if (!runIsHealer() && tp.routing && route >= 5 && tp.routing.addNames.length) {
-    out.push(finding(DIM.ROTATION, DPS(Math.round(route)),
-      `ROUTING: top parses put ${f(tp.routing.top, 0)}% of damage on ${tp.routing.addNames.join(", ")} ` +
-      `(you ${f(tp.routing.you, 0)}%). Cleave/funnel those instead of tunneling the boss when they're up ` +
-      `(how much is available depends on the fight, but the target choice is yours).`, "measured"));
+    const tank = tp.routing.tank;
+    const assigned = tank && tank.name && !tp.routing.addNames.includes(tank.name);
+    if (assigned) {
+      // Real DPS, but raid-dependent (a tank ASSIGNMENT), so it belongs in the comp
+      // bucket (sized, not a "yours to press" lever and not dumped into "unexplained").
+      out.push(finding(DIM.COMP, COMP(Math.round(route)),
+        `ROUTING: top parses put ${f(tp.routing.top, 0)}% of damage on ${tp.routing.addNames.join(", ")} (you ${f(tp.routing.you, 0)}%) -- ` +
+        `but your damage-taken shows you were TANKING ${tank.name} (${tank.share}% of the damage you took), not those adds. So this gap is ` +
+        `mostly your tank ASSIGNMENT -- who holds what is a raid call, not a target you freely swap. To shift it, sort funnel/tank duties with your team; ` +
+        `it isn't a button you press differently.`, "measured"));
+    } else {
+      out.push(finding(DIM.ROTATION, DPS(Math.round(route)),
+        `ROUTING: top parses put ${f(tp.routing.top, 0)}% of damage on ${tp.routing.addNames.join(", ")} ` +
+        `(you ${f(tp.routing.you, 0)}%). Cleave/funnel those instead of tunneling the boss when they're up ` +
+        `(how much is available depends on the fight, but the target choice is yours).`, "measured"));
+    }
   }
   // Potions: pre-pot + a second combat potion (a setup fix you apply yourself).
   if (tp.potions && tp.potions.top > tp.potions.you) {
