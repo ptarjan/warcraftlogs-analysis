@@ -33,26 +33,36 @@ export const isSupport = (specName) => SUPPORT_SPECS.has(specName);
 // BYTE-IDENTICAL to before (same query strings -> same caches, same tests).
 /** @param {string} className @param {string} specName @returns {"dps"|"hps"} */
 export const metricForSpec = (className, specName) => (isHealer(specName) ? "hps" : "dps");
-let _metric = "dps";
-/** @param {"dps"|"hps"} m */
-export function setRunMetric(m) { _metric = m === "hps" ? "hps" : "dps"; }
-export function runMetric() { return _metric; }
-export const runIsHealer = () => _metric === "hps";
 
-// A support run still uses the DPS metric/tables (Augmentation IS a damage actor),
-// but the FRAMING differs: personal DPS isn't the right yardstick. Tracked as a
-// separate flag (orthogonal to the dps/hps metric), set from the spec at run start.
-let _support = false;
+// THE run context: which throughput metric this run measures (DPS vs HPS), and whether
+// it's a SUPPORT spec (Augmentation -- frames by buff value, not personal DPS; orthogonal
+// to the metric, so it's a separate field). It's ONE module-scoped object on purpose: a
+// run analyzes one character in one process, and keeping it here lets the throughput-generic
+// constructors -- DPS(), metricUnit(), the WCL table selector -- stay PARAMETER-FREE at
+// their hundreds of call sites instead of threading a metric through every function.
+// Default 'dps' keeps every damage-spec query BYTE-IDENTICAL to before (same query strings
+// -> same caches, same tests). NOTE the asymmetric WCL enum: damage is "DamageDone" but
+// healing is just "Healing" (no -Done), in BOTH the TableDataType and EventDataType enums.
+const _run = { metric: /** @type {"dps"|"hps"} */ ("dps"), support: false };
+// Set the WHOLE context from the spec in ONE atomic call -- the production entry point
+// (app/CLI). Derives metric + support together so they can never disagree or be half-set
+// (the old two-setter API let a caller set the metric but forget the support flag).
+/** @param {string} className @param {string} specName */
+export function setRunContext(className, specName) {
+  _run.metric = metricForSpec(className, specName);
+  _run.support = isSupport(specName);
+}
+// Low-level knobs -- mainly tests, which force a metric without a real spec.
+/** @param {"dps"|"hps"} m */
+export function setRunMetric(m) { _run.metric = m === "hps" ? "hps" : "dps"; }
 /** @param {boolean} b */
-export function setRunSupport(b) { _support = !!b; }
-export const runIsSupport = () => _support;
-// Display + table helpers so output reads "HPS"/"healing" for healers, and the
-// WCL table + per-hit event type follow the same switch. NOTE the asymmetric WCL
-// enum: damage is "DamageDone" but healing is just "Healing" (no -Done), in BOTH
-// the TableDataType and EventDataType enums.
-export const metricUnit = () => (_metric === "hps" ? "HPS" : "DPS");
-export const throughputWord = () => (_metric === "hps" ? "healing" : "damage");
-const throughputTable = () => (_metric === "hps" ? "Healing" : "DamageDone");
+export function setRunSupport(b) { _run.support = !!b; }
+export function runMetric() { return _run.metric; }
+export const runIsHealer = () => _run.metric === "hps";
+export const runIsSupport = () => _run.support;
+export const metricUnit = () => (_run.metric === "hps" ? "HPS" : "DPS");
+export const throughputWord = () => (_run.metric === "hps" ? "healing" : "damage");
+const throughputTable = () => (_run.metric === "hps" ? "Healing" : "DamageDone");
 export const eventTable = throughputTable;
 
 // Slots the field actually enchants (verify each season). Display only.
@@ -188,7 +198,7 @@ export async function characterZone(name, server, region, difficulty) {
 const _charHead = (name, server, region) =>
   `character(\n    name:"${cName(name)}", serverSlug:"${slug(clean(server))}", serverRegion:"${cRegion(region)}")`;
 const _encField = (encounterId, difficulty) =>
-  `encounterRankings(encounterID:${encounterId}, difficulty:${difficulty}, metric:${_metric})`;
+  `encounterRankings(encounterID:${encounterId}, difficulty:${difficulty}, metric:${_run.metric})`;
 export const _characterEncounterQuery = (name, server, region, encounterId, difficulty) =>
   `query { characterData { ${_charHead(name, server, region)} {\n    ${_encField(encounterId, difficulty)} } } }`;
 export async function characterEncounter(name, server, region, encounterId, difficulty) {
@@ -199,7 +209,7 @@ export async function characterEncounter(name, server, region, encounterId, diff
 
 export async function topRankings(encounterId, difficulty, className, specName, page = 1) {
   const q = `query { worldData { encounter(id:${encounterId}) { characterRankings(
-    difficulty:${difficulty}, className:"${clean(className)}", specName:"${clean(specName)}", metric:${_metric}, page:${page}) } } }`;
+    difficulty:${difficulty}, className:"${clean(className)}", specName:"${clean(specName)}", metric:${_run.metric}, page:${page}) } } }`;
   const cr = (await gql(q)).worldData.encounter.characterRankings;
   return cr && typeof cr === "object" ? (cr.rankings || []) : [];
 }
@@ -526,7 +536,7 @@ export async function petDamage(code, fight, ownerSourceId) {
 // the run metric (kill time is the same regardless, but the query needs one).
 export async function encounterKillTimes(encounterId, difficulty) {
   const q = `query { worldData { encounter(id:${encounterId}) { characterRankings(
-    difficulty:${difficulty}, metric:${_metric}, page:1) } } }`;
+    difficulty:${difficulty}, metric:${_run.metric}, page:1) } } }`;
   const cr = (await gql(q)).worldData.encounter.characterRankings;
   const ranks = (cr && typeof cr === "object" ? (cr.rankings || []) : []);
   return ranks.map((r) => r.duration).filter((d) => d > 0);

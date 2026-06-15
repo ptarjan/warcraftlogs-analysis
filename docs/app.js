@@ -2,7 +2,7 @@
 // UI wiring: pick character/region/server, auto-detect the rest, then render
 // the result as a web report -- the prioritized list of changes up top, with
 // the supporting analyses as collapsible cards below.
-import { detectContext, detectPriority, DIFFICULTY, raidTeammates, slug, metricForSpec, setRunMetric, setRunSupport, isSupport, metricUnit,
+import { detectContext, detectPriority, DIFFICULTY, raidTeammates, slug, metricForSpec, setRunContext, isSupport, metricUnit,
   parseReportRef, reportFights, recentReportsFor, encountersIn, mapLimit } from "./core.js";
 import { isAuthed, beginLogin, handleRedirectCallback, logout } from "./auth.js";
 import { NeedsAuth, myCharacters, primeRateReset, fmtRateWait } from "./wcl.js";
@@ -657,8 +657,7 @@ async function runAnalysis({ name, server, region, serverLabel }) {
     const ctx = await detectContext(name, server, region);
     // Healers are measured on HEALING, everyone else on DAMAGE -- set before
     // detectPriority so the stat sample is drawn from the right-metric peers.
-    setRunMetric(metricForSpec(ctx.className, ctx.specName));
-    setRunSupport(isSupport(ctx.specName));     // Augmentation: framed by buff value
+    setRunContext(ctx.className, ctx.specName); // metric (HPS for healers) + support framing, atomically
     // The supporting card set is role-aware (healers get a Healing efficiency
     // card, support specs a Support buffs card), so it's built here -- once the
     // run metric/role is known.

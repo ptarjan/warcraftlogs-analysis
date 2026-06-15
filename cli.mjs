@@ -133,7 +133,7 @@ if (!name || !server || !region) {
 const only = opt.only ? new Set(opt.only.split(",").map((s) => s.trim())) : null;
 
 // --- run ---
-const { detectContext, detectPriority, DIFFICULTY, metricForSpec, setRunMetric, setRunSupport, isSupport, metricUnit } = await import("./docs/core.js");
+const { detectContext, detectPriority, DIFFICULTY, setRunContext, metricUnit } = await import("./docs/core.js");
 // Learn WCL's point-reset clock up front (one cheap query, while still under
 // budget) so if we exhaust the shared budget mid-run the error can say WHEN it
 // resets ("try again in ~N min") instead of a vague "try again shortly".
@@ -182,13 +182,14 @@ if (!cls || !spec || difficulty === undefined || !priority) {
   // Healers are measured on HEALING, everyone else on DAMAGE. Set BEFORE
   // detectPriority so even the stat-priority sample is drawn from the right
   // (healing- vs damage-ranked) peers.
-  setRunMetric(metricForSpec(cls, spec));
-  setRunSupport(isSupport(spec));               // Augmentation: framed by buff value, not personal DPS
+  setRunContext(cls, spec);                     // metric (HPS for healers) + support framing, atomically
   if (!priority) priority = await detectPriority(ctx.className, ctx.specName, ctx.difficulty, ctx.killed[0].encounter.id);
   log(`Detected: ${spec} ${cls} · ${DIFFICULTY[difficulty] || difficulty} · gear priority ${priority} · optimizing ${metricUnit()}`);
 }
-// Cover the all-flags path (detection skipped): metric must match the spec.
-setRunMetric(metricForSpec(cls, spec));
+// Cover the all-flags path (detection skipped): context must match the spec. (Atomic
+// setRunContext also sets the support flag here -- the old setRunMetric-only line left
+// an Augmentation analyzed via explicit flags mis-framed as personal DPS.)
+setRunContext(cls, spec);
 const p = { name, server, region, cls, spec, difficulty, priority };
 
 log(`=== ${p.name}-${p.server} (${p.region}) | ${p.spec} ${p.cls} | ${DIFFICULTY[p.difficulty] || p.difficulty} ===`);
