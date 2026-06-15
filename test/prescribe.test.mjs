@@ -53,7 +53,26 @@ test("fieldDelta measures an attribute's value from the field (have vs not)", ()
   // Too few on one side -> null.
   assert.equal(fieldDelta([110, 100, 100, 100, 100], [true, false, false, false, false]), null);
 });
-const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, strengths } = await import("../docs/prescribe.js");
+const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, strengths, killHistory } = await import("../docs/prescribe.js");
+
+test("killHistory: parse spread (consistency) + recent-vs-old trend (improvement), time-ordered", () => {
+  const k = (p, t) => ({ rankPercent: p, startTime: t });
+  // < 3 kills -> not enough to judge.
+  assert.equal(killHistory([k(60, 1), k(70, 2)]), null);
+  // Improving over time (raw order is NOT chronological -> must sort by startTime):
+  // oldest ~20, newest ~55 -> trend up, wide spread -> varies.
+  const up = killHistory([k(55, 500), k(20, 100), k(50, 400), k(18, 200), k(22, 300), k(57, 600)]);
+  assert.equal(up.n, 6);
+  assert.deepEqual([up.lo, up.hi], [18, 57]);
+  assert.equal(up.varies, true);          // 39pp spread
+  assert.equal(up.trend, "up");           // recent third (~55) >> old third (~20)
+  // Consistent + steady: tight band, no trend.
+  const steady = killHistory([k(72, 1), k(75, 2), k(70, 3), k(74, 4)]);
+  assert.equal(steady.consistent, true);  // 5pp spread
+  assert.equal(steady.trend, "steady");
+  // Declining: recent worse than old.
+  assert.equal(killHistory([k(80, 1), k(78, 2), k(50, 3), k(48, 4)]).trend, "down");
+});
 
 test("strengths: surfaces the checks you PASSED (silent levers), gated + metric-aware", () => {
   // A clean DPS player: empowerment beats the field, ~99% active, no under-use, no CD

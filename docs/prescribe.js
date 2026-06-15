@@ -60,6 +60,33 @@ export function pickCurrentKill(kills, band = 1) {
     .reduce((a, b) => ((b.startTime || 0) > (a.startTime || 0) ? b : a));
 }
 
+// Your parse HISTORY on the benchmark boss -- read from the per-kill ranks the
+// kill-selection already fetched (characterEncounter is cached, so this is FREE: no
+// new query, no budget hit). Two signals the single-kill deep-dive can't give:
+//   - CONSISTENCY: the spread of your parses across all your kills of this boss. A
+//     tight band means the one kill we analyzed is typical of how you play it; a wide
+//     one means your play varies kill to kill (so don't over-read a single kill).
+//   - IMPROVEMENT: are your RECENT kills parsing higher than your older ones? -- the
+//     "have I gotten better / fixed something" signal, measured over time on the SAME
+//     boss (parse percentile is comparable kill-to-kill). Pure -> testable.
+// rankPercent is ilvl-normalized (a WCL percentile), so kills across gear are comparable.
+export function killHistory(ranks, { minKills = 3, tight = 15, wide = 30, move = 8 } = {}) {
+  const k = (ranks || [])
+    .filter((r) => r && r.rankPercent != null && r.startTime)
+    .map((r) => ({ p: r.rankPercent, t: r.startTime }))
+    .sort((a, b) => a.t - b.t);
+  if (k.length < minKills) return null;                  // too few kills to say anything
+  const ps = k.map((x) => x.p);
+  const lo = Math.round(Math.min(...ps)), hi = Math.round(Math.max(...ps));
+  const third = Math.max(1, Math.floor(k.length / 3));
+  const oldP = Math.round(median(k.slice(0, third).map((x) => x.p)));     // earliest third
+  const newP = Math.round(median(k.slice(-third).map((x) => x.p)));       // most-recent third
+  const delta = newP - oldP;
+  return { n: k.length, lo, hi, spread: hi - lo, oldP, newP, delta,
+    consistent: hi - lo <= tight, varies: hi - lo >= wide,
+    trend: delta >= move ? "up" : delta <= -move ? "down" : "steady" };
+}
+
 // Your priority-stat as a % of your total secondary rating (crit/haste/mastery/vers).
 const secPct = (s, priority) => 100 * s[priority] / (["crit", "haste", "mastery", "vers"].reduce((a, k) => a + s[k], 0) || 1);
 
@@ -759,6 +786,27 @@ function renderPrescription(log, d) {
       : ` -- and they have your exact item level, so that ${peerGap}% is ${metricUnit()} you could realistically gain. The fixes below are sized to add up to it.`;
     log(`Measured on ${gearBossLink}: you (ilvl ~${d.curIlvl}) do ${k(you.dps)} ${metricUnit()} -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
         (topGap != null ? `, ${topGap}% behind the top parses` : "") + tail);
+    // CONSISTENCY + IMPROVEMENT, from your most-farmed boss's parse history (FREE --
+    // cached ranks): are you steady or all over the place kill-to-kill, and are your
+    // recent kills better than your older ones? The single-kill deep-dive can't see
+    // either. Same boss across time, so it's a clean signal (parse %ile is normalized).
+    const h = d.hist;
+    if (h) {
+      // Make the spread + trend ONE coherent story: a wide range under a rising trend
+      // is the CLIMB (improvement), not kill-to-kill inconsistency -- only a wide spread
+      // with NO trend is genuine variance. Don't say "you vary a lot" AND "you're improving".
+      let msg = `Consistency: across your ${h.n} ${d.histBoss} kills you've parsed ${h.lo}-${h.hi}%ile`;
+      if (h.trend === "up")
+        msg += ` and you're trending UP -- recent kills (~${h.newP}th) beat your earlier ones (~${h.oldP}th). The range is mostly that climb; whatever you changed, keep it.`;
+      else if (h.trend === "down")
+        msg += ` and trending DOWN -- recent kills (~${h.newP}th) sit below your earlier ones (~${h.oldP}th); worth a look at what changed.`;
+      else if (h.consistent)
+        msg += ` -- a tight band, so you play it about the same every time (the deep-dive above is typical).`;
+      else if (h.varies)
+        msg += ` at a steady average -- a wide spread with no clear trend means your play varies kill to kill, so a single kill isn't your ceiling.`;
+      else msg += ` -- a normal spread.`;
+      log(msg);
+    }
   }
   // A blunt, character-specific VERDICT: name the situation so the report never
   // reads like a template -- and always points at an action (respec / the few
@@ -928,6 +976,15 @@ export async function run(log, name, server, region, className = "Monk", specNam
     if (bk) kills.push({ ilvl: bk[2] || 0, boss: r, code: bk[0], fight: bk[1], startTime: bk[3] || 0, rankPercent: bk[4] });
   }
   const { ilvl: curIlvl, boss: gearBoss, code, fight } = pickBenchmarkKill(kills);
+  // Parse HISTORY for the consistency + improvement signals -- read from your MOST-
+  // FARMED boss (the most kills = the most data, and a clean same-boss trend), which
+  // is often a different boss than the benchmark (a late boss you've killed once).
+  // FREE: characterEncounter for every boss was already fetched by bestIlvlKill above,
+  // so this read is cached -- no new query, no budget hit.
+  const farmedBoss = ranks.reduce((a, b) => ((b.totalKills || 0) > (a.totalKills || 0) ? b : a));
+  const farmedEnc = await characterEncounter(name, server, region, farmedBoss.encounter.id, difficulty).catch(() => null);
+  const hist = killHistory(farmedEnc && farmedEnc.ranks);
+  const histBoss = farmedBoss.encounter.name;
   // The PRESCRIPTION is the payoff -- it must survive a mid-run rate limit, not be
   // the section that gets cut. So EVERY data input is fail-soft: a throttled (or
   // private-log) fetch drops just its own levers, and we render the rest from what
@@ -1040,7 +1097,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
     name, server, className, specName, curIlvl, gearBoss, code, fight,
     topReport: topKill ? { code: topKill.code, fight: topKill.fight } : null,
     difficultyName: DIFFICULTY[difficulty] || `difficulty ${difficulty}`,
-    medP, bestP, topParse, nBosses: ranks.length, gearAgeDays,
+    medP, bestP, topParse, nBosses: ranks.length, gearAgeDays, hist, histBoss,
     you, field, execd, rot, tp, gf, my, priority, rx, skipped,
   });
 }
