@@ -937,10 +937,15 @@ export function rotationLevers(rot) {
   // that cast/cooldown levers can't see -- THE missing lever for DoT specs. Measured
   // (boss uptime vs the field's), sized by the DoT's damage share x the shortfall.
   for (const d of ((rot && rot.dotGaps) || []).slice(0, 2)) {
+    // Don't assume a dedicated "refresh" button: some high-uptime DoTs are auto-applied
+    // by your other casts/crits (Astral Smolder, Burning Blades, Deep Wounds) rather
+    // than hardcast (Rip, Moonfire), so "refresh it / you have the buttons" is wrong for
+    // those. Phrase the FIX to fit both -- keep its uptime up; it drops when you clip it,
+    // let it lapse in movement, or slow the casts that apply it -- the gain is the same.
     out.push(finding("Rotation", DPS(d.pct),
       `DOT UPTIME: your ${wowheadSpell(d.guid, d.name)} is up ${d.you}% on the boss vs the field's ${d.field}% ` +
-      `-- ~${d.pct}% of your ${throughputWord()}. Refresh it before it falls off (don't clip or let it drop in movement); ` +
-      `it's free ${throughputWord()} you already have the buttons for.`, "measured"));
+      `-- ~${d.pct}% of your ${throughputWord()}. Keep its uptime up: refresh it before it falls off (or, if it's ` +
+      `auto-applied by your other casts/crits, keep those flowing), and don't let it lapse in movement -- that uptime is ~free ${throughputWord()}.`, "measured"));
   }
   // EMPOWERMENT: your biggest hit lands in its high-damage window LESS than the
   // field. We only claim this when the EVIDENCE shows it -- your empowered-cast

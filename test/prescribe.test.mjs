@@ -266,6 +266,19 @@ test("HEALER: rotationLevers drops the reactive 'press more' + empowerment, keep
   assert.ok(rotationLevers(rot).some((r) => /^ROTATION: press/.test(r.text)));
 });
 
+test("rotationLevers: DOT UPTIME advice fits proc-applied DoTs (no false 'you have the buttons')", () => {
+  // A proc/auto-applied DoT (Astral Smolder, Burning Blades, Deep Wounds) has no
+  // dedicated refresh button, so the lever must NOT claim "you already have the buttons
+  // for" -- it should cover the auto-applied case too.
+  const rot = { abilityIds: { "Astral Smolder": 1263250 },
+    dotGaps: [{ name: "Astral Smolder", guid: 1263250, you: 43, field: 91, pct: 9 }] };
+  const [dot] = rotationLevers(rot).filter((r) => /DOT UPTIME/.test(r.text));
+  assert.ok(dot, "DOT UPTIME lever fires");
+  assert.doesNotMatch(dot.text, /you already have the buttons/);
+  assert.match(dot.text, /auto-applied/);            // covers the proc case
+  assert.match(dot.text, /refresh it before it falls off/);  // still precise for hardcast DoTs
+});
+
 test("executionLevers: a genuine cast deficit still fires press-faster", () => {
   // The guard is narrow: only when you cast >= field. A real deficit still leads.
   const execd = { pressExcess: 2.0, rangeExcess: 0, worstRange: [], overshootExcess: 0 };
