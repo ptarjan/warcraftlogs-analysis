@@ -52,7 +52,7 @@ export const SECTION_SPECS = [
     args: (p) => [p.name, p.server, p.region, p.cls, p.spec, p.difficulty] },
   { key: "gear", title: "GEAR AUDIT",
     module: "./docs/gear.js", method: "run",
-    args: (p) => [p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority] },
+    args: (p) => [p.name, p.server, p.region, p.cls, p.spec, p.difficulty, p.priority] },
   { key: "prescribe", title: "PRESCRIPTION",
     module: "./docs/prescribe.js", method: "run",
     args: (p) => [p.name, p.server, p.region, p.cls, p.spec, p.difficulty, p.priority] },

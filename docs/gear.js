@@ -212,7 +212,7 @@ async function fieldConsensus(className, specName, difficulty, encounters, n = 4
 
 const topItem = (counter) => { const e = topEntry(counter); return e ? e[0] : null; };
 
-export async function gearFindings(name, server, region, difficulty, className, specName, priority) {
+export async function gearFindings(name, server, region, className, specName, difficulty, priority) {
   const you = await yourGear(name, server, region, difficulty, className);
   if (!you) return null;
   const ymap = {};
@@ -341,8 +341,8 @@ export async function gearFindings(name, server, region, difficulty, className, 
   return { rows, swaps: reconciledSwaps, embellishedSlots, restats, embCompare: embCompare, n: fc.n, priority, gems: gemInfo };
 }
 
-export async function run(log, name, server, region, difficulty, className, specName, priority) {
-  const ff = await gearFindings(name, server, region, difficulty, className, specName, priority);
+export async function run(log, name, server, region, className, specName, difficulty, priority) {
+  const ff = await gearFindings(name, server, region, className, specName, difficulty, priority);
   if (!ff) throw new Error("No gear found.");
   log("");
   log(`=== Gear audit for ${name} (priority: ${priority}) | vs ${ff.n} top-DPS ${specName}s ===`);

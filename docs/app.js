@@ -491,7 +491,7 @@ const SUPPORTING = [
   ["Rotation: opener & priority", (p, log) => rotation.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Talents vs the field", (p, log) => talents.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Chasing 99: you vs the top parses", (p, log) => topparse.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-  ["Gear audit", (p, log) => gear.run(log, p.name, p.server, p.region, p.difficulty, p.cls, p.spec, p.priority)],
+  ["Gear audit", (p, log) => gear.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty, p.priority)],
 ];
 
 // The supporting cards for this run. Healers get a "Healing efficiency" card

@@ -918,7 +918,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const execd = await soft("execution timeline",
     aggregateExecution(name, server, region, difficulty, className, specName, ranks));
   const gf = await soft("gear audit",
-    gearFindings(name, server, region, difficulty, className, specName, priority));
+    gearFindings(name, server, region, className, specName, difficulty, priority));
   // rot/tp are hoisted so the synthesis below can quote their MEASURED numbers.
   // Each may be unavailable (private logs, no peers) -- treat that as no findings.
   let rot = null, tp = null, tal = null;
