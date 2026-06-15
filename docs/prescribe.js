@@ -341,9 +341,14 @@ const consumableHit = (c, lc, b) => b.pct > c.minPct && c.match(lc);
 // prescribe gathers: cross-boss execution, field consumables/enchants, stat gap.)
 // Each returns Finding[].
 
-// GCD overshoot (ms past the global) this much above peers reads as input latency
-// rather than noise -- below it, it's not worth a callout.
-const LATENCY_MS = 30;
+// GCD overshoot (ms past the global) THIS much above the field reads as a real,
+// coachable input-latency delay rather than reaction-time jitter. Set high on purpose:
+// the only FIXABLE causes are a non-default spell-queue window (SQW defaults to AND
+// caps at 400ms, so you can only raise it TO 400 -- never to "300") and world latency.
+// A few tens of ms over the elite field is normal variance you can't act on, so a 30ms
+// floor flagged near-optimal players (a 94th-pct caster at +76ms) with a 2% "fix" that
+// isn't one. Only call it out when it's materially beyond that.
+const LATENCY_MS = 100;
 
 // Input/queue latency: a high GCD overshoot vs peers means a delay after EVERY
 // global before your next cast fires -- world latency, no spell-queue window, or
@@ -354,8 +359,8 @@ const LATENCY_MS = 30;
 export function latencyLever(execd) {
   if (!execd || !(execd.overshootExcess >= LATENCY_MS)) return [];
   return [finding(DIM.EXECUTION, DPS(1, 3),
-    `INPUT LATENCY: your cast fires ~${f(execd.overshootExcess, 0)}ms later than peers after every GCD -- a small delay on each global that adds up over a fight. ` +
-    `Raise your spell-queue window (Options > Combat, or /console SpellQueueWindow 300-400), cut world latency, and pre-press your next ability so it queues.`)];
+    `INPUT LATENCY: your cast fires ~${f(execd.overshootExcess, 0)}ms later than peers after every GCD -- a delay on each global that compounds over a fight. ` +
+    `Make sure your spell-queue window is at its 400ms max (/console SpellQueueWindow 400 -- that's the default and the cap, so never lower it) and cut world latency (closer realm/region, wired connection); then pre-press your next ability so it queues the instant the GCD ends.`)];
 }
 
 /** @param {any} execd @param {any} rot @param {number|null} [peerGapPct] @param {number|null} [activePct] */

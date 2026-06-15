@@ -253,11 +253,20 @@ test("executionLevers: small gap scales down via the headroom cap", () => {
 });
 
 test("executionLevers: high overshoot flips press-faster off the 'not latency' claim", () => {
-  const execd = { pressExcess: 2.0, rangeExcess: 0, worstRange: [], overshootExcess: 40 };
+  const execd = { pressExcess: 2.0, rangeExcess: 0, worstRange: [], overshootExcess: 120 };
   const rot = { castGap: { you: 16, field: 28, pct: 44 } };
   const out = executionLevers(execd, rot, 60);
   assert.match(out[0].text, /input latency/i);          // press-faster now points at latency
   assert.ok(out.some((r) => /INPUT LATENCY/.test(r.text))); // and the latency lever fires
+});
+
+test("latencyLever: stays silent on near-noise overshoot, only fires when material", () => {
+  // +60ms over the elite field is reaction-time jitter, not a coachable fix (SQW is
+  // already capped at 400) -- don't flag a near-optimal player with a fake 2% lever.
+  assert.equal(latencyLever({ overshootExcess: 60 }).length, 0);
+  assert.equal(latencyLever({ overshootExcess: 100 }).length, 1);
+  // and the advice never tells them to LOWER the spell-queue window below its 400 default
+  assert.doesNotMatch(latencyLever({ overshootExcess: 150 })[0].text, /300-400|SpellQueueWindow 3\d\d\b/);
 });
 
 test("executionLevers: no press-faster when you out-cast the field (idle heuristic is contradicted)", () => {
@@ -299,7 +308,7 @@ test("HEALER: press-faster is suppressed (idle GCDs are correct play), but laten
   // A healer with a real cast deficit AND idle time would get "PRESS FASTER" on a
   // damage run -- but holding a global rather than dumping an overheal is right, so
   // it's suppressed. The movement/uptime + input-latency levers still apply.
-  const execd = { pressExcess: 2.0, rangeExcess: 2.0, worstRange: ["Boss"], overshootExcess: 40 };
+  const execd = { pressExcess: 2.0, rangeExcess: 2.0, worstRange: ["Boss"], overshootExcess: 120 };
   const rot = { castGap: { you: 16, field: 28, pct: 44 } };
   try {
     setRunMetric("hps");
@@ -486,9 +495,9 @@ test("verdictLever: headlines the ACTUAL biggest lever, not a fixed category pre
 });
 
 test("latencyLever: fires only above the threshold, never below", () => {
-  assert.equal(latencyLever({ overshootExcess: 40 }).length, 1);
-  assert.match(latencyLever({ overshootExcess: 40 })[0].text, /SpellQueueWindow/);
-  assert.equal(latencyLever({ overshootExcess: 20 }).length, 0);
+  assert.equal(latencyLever({ overshootExcess: 120 }).length, 1);
+  assert.match(latencyLever({ overshootExcess: 120 })[0].text, /SpellQueueWindow/);
+  assert.equal(latencyLever({ overshootExcess: 40 }).length, 0); // reaction-time jitter, not coachable
   assert.equal(latencyLever(null).length, 0);
 });
 
