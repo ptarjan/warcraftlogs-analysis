@@ -2,7 +2,19 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 installLocalStorage();
-const { talentDiff, buildTalentIndex, talentLabel, looksLikeDpsTalent, heroSwitch, talentDamageShare } = await import("../docs/talents.js");
+const { talentDiff, buildTalentIndex, talentLabel, looksLikeDpsTalent, heroSwitch, talentDamageShare, talentLevers } = await import("../docs/talents.js");
+const { setRunMetric } = await import("../docs/core.js");
+
+test("talentLevers: TALENTS lever uses the run-metric word (healing talent on a healer, not 'damage')", () => {
+  const tf = { boss: "Imperator", hero: null,
+    missing: [{ name: "Empty the Cellar", spellId: 1, dps: true, adopt: 0.9, value: null }] };
+  assert.match(talentLevers(tf)[0].text, /take the damage talent/, "DPS run -> 'damage talent'");
+  try {
+    setRunMetric("hps");
+    assert.match(talentLevers(tf)[0].text, /take the healing talent/, "healer run -> 'healing talent', not 'damage'");
+    assert.doesNotMatch(talentLevers(tf)[0].text, /damage talent/);
+  } finally { setRunMetric("dps"); }
+});
 
 test("talentDamageShare: a damage talent is worth its MEASURED share of the field's damage", () => {
   // Three peers run node 7 ("Empty the Cellar") and it does ~3% of each one's total;

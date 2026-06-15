@@ -10,7 +10,7 @@
 // node `id`, and WCL `id` === Raidbots entry `id`, which carries the real name +
 // spellId. We match the spec by CombatantInfo.specID === Raidbots specId.
 import { spellTooltip } from "./wcl.js";
-import { reportCore, playerMetrics, topField, mapLimit, median, topN, f, bestKill, DPS, finding, DIM, KIND } from "./core.js";
+import { reportCore, playerMetrics, topField, mapLimit, median, topN, f, bestKill, DPS, finding, DIM, KIND, metricUnit, throughputWord } from "./core.js";
 import { wowheadSpell } from "./links.js";
 
 const TALENTS_URL = "https://www.raidbots.com/static/data/live/talents.json";
@@ -328,7 +328,7 @@ export function talentLevers(tf) {
       ? ` (measured: ${top.map((t) => `${t.name} is ${f(t.value, 1)}% of the field's damage`).join(", ")})`
       : "";
     out.push(finding(DIM.ROTATION, DPS(pct),
-      `TALENTS: peers on ${tf.boss} take the damage talent${top.length > 1 ? "s" : ""} ${top.map((t) => `${wowheadSpell(t.spellId, t.name)} (${f(100 * t.adopt, 0)}%)`).join(", ")} ` +
+      `TALENTS: peers on ${tf.boss} take the ${throughputWord()} talent${top.length > 1 ? "s" : ""} ${top.map((t) => `${wowheadSpell(t.spellId, t.name)} (${f(100 * t.adopt, 0)}%)`).join(", ")} ` +
       `that you don't -- swap to the meta build for this content (confirm in a sim/guide).${cite}`,
       allMeasured ? "measured" : "est", KIND.TALENTS));
   }
@@ -354,23 +354,23 @@ export async function run(log, name, server, region, className = "Monk", specNam
   }
   if (dpsMiss.length) {
     log("");
-    log("DAMAGE talents you're MISSING (peers take them here, you don't):");
+    log(`${throughputWord().toUpperCase()} talents you're MISSING (peers take them here, you don't):`);
     for (const t of dpsMiss.slice(0, 8)) log(`  - ${wowheadSpell(t.spellId, t.name)} — ${f(100 * t.adopt, 0)}% of peers`);
   }
   // Utility/defensive talents are listed only as context -- they aren't DPS, so
   // they never become recommendations.
   if (utilMiss.length) {
     log("");
-    log(`Also missing (utility/defensive the field takes here — not DPS): ${utilMiss.slice(0, 6).map((t) => wowheadSpell(t.spellId, t.name)).join(", ")}.`);
+    log(`Also missing (utility/defensive the field takes here — not ${metricUnit()}): ${utilMiss.slice(0, 6).map((t) => wowheadSpell(t.spellId, t.name)).join(", ")}.`);
   }
   const offDps = fnd.offMeta.filter((t) => t.dps);
   if (offDps.length) {
     log("");
-    log("Off-meta DAMAGE picks (few peers run these here — worth re-checking):");
+    log(`Off-meta ${throughputWord().toUpperCase()} picks (few peers run these here — worth re-checking):`);
     for (const t of offDps.slice(0, 6)) log(`  - ${wowheadSpell(t.spellId, t.name)} — only ${f(100 * t.adopt, 0)}% of peers`);
   }
   if (!dpsMiss.length && !offDps.length) {
     log("");
-    log("Your damage talents line up with your peers on this boss — no obvious DPS swaps.");
+    log(`Your ${throughputWord()} talents line up with your peers on this boss — no obvious ${metricUnit()} swaps.`);
   }
 }

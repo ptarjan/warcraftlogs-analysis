@@ -169,7 +169,7 @@ export async function run(log, name, server, region, className, specName, diffic
   log(`=== Chasing 99: you vs the top parses on ${fnd.boss} (your kill: ${f(fnd.yourPct, 0)}%ile) ===`);
   log("");
 
-  log("--- Raid-comp damage amps (you can't press these -- it's who's in the raid) ---");
+  log("--- Raid-comp throughput amps (you can't press these -- it's who's in the raid) ---");
   if (!fnd.bossReadable) log("  (couldn't read the boss's debuffs -- boss-side amps like Chaos Brand omitted)");
   if (fnd.comp.missing.length) {
     for (const e of fnd.comp.missing) {
@@ -183,7 +183,9 @@ export async function run(log, name, server, region, className, specName, diffic
 
   // Only surface routing/potions when there's a GAP to act on. "top 2% you 4%"
   // (you already route more) or "potions: top 0, you 0" are non-actionable noise.
-  if (fnd.routing && fnd.routing.top - fnd.routing.you >= 1 && fnd.routing.addNames.length) {
+  // Suppressed for healers: a healer's DAMAGE routing is meaningless for HPS (the
+  // routing LEVER is suppressed too) -- don't show "you put X% of damage on adds".
+  if (!runIsHealer() && fnd.routing && fnd.routing.top - fnd.routing.you >= 1 && fnd.routing.addNames.length) {
     log("--- Damage routing ---");
     log(`  top parses put ${f(fnd.routing.top, 0)}% of damage on non-boss targets; you ${f(fnd.routing.you, 0)}%.`);
     log(`  they cleave/funnel that you don't: ${fnd.routing.addNames.join(", ")}`);
