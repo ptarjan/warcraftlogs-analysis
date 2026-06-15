@@ -520,6 +520,61 @@ export async function acquireFetchGate({ reserve = 400 } = {}) {
 // poll uses it; per-pull TABLES (an ended pull) stay permanently cached as before.
 // We still update _gqlCache with the latest result so same-tick non-fresh readers
 // downstream see the new fight list rather than a stale one.
+// --- automatic request batching (DataLoader-style) ---------------------------
+// WCL bills ~flat PER REQUEST, so the lever is fewer requests. Instead of each call
+// site hand-bundling, the FETCH LAYER does it: concurrent cache-misses landing in the
+// same microtask are combined into ONE GraphQL request via top-level aliasing, then
+// the response is split back to each caller and cached under its OWN key. The peer
+// mapLimit loops are already concurrent, so they batch with zero call-site wiring.
+// Fail-soft + never wrong: if the combined request errors (a private report, a
+// complexity cap, partial errors), the chunk re-runs as individual requests so each
+// caller still gets its own result or error. GraphQL aliasing of multiple top-level
+// fields is standard; our queries are all single-operation `query { <field> { … } }`.
+const _BATCH_MAX = 6;            // reports per combined request (stay well under WCL's complexity cap)
+const _noBatch = () => typeof process !== "undefined" && process.env && process.env.WCL_NO_BATCH === "1";
+let _batchQueue = [];
+let _batchScheduled = false;
+
+// Split `query { <field> { … } }` into { field, inner } where inner is the aliasable
+// selection (`<field> { … }`). null if it isn't the single-operation shape we combine.
+function _splitQuery(query) {
+  const open = query.indexOf("{"), close = query.lastIndexOf("}");
+  if (open < 0 || close <= open) return null;
+  const inner = query.slice(open + 1, close).trim();
+  const m = inner.match(/^([A-Za-z_]\w*)/);
+  return m ? { field: m[1], inner } : null;
+}
+
+function _enqueueBatched(query, retries) {
+  return new Promise((resolve, reject) => {
+    _batchQueue.push({ query, retries, resolve, reject });
+    if (!_batchScheduled) { _batchScheduled = true; queueMicrotask(_flushBatch); }
+  });
+}
+
+function _flushBatch() {
+  _batchScheduled = false;
+  const queue = _batchQueue; _batchQueue = [];
+  for (let i = 0; i < queue.length; i += _BATCH_MAX) _runBatchChunk(queue.slice(i, i + _BATCH_MAX));
+}
+
+async function _runBatchChunk(chunk) {
+  const parts = chunk.map((it) => ({ it, p: _splitQuery(it.query) }));
+  const solo = parts.filter((x) => !x.p), combinable = parts.filter((x) => x.p);
+  for (const { it } of solo) _gqlRun(it.query, it.retries).then(it.resolve, it.reject);  // unparseable -> individual
+  if (combinable.length <= 1) { for (const { it } of combinable) _gqlRun(it.query, it.retries).then(it.resolve, it.reject); return; }
+  const combined = `query { ${combinable.map((x, j) => `_${j}: ${x.p.inner}`).join(" ")} }`;
+  const retries = Math.max(...combinable.map((x) => x.it.retries));
+  try {
+    const data = await _gqlRun(combined, retries);
+    combinable.forEach((x, j) => x.it.resolve({ [x.p.field]: data[`_${j}`] }));
+  } catch (e) {
+    // Combined failed (a private report, complexity cap, or partial errors _gqlRun
+    // throws on) -> re-run each individually so each gets its own result/error.
+    for (const { it } of combinable) _gqlRun(it.query, it.retries).then(it.resolve, it.reject);
+  }
+}
+
 export async function gql(query, retries = 6, { fresh = false } = {}) {
   await initDisk();                 // seeds _gqlCache from disk on first call (Node)
   if (!fresh) {
@@ -537,7 +592,11 @@ export async function gql(query, retries = 6, { fresh = false } = {}) {
     // Cache-only: every cache read above missed, so a fetch here would spend points.
     // Refuse instead -- the caller wanted a guaranteed-free, cached-only run.
     if (cacheOnly()) throw new CacheMiss(query);
-    const data = await _gqlRun(query, retries);
+    // Auto-batch concurrent misses into one request (see _enqueueBatched). `fresh`
+    // (the live-poll) wants its own immediate fetch; WCL_NO_BATCH lets the logic tests
+    // (whose fixed mocks can't model a combined query) see individual requests. Both
+    // bypass batching.
+    const data = (fresh || _noBatch()) ? await _gqlRun(query, retries) : await _enqueueBatched(query, retries);
     if (!fresh) {
       diskPut(query, data);              // Node CLI disk cache (no-op in the browser)
       if (PERSIST) _cacheWrite(query, data); // browser IndexedDB cache (1h TTL), fire-and-forget

@@ -11,6 +11,11 @@
 // blocks any UNmocked network call. (The cache-only test sets WCL_CACHE_ONLY=1 to
 // force read-only and override this.)
 process.env.WCL_ALLOW_FETCH = "1";
+// gql() auto-batches concurrent requests into one combined GraphQL query in prod.
+// Most tests use FIXED mock responses that can't model a combined (aliased) query, so
+// disable batching by default -- they see individual requests. The loader test (which
+// has an alias-aware mock) and the dedicated batcher test opt back IN to verify it.
+process.env.WCL_NO_BATCH = "1";
 
 globalThis.fetch = async (url) => {
   throw new Error(

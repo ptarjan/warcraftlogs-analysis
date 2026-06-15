@@ -28,6 +28,38 @@ test("permission errors raise PrivateReport (so callers can skip)", async () => 
   await assert.rejects(() => gql("query{ b }"), (e) => e instanceof PrivateReport);
 });
 
+test("gql auto-batches concurrent cache-misses into ONE combined request, split back per caller", async () => {
+  const { gql, clearGqlCache } = await import("../docs/wcl.js");
+  const saved = process.env.WCL_NO_BATCH;
+  const r = (o) => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => o, text: async () => JSON.stringify(o) });
+  try {
+    delete process.env.WCL_NO_BATCH;   // enable batching for this test
+    clearGqlCache();
+    const apiBodies = [];
+    globalThis.fetch = async (url, opts) => {
+      if (String(url).includes("oauth/token")) return r({ access_token: "t", expires_in: 3600 });
+      const q = JSON.parse(opts.body).query; apiBodies.push(q);
+      // Respond to a combined query by shaping each _N alias from its report code.
+      const aliases = [...q.matchAll(/_(\d+):\s*reportData\s*\{\s*report\(code:"([^"]+)"/g)];
+      if (aliases.length) { const data = {}; for (const [, n, code] of aliases) data[`_${n}`] = { report: { code } }; return r({ data }); }
+      const code = (q.match(/report\(code:"([^"]+)"/) || [])[1];
+      return r({ data: { reportData: { report: { code } } } });
+    };
+    const [a, b, c] = await Promise.all([
+      gql('query { reportData { report(code:"A") { x } } }'),
+      gql('query { reportData { report(code:"B") { x } } }'),
+      gql('query { reportData { report(code:"C") { x } } }'),
+    ]);
+    assert.equal(apiBodies.filter((q) => /reportData/.test(q)).length, 1, "3 concurrent misses -> 1 combined request");
+    assert.deepEqual(a, { reportData: { report: { code: "A" } } }, "caller A gets ITS report");
+    assert.deepEqual(b, { reportData: { report: { code: "B" } } });
+    assert.deepEqual(c, { reportData: { report: { code: "C" } } });
+  } finally {
+    if (saved === undefined) delete process.env.WCL_NO_BATCH; else process.env.WCL_NO_BATCH = saved;
+    clearGqlCache();
+  }
+});
+
 test("rateLimit surfaces the EXACT reset on a 429 (not bare null), so callers wait precisely", async () => {
   const { rateLimit, clearGqlCache } = await import("../docs/wcl.js");
   clearGqlCache();
