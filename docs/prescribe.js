@@ -648,7 +648,11 @@ export function strengths(d) {
   // than the field (the per-cast lever stays silent because of this -- name the win).
   const pr = rot && rot.proc;
   if (!heal && pr && pr.name && pr.youEmp != null && pr.fieldEmp != null && pr.fieldEmp >= 0.05 && pr.youEmp >= pr.fieldEmp) {
-    out.push(`EMPOWERMENT: you land ${pr.name} in its high-damage window ${F(pr.youEmp)} of the time vs the field's ${F(pr.fieldEmp)} -- at or above the field. Keep timing it.`);
+    // Credit it honestly: clearly ahead (5pp+) is "above the field", a tight lead is
+    // "in line with" -- don't flatten a player at DOUBLE the field's rate to "at or above"
+    // (same call as the remainder line + the EFFICIENCY strength).
+    const cmp = pr.youEmp - pr.fieldEmp >= 0.05 ? "above the field" : "in line with the field";
+    out.push(`EMPOWERMENT: you land ${pr.name} in its high-damage window ${F(pr.youEmp)} of the time vs the field's ${F(pr.fieldEmp)} -- ${cmp}. Keep timing it.`);
   }
   // Uptime: near-perfect active time (this is why press-faster stayed silent).
   if (execd && execd.activePct != null && execd.activePct >= 98) {

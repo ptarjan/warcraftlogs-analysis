@@ -87,6 +87,10 @@ test("strengths: surfaces the checks you PASSED (silent levers), gated + metric-
   };
   const w = strengths(good).join(" | ");
   assert.match(w, /EMPOWERMENT/); assert.match(w, /UPTIME/); assert.match(w, /PRIORITY/);
+  assert.match(w, /EMPOWERMENT:.*-- above the field/);   // 40% vs 20% is clearly ahead, not just "at or above"
+  // a TIGHT lead (within 5pp) reads "in line with", not "above"
+  const tight = strengths({ ...good, rot: { ...good.rot, proc: { name: "Tiger Palm", youEmp: 0.22, fieldEmp: 0.20 } } }).join(" | ");
+  assert.match(tight, /EMPOWERMENT:.*in line with the field/);
   assert.match(w, /COOLDOWNS/); assert.match(w, /DOTS/); assert.match(w, /TARGETING/); assert.match(w, /GEAR/);
   // Gates: an under-used ability, a CD gap, a routing gap, and a stat deficit each
   // remove their positive (you can't be "doing well" at a thing you have a lever for).
