@@ -715,6 +715,17 @@ export function verdictLever(yours) {
 // specific claim, so it's excluded.) Returns the offending skip labels. Pure -> testable.
 export const verdictBlindSpots = (skipped) => (skipped || []).filter((s) => /rotation|talents|gear/.test(s));
 
+// The verdict's "not a <domain> overhaul" reassurance (e.g. a rotation verdict adding
+// "not a setup overhaul", or a setup verdict adding "not a rotation overhaul") is only
+// honest if we actually LOADED that domain. Under a partial run that skipped it, DROP the
+// clause rather than assert a domain we never checked -- the NOTE above already says what's
+// missing. domain "setup" maps to the gear/consumables skip; "rotation" to the rotation
+// skip. Returns "" (omit) or the disclaimer clause. Pure -> testable.
+export const overhaulDisclaimer = (domain, skipped) => {
+  const skipPat = domain === "rotation" ? "rotation" : "gear";
+  return (skipped || []).some((s) => s.includes(skipPat)) ? "" : `, not a ${domain} overhaul`;
+};
+
 // The prose for the unexplained REMAINDER, by remainderKind (see that fn for why each
 // kind exists). The big one is NOT "press faster" -- a big remainder is the analysis
 // admitting it can't fully explain the gap, so it's framed by kind, never relabeled as a
@@ -873,7 +884,7 @@ function renderPrescription(log, d) {
     const tail = setupFixes.length ? ", then do the free enchant/gear fixes below" : "";
     log(`VERDICT: your biggest character lever is a TALENT/BUILD change -- the field runs a build/talent you don't (see the TALENTS item). Sort that first${tail}.`);
   } else if (lever === "rotation") {
-    log(`VERDICT: your biggest character lever is ${rotKindOf(yours[0])}${thenExtra}. The gap is mostly HOW you play the same gear, not a setup overhaul${compList0.length ? " (comp aside)" : ""}.`);
+    log(`VERDICT: your biggest character lever is ${rotKindOf(yours[0])}${thenExtra}. The gap is mostly HOW you play the same gear${overhaulDisclaimer("setup", d.skipped)}${compList0.length ? " (comp aside)" : ""}.`);
   } else if (lever === "execution") {
     // Name the SPECIFIC execution issue: a movement/range lever is NOT "uptime / pressing
     // on time" -- saying that contradicts the "~100% active, barely idling" strength a
@@ -881,7 +892,7 @@ function renderPrescription(log, d) {
     const execWhat = yours[0] && yours[0].kind === KIND.MOVEMENT
       ? "EXECUTION (cutting avoidable movement -- staying in range to cast)"
       : "EXECUTION (uptime / pressing on time)";
-    log(`VERDICT: your biggest character lever is ${execWhat}${thenExtra}. The gap is HOW you play, not a setup overhaul${compList0.length ? " (comp aside)" : ""}.`);
+    log(`VERDICT: your biggest character lever is ${execWhat}${thenExtra}. The gap is HOW you play${overhaulDisclaimer("setup", d.skipped)}${compList0.length ? " (comp aside)" : ""}.`);
   } else if (lever === "setup") {
     // Only credit "pressing faster" when a press-faster lever survived -- for a
     // player who already out-casts the field it's suppressed, and the gap is
@@ -894,7 +905,7 @@ function renderPrescription(log, d) {
     const residualWord = hasPress ? "reps" : runIsHealer()
       ? "healing efficiency + throughput (stats/gear/comp), not activity"
       : "damage-per-cast (stats/gear), not activity";
-    log(`VERDICT: your biggest character levers are the ${setupFixes.length} gear/setup fix${setupFixes.length > 1 ? "es" : ""} below${buildNote}${hasPress ? " + pressing faster" : ""}. The big gap is ${compList0.length ? "comp + " : ""}${residualWord}, not a rotation overhaul.`);
+    log(`VERDICT: your biggest character levers are the ${setupFixes.length} gear/setup fix${setupFixes.length > 1 ? "es" : ""} below${buildNote}${hasPress ? " + pressing faster" : ""}. The big gap is ${compList0.length ? "comp + " : ""}${residualWord}${overhaulDisclaimer("rotation", d.skipped)}.`);
   } else {
     // "Nothing to fix" must NOT be claimed over sections we never loaded. An empty
     // actionable list is MORE likely under a partial run (a skipped rotation/talents/gear

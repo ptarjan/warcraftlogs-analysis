@@ -53,7 +53,7 @@ test("fieldDelta measures an attribute's value from the field (have vs not)", ()
   // Too few on one side -> null.
   assert.equal(fieldDelta([110, 100, 100, 100, 100], [true, false, false, false, false]), null);
 });
-const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, verdictBlindSpots, strengths, killHistory, consumableLevers, residualText } = await import("../docs/prescribe.js");
+const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, verdictBlindSpots, overhaulDisclaimer, strengths, killHistory, consumableLevers, residualText } = await import("../docs/prescribe.js");
 
 test("killHistory: parse spread (consistency) + recent-vs-old trend (improvement), time-ordered", () => {
   const k = (p, t) => ({ rankPercent: p, startTime: t });
@@ -533,6 +533,23 @@ test("verdictBlindSpots: a 'nothing to fix' verdict can't claim sections it neve
   // A full run skips nothing -> the confident all-clear is allowed to stand.
   assert.deepEqual(verdictBlindSpots([]), []);
   assert.deepEqual(verdictBlindSpots(null), []);
+});
+
+test("overhaulDisclaimer: the verdict can't disclaim a domain (setup/rotation) it never loaded", () => {
+  // The bug this guards: a rotation/execution verdict says "not a setup overhaul" even when
+  // the independent gear fetch was SKIPPED, and a setup verdict says "not a rotation overhaul"
+  // even when rotation was skipped -- asserting a domain we never checked is clean.
+  // Full run: the reassurance stands.
+  assert.equal(overhaulDisclaimer("setup", []), ", not a setup overhaul");
+  assert.equal(overhaulDisclaimer("rotation", []), ", not a rotation overhaul");
+  assert.equal(overhaulDisclaimer("setup", null), ", not a setup overhaul");
+  // Disclaimed domain was skipped -> drop the clause (don't claim it's not that).
+  assert.equal(overhaulDisclaimer("setup", ["your gear/consumables"]), "");
+  assert.equal(overhaulDisclaimer("rotation", ["rotation"]), "");
+  // A skip in a DIFFERENT domain doesn't silence the reassurance.
+  assert.equal(overhaulDisclaimer("setup", ["rotation"]), ", not a setup overhaul");
+  assert.equal(overhaulDisclaimer("rotation", ["your gear/consumables"]), ", not a rotation overhaul");
+  assert.equal(overhaulDisclaimer("rotation", ["top-parse comparison"]), ", not a rotation overhaul");
 });
 
 test("latencyLever: fires only above the threshold, never below", () => {
