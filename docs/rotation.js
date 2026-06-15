@@ -9,7 +9,7 @@
 //   - your opener sequence vs the field's
 import {
   playerMetrics, ilvlPeers, mapLimit, median, bestKill,
-  reportCore, playerAbilities, dotUptimes, petDamage, fightWindow, fightEvents, paginateEvents, buffUptimes, f, DPS, finding, eventTable, runIsHealer, throughputWord,
+  reportCore, playerAbilities, dotUptimes, petDamage, fightWindow, fightEvents, paginateEvents, buffUptimes, f, DPS, finding, KIND, DIM, eventTable, runIsHealer, throughputWord,
 } from "./core.js";
 import { talentedAbilities, heroTreeOf } from "./talents.js";
 import { wowheadSpell } from "./links.js";
@@ -840,16 +840,16 @@ export function rotationLevers(rot) {
     let consumed = null;
     if (cls === "missing-talent") {
       consumed = top.name;
-      out.push(finding("Rotation", DPS(5, 10),
+      out.push(finding(DIM.ROTATION, DPS(5, 10),
         `TALENTS/BUILD: you never press ${link(top.name)}, and you haven't talented it while the field casts it ` +
         `${f(top.field, 1)}/min -- respec to the field's build (the one with ${link(top.name)}); your rotation ` +
-        `can't include it until you do.${onGlobals}`));
+        `can't include it until you do.${onGlobals}`, "est", KIND.TALENTS));
     } else if (cls === "talented-unused") {
       consumed = top.name;
-      out.push(finding("Rotation", DPS(5, 10),
+      out.push(finding(DIM.ROTATION, DPS(5, 10),
         `TALENTS/BUILD: you've talented ${link(top.name)} but never press it, while the field casts it ` +
         `${f(top.field, 1)}/min -- a wasted talent. Work it into your rotation, or respec the point into ` +
-        `something you'll actually use.${onGlobals}`));
+        `something you'll actually use.${onGlobals}`, "est", KIND.TALENTS));
     }
     // Measured PRESS-MORE levers: one TARGETED finding per under-pressed damage ability,
     // each sized from real damage (usageDamageGaps -> a.dmgPct). This is the chunk that
@@ -867,7 +867,7 @@ export function rotationLevers(rot) {
       const over = (i === 0 && realOver.length)
         ? ` You're spending those globals on ${link(realOver[0].name)} (your ${f(realOver[0].you, 1)}/min vs peers ${f(realOver[0].field, 1)}) -- swap them.`
         : "";
-      out.push(finding("Rotation", DPS(a.dmgPct),
+      out.push(finding(DIM.ROTATION, DPS(a.dmgPct),
         `ROTATION: press ${link(a.name)} more -- peers cast it ${f(a.field, 1)}/min vs your ${f(a.you, 1)}; ` +
         `the casts you're missing are ~${a.dmgPct}% of your ${throughputWord()}.${over}`, "measured"));
     });
@@ -880,7 +880,7 @@ export function rotationLevers(rot) {
       const over = wrongButton
         ? `; you over-press ${realOver.slice(0, 1).map((a) => `${link(a.name)} (your ${f(a.you, 1)}/min vs peers ${f(a.field, 1)})`).join("")}`
         : "";
-      out.push(finding("Rotation", wrongButton ? DPS(5, 10) : DPS(3, 6),
+      out.push(finding(DIM.ROTATION, wrongButton ? DPS(5, 10) : DPS(3, 6),
         `ROTATION: press ${under.join(" and ")} more${over} -- match your peers' ability priority ` +
         `(verify in a log/sim).`));
     }
@@ -893,19 +893,19 @@ export function rotationLevers(rot) {
   for (const cd of ((rot && rot.cooldowns) || []).slice(0, 2)) {
     if (cd.pct && cd.pct >= 1) {
       seenCd.add(cd.name);
-      out.push(finding("Rotation", DPS(cd.pct),
+      out.push(finding(DIM.ROTATION, DPS(cd.pct),
         `COOLDOWN: you cast ${link(cd.name)} ${cd.youCasts.toFixed(1)}x this fight (${f(cd.you, 1)}/min) vs the field's ` +
         `${cd.fieldCasts.toFixed(1)}x (${f(cd.field, 1)}/min) -- ~${cd.pct}% of your ${throughputWord()}. Use it on cooldown ` +
-        `(or line it up with your burst); it's a button you're skipping, not gear.`));
+        `(or line it up with your burst); it's a button you're skipping, not gear.`, "est", KIND.COOLDOWN));
     }
   }
   for (const cd of ((rot && rot.cdUsage) || [])) {
     if (cd.pct && cd.pct >= 1 && !seenCd.has(cd.name)) {
       seenCd.add(cd.name);
-      out.push(finding("Rotation", DPS(cd.pct),
+      out.push(finding(DIM.ROTATION, DPS(cd.pct),
         `COOLDOWN: you cast ${wowheadSpell(cd.id, cd.name)} ${cd.youPerFight.toFixed(0)}x/kill vs the field's ` +
         `${cd.fieldPerFight.toFixed(0)}x -- ~${cd.pct}% of your ${throughputWord()}. Use it on cooldown; it's a button you're ` +
-        `skipping, not gear.`));
+        `skipping, not gear.`, "est", KIND.COOLDOWN));
     }
   }
   // BUFF COOLDOWN: a damage-buff cooldown (Weapons of Order, Recklessness, Avatar)
@@ -917,7 +917,7 @@ export function rotationLevers(rot) {
   // aura check, not a correlation that pull/burst timing could fake. Measured.
   for (const b of ((rot && rot.buffCds) || [])) {
     if (b.pct && b.pct >= 1) {
-      out.push(finding("Rotation", DPS(b.pct),
+      out.push(finding(DIM.ROTATION, DPS(b.pct),
         `BUFF COOLDOWN: you cast ${wowheadSpell(b.id, b.name)} ${b.youPerFight.toFixed(0)}x/kill vs the field's ` +
         `${b.fieldPerFight.toFixed(0)}x -- it buffs you, and your ${throughputWord()} rises ~${Math.round(b.uplift * 100)}% in the window after each cast, ` +
         `so missing it costs ~${b.pct}% of your ${throughputWord()}. Use it on cooldown (line it up with your burst); ` +
@@ -928,7 +928,7 @@ export function rotationLevers(rot) {
   // is under-using its biggest hidden lever (summon/transform/Army timing). Measured.
   if (rot && rot.petGap) {
     const g = rot.petGap;
-    out.push(finding("Rotation", DPS(g.pct),
+    out.push(finding(DIM.ROTATION, DPS(g.pct),
       `PET ${throughputWord().toUpperCase()}: your pets do ${g.you}% of your ${throughputWord()} vs the field's ${g.field}% -- ~${g.pct}% behind. ` +
       `Use your pet cooldowns more: summon on cooldown, keep the pet active/transformed, and line up your ` +
       `big pet windows (Army/Gargoyle/burst). It's a major damage source you're under-using, not gear.`, "measured"));
@@ -942,7 +942,7 @@ export function rotationLevers(rot) {
     // than hardcast (Rip, Moonfire), so "refresh it / you have the buttons" is wrong for
     // those. Phrase the FIX to fit both -- keep its uptime up; it drops when you clip it,
     // let it lapse in movement, or slow the casts that apply it -- the gain is the same.
-    out.push(finding("Rotation", DPS(d.pct),
+    out.push(finding(DIM.ROTATION, DPS(d.pct),
       `DOT UPTIME: your ${wowheadSpell(d.guid, d.name)} is up ${d.you}% on the boss vs the field's ${d.field}% ` +
       `-- ~${d.pct}% of your ${throughputWord()}. Keep its uptime up: refresh it before it falls off (or, if it's ` +
       `auto-applied by your other casts/crits, keep those flowing), and don't let it lapse in movement -- that uptime is ~free ${throughputWord()}.`, "measured"));
@@ -964,11 +964,11 @@ export function rotationLevers(rot) {
     (pc) => pc.youEmp != null && pc.fieldEmp != null && pc.pct >= 1 &&
             pc.fieldEmp >= 0.2 && pc.fieldEmp - pc.youEmp >= 0.12);
   if (emp) {
-    out.push(finding("Rotation", DPS(emp.pct),
+    out.push(finding(DIM.ROTATION, DPS(emp.pct),
       `EMPOWERMENT: ${Math.round(emp.youEmp * 100)}% of your ${link(emp.name)} casts land in its high-damage window ` +
       `vs the field's ${Math.round(emp.fieldEmp * 100)}% -- your weak casts hit for roughly half. ` +
       `Line your hardest hit up with its empower window (its combo/buff/proc, or the boss's damage-taken window) every time.`,
-      "measured"));
+      "measured", KIND.EMPOWERMENT));
   }
   return out;
 }

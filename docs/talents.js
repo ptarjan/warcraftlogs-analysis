@@ -10,7 +10,7 @@
 // node `id`, and WCL `id` === Raidbots entry `id`, which carries the real name +
 // spellId. We match the spec by CombatantInfo.specID === Raidbots specId.
 import { spellTooltip } from "./wcl.js";
-import { reportCore, playerMetrics, topField, mapLimit, median, topN, f, bestKill, DPS, finding } from "./core.js";
+import { reportCore, playerMetrics, topField, mapLimit, median, topN, f, bestKill, DPS, finding, KIND } from "./core.js";
 import { wowheadSpell } from "./links.js";
 
 const TALENTS_URL = "https://www.raidbots.com/static/data/live/talents.json";
@@ -311,8 +311,9 @@ export function talentLevers(tf) {
   const out = [];
   const sw = tf && heroSwitch(tf.hero);
   if (sw) {
-    out.push(finding("Rotation", DPS(4),
-      `HERO TREE: ${f(sw.pct, 0)}% of the field runs ${sw.name} -- you run ${tf.hero.yours}. That's one big either/or build choice; confirm it's the meta for your spec (sim/guide) before switching.`));
+    out.push(finding(DIM.ROTATION, DPS(4),
+      `HERO TREE: ${f(sw.pct, 0)}% of the field runs ${sw.name} -- you run ${tf.hero.yours}. That's one big either/or build choice; confirm it's the meta for your spec (sim/guide) before switching.`,
+      "est", KIND.HERO_TREE));
   }
   // DPS talents only -- never recommend respeccing for a dispel/knockback the
   // field happens to take unanimously.
@@ -326,10 +327,10 @@ export function talentLevers(tf) {
     const cite = allMeasured
       ? ` (measured: ${top.map((t) => `${t.name} is ${f(t.value, 1)}% of the field's damage`).join(", ")})`
       : "";
-    out.push(finding("Rotation", DPS(pct),
+    out.push(finding(DIM.ROTATION, DPS(pct),
       `TALENTS: peers on ${tf.boss} take the damage talent${top.length > 1 ? "s" : ""} ${top.map((t) => `${wowheadSpell(t.spellId, t.name)} (${f(100 * t.adopt, 0)}%)`).join(", ")} ` +
       `that you don't -- swap to the meta build for this content (confirm in a sim/guide).${cite}`,
-      allMeasured ? "measured" : "est"));
+      allMeasured ? "measured" : "est", KIND.TALENTS));
   }
   return out;
 }

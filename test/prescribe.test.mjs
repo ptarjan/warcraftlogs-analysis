@@ -49,8 +49,8 @@ const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpac
 test("isOffMetaBuild: true only when a HERO TREE mismatch lever is present", () => {
   // The field runs a hero tree you don't -> the rotation can't be compared, so the
   // playstyle remainder must own up to the off-meta build (Rezaa: Colossus vs Slayer).
-  assert.equal(isOffMetaBuild([{ text: "HERO TREE: 100% of the field runs Slayer -- you run Colossus." }]), true);
-  assert.equal(isOffMetaBuild([{ text: "ROTATION: press Mortal Strike more" }, { text: "TALENTS: ..." }]), false);
+  assert.equal(isOffMetaBuild([{ kind: "HERO_TREE", text: "HERO TREE: 100% of the field runs Slayer -- you run Colossus." }]), true);
+  assert.equal(isOffMetaBuild([{ kind: "ROTATION", text: "ROTATION: press Mortal Strike more" }, { kind: "TALENTS", text: "TALENTS: ..." }]), false);
   assert.equal(isOffMetaBuild([]), false);
   assert.equal(isOffMetaBuild(null), false);
 });
@@ -406,7 +406,7 @@ test("verdictLever: headlines the ACTUAL biggest lever, not a fixed category pre
   // (3%) was told "your biggest lever is a TALENT/BUILD change -- sort that first",
   // contradicting the biggest-first list. The verdict must key off yours[0].
   const rot = { dim: "Rotation", impact: 8, text: "ROTATION: press X more" };
-  const talent = { dim: "Rotation", impact: 3, text: "TALENTS: take Y" };
+  const talent = { dim: "Rotation", kind: "TALENTS", impact: 3, text: "TALENTS: take Y" };
   const gear = { dim: "Gear", impact: 2, text: "GEMS: consolidate" };
   const uptime = { dim: "Execution", impact: 7, text: "UPTIME: stay in melee" };
   // Sorted biggest-first (as renderPrescription receives it).

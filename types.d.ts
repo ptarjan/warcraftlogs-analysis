@@ -24,6 +24,9 @@ interface Finding extends Score {
   text: string;
   /** How impact was derived: "measured" (from the log) vs "est" (a sim would price it). */
   basis?: "measured" | "est";
+  /** Stable machine tag (KIND.*) for kinds prescribe special-cases, so it keys off this
+   *  instead of regex-matching `text`. Absent for ordinary levers. */
+  kind?: string;
 }
 
 /** Parsed Wowhead item data (gear.js itemStats): secondary stats + where it's from. */

@@ -9,7 +9,7 @@
 // names come from YOUR own healing breakdown (the Healing table), never hard-coded.
 import {
   ilvlPeers, playerMetrics, bestKill, mapLimit, median, healingBreakdown, manaStats,
-  f, DPS, INFO, finding, runIsHealer,
+  f, DPS, INFO, finding, DIM, runIsHealer,
 } from "./core.js";
 
 // Overheal % above the field by this many points reads as real spill worth a
@@ -52,7 +52,7 @@ export function overhealLever(you, field) {
   const pct = Math.min(Math.max(1, Math.round(recoverFrac * 100 * 0.5)), 10);
   const worst = worstSpill(you);
   const where = worst.length ? ` Your biggest spill: ${worst.join(", ")}.` : "";
-  return [finding("Setup", DPS(pct),
+  return [finding(DIM.SETUP, DPS(pct),
     `OVERHEALING: ${f(yourPct, 0)}% of your healing is overheal vs the ilvl field's ${f(fieldPct, 0)}% -- ` +
     `that's output landing on already-full targets.${where} Hold big/slow heals for real damage, snipe with cheaper ` +
     `spells, and don't pre-cast into full health bars; the recovered efficiency is mana and effective throughput when it counts.`,
@@ -76,7 +76,7 @@ export function manaLever(you, overhealFlagged = false) {
   // Ran genuinely DRY: hit ~empty AND finished low (a momentary dip that recovers
   // isn't a problem). The back half then heals on regen alone.
   if (m.oom != null && m.endPct <= 20) {
-    return [finding("Setup", INFO,
+    return [finding(DIM.SETUP, INFO,
       `MANA: you ran your mana to empty ~${f(m.oom / 1000, 0)}s in and finished at ${f(m.endPct, 0)}% -- the rest is healed on regen alone. ` +
       `Smooth your spend (cheaper fillers between damage events, fewer overheals) so you aren't dry when a spike or your cooldowns land.`,
       "measured")];
@@ -86,20 +86,20 @@ export function manaLever(you, overhealFlagged = false) {
     const oh = you.overhealPct || 0;
     // (1) The OVERHEALING lever FIRED -> "heal more" would just overheal; point at it.
     if (overhealFlagged) {
-      return [finding("Setup", INFO,
+      return [finding(DIM.SETUP, INFO,
         `MANA: you finished with ~${f(m.endPct, 0)}% mana unspent -- mana wasn't your limiter (your HPS is bounded by the damage taken + overhealing, not mana). The lever isn't "cast more" (you already overheal ${f(oh, 0)}%); it's healing SMARTER -- spend that spare mana on heals that LAND (see OVERHEALING), not more casts into full bars.`,
         "measured")];
     }
     // (2) Genuinely EFFICIENT (low overheal) -> you had headroom to be more aggressive.
     if (oh < 20) {
-      return [finding("Setup", INFO,
+      return [finding(DIM.SETUP, INFO,
         `MANA: you finished with ~${f(m.endPct, 0)}% mana unspent (low-water ${f(m.minPct, 0)}%) and you're efficient (only ${f(oh, 0)}% overheal) -- you had headroom to be more aggressive (bigger/earlier casts, cover more of the damage) rather than bank mana. That spare mana is effective healing left on the table.`,
         "measured")];
     }
     // (3) Overheal high in ABSOLUTE terms but NOT flagged above the field (or no field) --
     // mana isn't the limiter AND your efficiency isn't an outlier, so neither is a lever;
     // the rest is damage-bound. Don't dangle a "(see OVERHEALING)" that isn't in the list.
-    return [finding("Setup", INFO,
+    return [finding(DIM.SETUP, INFO,
       `MANA: you finished with ~${f(m.endPct, 0)}% mana unspent -- mana wasn't your limiter (your HPS is bounded by the damage taken, not mana). Your ${f(oh, 0)}% overheal isn't flagged above the field, so cutting it isn't a separate lever here; the rest of the gap is damage-bound (encounter + comp + assignment). Spend mana when there's real damage to catch, not into full bars.`,
       "measured")];
   }

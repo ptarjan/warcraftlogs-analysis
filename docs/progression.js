@@ -15,7 +15,7 @@
 import { spellTooltip } from "./wcl.js";
 import {
   reportFights, reportDeaths, reportRoster, reportCore, encounterKillTimes,
-  median, f, finding, mapLimit, DIFFICULTY,
+  median, f, finding, DIM, mapLimit, DIFFICULTY,
 } from "./core.js";
 import { wowheadSpell, wclReport } from "./links.js";
 
@@ -143,7 +143,7 @@ export async function progressionFindings(code, { encounterId = null, fresh = fa
     const lastKillT = kills[kills.length - 1].startTime || 0;
     const wipedAfterKill = wipes.some((w) => (w.startTime || 0) > lastKillT);
     if (!wipedAfterKill) {
-      result.findings.push(finding("Info", NOTE,
+      result.findings.push(finding(DIM.INFO, NOTE,
         `${result.boss} is **down** — killed after ${pulls.length} pulls. On farm now; switch to the per-character DPS analysis to push parses.`));
       return result;
     }
@@ -198,14 +198,14 @@ export async function progressionFindings(code, { encounterId = null, fresh = fa
   for (const [aid, a] of topAbilities) {
     const victims = [...a.victims.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([n]) => n);
     const link = wowheadSpell(aid, spellNames[aid] || `spell ${aid}`);
-    result.findings.push(finding("Mechanic", BLOCK(pct(a.pulls.size, nA)),
+    result.findings.push(finding(DIM.MECHANIC, BLOCK(pct(a.pulls.size, nA)),
       `**Avoid ${link}** — it kills someone EARLY (before the wipe) in ${a.pulls.size} of the last ${nA} pulls` +
       (victims.length ? ` (most-hit: ${victims.join(", ")})` : "") +
       `. An early death here is what tips the pull — assign or handle this mechanic.`));
   }
   if (repeatPlayers.length) {
     const who = repeatPlayers.map(([n, p]) => `${n}${p.cls ? ` (${p.cls})` : ""} ${p.pulls.size}/${nA}`).join(", ");
-    result.findings.push(finding("Survival", BLOCK(pct(repeatPlayers[0][1].pulls.size, nA)),
+    result.findings.push(finding(DIM.SURVIVAL, BLOCK(pct(repeatPlayers[0][1].pulls.size, nA)),
       `**Early deaths** are tipping pulls: ${who} die well before the wipe (not in the final cascade). ` +
       `Losing a player early snowballs the pull — a survival/positioning fix or assignment swap here beats any DPS gain.`));
   }
@@ -224,7 +224,7 @@ export async function progressionFindings(code, { encounterId = null, fresh = fa
     // going down TOGETHER at the wall, not individual mistakes. Say that plainly
     // instead of inventing per-player blame.
     const wallTxt = result.wall ? ` at ~${result.wall.rem}% boss health${result.multiPhase ? ` (phase ${result.wall.phase})` : ""}` : "";
-    result.findings.push(finding("Info", NOTE,
+    result.findings.push(finding(DIM.INFO, NOTE,
       `No one keeps dying early — your pulls end with the raid going down together${wallTxt}. ` +
       `That's a DPS/enrage wall or a raid-wide mechanic to out-gear or solve, not individual deaths.`));
   }
@@ -276,7 +276,7 @@ async function dpsCheck(result, analyzed) {
   const lagTxt = laggards.length
     ? ` Lowest vs the raid median: ${laggards.join(", ")} — check their rotation/uptime first.`
     : "";
-  result.findings.push(finding("DPSCheck", GATE(deficit),
+  result.findings.push(finding(DIM.DPS_CHECK, GATE(deficit),
     `**Raid is ~${Math.round(deficit)}% short on DPS** to beat the gate: you got the boss to ${result.dps.killedPct}% killed, ` +
     `but at this rate it'd take longer than the field's ~${result.dps.fieldKillMin.toFixed(1)}-min kill.${lagTxt}`));
 }
@@ -297,7 +297,7 @@ function rosterDelta(result, pulls, roster) {
   const parts = [];
   if (added.length) parts.push(`added ${added.slice(0, 4).join(", ")}`);
   if (dropped.length) parts.push(`without ${dropped.slice(0, 4).join(", ")}`);
-  result.findings.push(finding("Roster", NOTE,
+  result.findings.push(finding(DIM.ROSTER, NOTE,
     `Roster changed during progression (${parts.join("; ")}). Your deepest pull (${Math.round(result.bestRemaining)}% left) was with the later comp — keep that group together.`));
 }
 

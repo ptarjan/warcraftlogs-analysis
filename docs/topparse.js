@@ -17,7 +17,7 @@
 // rule is actually about.
 import {
   playerMetrics, topRankings, buffUptimes, bossDebuffs, median, topN, f, mapLimit, bestKill,
-  DPS, COMP, INFO, finding, runIsHealer, metricUnit,
+  DPS, COMP, INFO, finding, DIM, runIsHealer, metricUnit,
 } from "./core.js";
 import { wowheadSpell } from "./links.js";
 
@@ -192,10 +192,10 @@ export function topParseLevers(tp, compDeltas = null) {
     const cd = compDeltas && compDeltas[e.key];
     const link = wowheadSpell(e.spell, e.label);
     if (cd) {
-      out.push(finding("Comp", COMP(Math.max(1, Math.round(cd.pct))),
+      out.push(finding(DIM.COMP, COMP(Math.max(1, Math.round(cd.pct))),
         `Missing ${link} (${e.effect}) — bring ${e.who}. (measured: peers with it do ${Math.round(cd.pct)}% more ${metricUnit()}, n=${cd.nHave}/${cd.nNot}).`, "measured"));
     } else {
-      out.push(finding("Comp", INFO,
+      out.push(finding(DIM.COMP, INFO,
         `Missing ${link} (${e.effect}) — bring ${e.who}. (unsized — this field gave no with/without split to measure it).`, "measured"));
     }
   }
@@ -206,13 +206,13 @@ export function topParseLevers(tp, compDeltas = null) {
   // Suppress entirely for healers, regardless of the broader healer-analysis design.
   const route = tp.routing ? tp.routing.top - tp.routing.you : 0;
   if (!runIsHealer() && tp.routing && route >= 5 && tp.routing.addNames.length) {
-    out.push(finding("Comp", DPS(Math.round(route)),
+    out.push(finding(DIM.COMP, DPS(Math.round(route)),
       `ROUTING: top parses put ${f(tp.routing.top, 0)}% of damage on ${tp.routing.addNames.join(", ")} ` +
       `(you ${f(tp.routing.you, 0)}%). Cleave/funnel those instead of tunneling the boss.`, "measured"));
   }
   // Potions: pre-pot + a second combat potion (a setup fix you apply yourself).
   if (tp.potions && tp.potions.top > tp.potions.you) {
-    out.push(finding("Setup", DPS(2),
+    out.push(finding(DIM.SETUP, DPS(2),
       `POTIONS: top parses use ${tp.potions.top}/kill (pre-pot + a combat potion); you used ${tp.potions.you}. Add the missing one.`));
   }
   return out;

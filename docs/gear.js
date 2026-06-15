@@ -3,7 +3,7 @@
 // Wowhead proxy) and compares slot-by-slot to the field. Ported from gear.py.
 import { itemTooltip, itemXml, zoneTooltip, npcTooltip } from "./wcl.js";
 import {
-  playerMetrics, topField, f, mapLimit, topEntry, topN, bestKill, DPS, finding, metricUnit,
+  playerMetrics, topField, f, mapLimit, topEntry, topN, bestKill, DPS, finding, DIM, metricUnit,
 } from "./core.js";
 import { wowheadItem } from "./links.js";
 
@@ -434,7 +434,7 @@ export function embellishmentRx(gf) {
       ? `EMBELLISHMENTS: you run ${emb.length}/2 -- fill the free slot${pop}. Throughput drops can't give.`
       : `EMBELLISHMENTS: yours (${ec.yourCombo.join("+") || "none"}) isn't one top performers run${top ? `; the #1 combo is ${top[0].join("+")} (${top[1]}/${ec.fieldN})` : ""}. Match it.`;
   }
-  return finding("Gear", DPS(2, 4), msg);
+  return finding(DIM.GEAR, DPS(2, 4), msg);
 }
 
 // Gems are the cheapest stat lever there is, but the audit only ever PRINTED them
@@ -464,7 +464,7 @@ export function gemLever(gf, gemDelta = null) {
   // Measured value: peers running the field's gem vs not (same natural experiment
   // as a consumable swap). Falls back to the flat estimate with no counterfactual.
   const cite = gemDelta ? ` (measured: peers on the field's gem do ${Math.round(gemDelta.pct)}% more, n=${gemDelta.nHave}/${gemDelta.nNot})` : "";
-  return [finding("Gear", gemDelta ? DPS(Math.max(1, Math.round(gemDelta.pct))) : DPS(1, 2), msg + cite, gemDelta ? "measured" : "est")];
+  return [finding(DIM.GEAR, gemDelta ? DPS(Math.max(1, Math.round(gemDelta.pct))) : DPS(1, 2), msg + cite, gemDelta ? "measured" : "est")];
 }
 
 // A stat-gain lever's size scales with the ACTUAL rating gained, so a +260 swap
@@ -530,14 +530,14 @@ export function gearLevers(gf, priority, statValue = null, gemDelta = null) {
     const total = swaps.reduce((s, sw) => s + (statValueScore(sw.gain, statValue) || statScore(sw.gain)).impact, 0);
     const gain = swaps.reduce((s, sw) => s + (sw.gain || 0), 0);
     const items = swaps.map((sw) => `${sw.slot} ${wowheadItem(sw.fromId, sw.fromName)}→${wowheadItem(sw.toId, sw.toName)}`).join(", ");
-    out.push(finding("Gear", { impact: total, label: `~${Math.round(total)}% ${metricUnit()}` },
+    out.push(finding(DIM.GEAR, { impact: total, label: `~${Math.round(total)}% ${metricUnit()}` },
       `${PRI}: re-itemize ${swaps.length} slots toward ${priority} (+${gain} ${priority} total${measured ? "" : " -- sim to confirm"})${measured ? mcite : ""} -- ${items}.`,
       measured ? "measured" : "est"));
   } else {
     for (const sw of swaps) {
       const from = sourceText(sw.source, sw.instance, sw.dropChance);
       const mv = statValueScore(sw.gain, statValue);
-      out.push(finding("Gear", mv || statScore(sw.gain),
+      out.push(finding(DIM.GEAR, mv || statScore(sw.gain),
         `${PRI} via ${sw.slot}: replace ${wowheadItem(sw.fromId, sw.fromName)} with ${wowheadItem(sw.toId, sw.toName)} (+${sw.gain} ${priority}${from}${mv ? "" : " -- sim to confirm"})${mv ? mcite : ""}.`,
         mv ? "measured" : "est"));
     }
@@ -545,7 +545,7 @@ export function gearLevers(gf, priority, statValue = null, gemDelta = null) {
   for (const rs of gf.restats) {
     const gain = (rs.achievable || 0) - (rs.current || 0);
     const mv = statValueScore(gain, statValue);
-    out.push(finding("Gear", mv || statScore(gain),
+    out.push(finding(DIM.GEAR, mv || statScore(gain),
       `${PRI} via ${rs.slot}: ${wowheadItem(rs.itemId, rs.itemName)} is selectable -- recraft to ${rs.achievable} ${priority} (you have ${rs.current})${mv ? mcite : ""}.`,
       mv ? "measured" : "est"));
   }

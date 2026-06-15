@@ -8,7 +8,7 @@
 import {
   ENCHANTABLE_SLOTS, DIFFICULTY, characterZone, characterEncounter, playerMetrics,
   ilvlPeers, PEER_SAMPLE, secondaryStats, buffUptimes, prefetchBuffUptimes, bossDebuffs, median, f, detectPriority, mapLimit, collectUpTo, topEntry, bestRank, bestKill,
-  DPS, INFO, finding, fieldDelta, metricUnit, throughputWord, runIsHealer, runIsSupport, healingBreakdown, manaStats,
+  DPS, INFO, finding, KIND, DIM, fieldDelta, metricUnit, throughputWord, runIsHealer, runIsSupport, healingBreakdown, manaStats,
 } from "./core.js";
 import { timelineFindings } from "./timeline.js";
 import { gearFindings, gearLevers, itemInstance, sourceText } from "./gear.js";
@@ -325,7 +325,7 @@ const LATENCY_MS = 30;
 // single biggest thing they actually control.
 export function latencyLever(execd) {
   if (!execd || !(execd.overshootExcess >= LATENCY_MS)) return [];
-  return [finding("Execution", DPS(1, 3),
+  return [finding(DIM.EXECUTION, DPS(1, 3),
     `INPUT LATENCY: your cast fires ~${f(execd.overshootExcess, 0)}ms later than peers after every GCD -- a small delay on each global that adds up over a fight. ` +
     `Raise your spell-queue window (Options > Combat, or /console SpellQueueWindow 300-400), cut world latency, and pre-press your next ability so it queues.`)];
 }
@@ -414,7 +414,7 @@ export function executionLevers(execd, rot, peerGapPct = null, activePct = null)
     const headline = execd.pressExcess >= 0.5
       ? `PRESS FASTER (every boss): you idle ~${f(execd.pressExcess, 1)}s/min MORE than peers while in range and not moving -- ${cause}${cite} Always queue your next ability so a GCD never sits empty.`
       : `PRESS FASTER (every boss): your damaging-cast rate trails the field even though your in-range idle matches theirs -- ${cause}${cite} Tighten the gaps between GCDs so each global fires the moment it's ready.`;
-    out.push(finding("Execution", DPS(pct), headline, "measured"));
+    out.push(finding(DIM.EXECUTION, DPS(pct), headline, "measured", KIND.PRESS_FASTER));
   }
   out.push(...latencyLever(execd));
   // Gate on a positive MEDIAN loss, not worstRange alone: a player who's fine on most
@@ -428,7 +428,7 @@ export function executionLevers(execd, rot, peerGapPct = null, activePct = null)
     // a melee uptime problem AND a caster/healer one. Avoid melee-only language
     // ("out of melee", "gap-closers to stay on target") -- it's wrong for a ranged
     // healer, whom this lever also fires for.
-    out.push(finding("Execution", DPS(Math.round(Math.max(execd.rangeExcess, 0.1) / 60 * 100)),
+    out.push(finding(DIM.EXECUTION, DPS(Math.round(Math.max(execd.rangeExcess, 0.1) / 60 * 100)),
       `MOVEMENT uptime on specific fights: you lose ~${f(execd.rangeExcess, 1)}s/min of casting to moving / being out of range more than peers (intermissions excluded).${where} Pre-position and cut avoidable movement so your GCD keeps rolling through mechanics.`, "measured"));
   }
   return out;
@@ -448,14 +448,14 @@ function consumableLevers(field, my) {
     const basis = fd ? "measured" : "est";
     const cite = fd ? ` (measured: peers with it do ${Math.round(fd.pct)}% more, n=${fd.nHave}/${fd.nNot})` : "";
     if (!mineName) {
-      out.push(finding("Setup", noneScore, `${cn.label}: ${cn.missText} -- ${counter.get(top)}/${field.n} peers ` +
+      out.push(finding(DIM.SETUP, noneScore, `${cn.label}: ${cn.missText} -- ${counter.get(top)}/${field.n} peers ` +
         `${cn.peerVerb} ${wowheadSpell(field.guids.get(top), top)}${cn.note}.${cite} ${cn.tail}`, basis));
     } else if (mineName !== top) {
       // Swap: price the SPECIFIC field-favored item (peers on it vs not), not the
       // have-any delta -- so "defensive flask -> the DPS flask" reads measured.
       const td = field.topDeltas && field.topDeltas[cn.field];
       const swapCite = td ? ` (measured: peers on it do ${Math.round(td.pct)}% more than those without, n=${td.nHave}/${td.nNot})` : "";
-      out.push(finding("Setup", td ? DPS(Math.round(td.pct)) : cn.swap,
+      out.push(finding(DIM.SETUP, td ? DPS(Math.round(td.pct)) : cn.swap,
         `${cn.label}: ${wowheadSpell(mineGuid, mineName)} -> ${wowheadSpell(field.guids.get(top), top)}.${swapCite}`,
         td ? "measured" : "est"));
     }
@@ -475,7 +475,7 @@ function enchantLevers(field, my) {
   if (!missing.length) return [];
   const est = Math.min(missing.length, 5);
   const list = missing.map(([s, e]) => `${s} (${e})`).join(", ");
-  return [finding("Setup", DPS(est), `ENCHANTS: you're missing enchants on ${list}. The field runs them -- a free parse with equal gear.`)];
+  return [finding(DIM.SETUP, DPS(est), `ENCHANTS: you're missing enchants on ${list}. The field runs them -- a free parse with equal gear.`)];
 }
 
 // Trinkets are EFFECT-based (procs / on-use), so they can't be ranked by a stat
@@ -505,7 +505,7 @@ export async function trinketLevers(field, my) {
     parts.push(`${wowheadItem(t.id, t.name)} (${t.count}/${field.n} peers)${sourceText(null, inst, null)}`);
   }
   const yours = my.trinkets && my.trinkets.length ? my.trinkets.join(" + ") : "your current trinkets";
-  return [finding("Gear", DPS(pct),
+  return [finding(DIM.GEAR, DPS(pct),
     `TRINKETS: the field favors ${parts.join(" and ")} -- you run ${yours}. Trinkets are effect-based (proc/on-use), not a stat swap -- SIM it (Droptimizer) before committing, but a trinket most of your peers run and you don't is a common hidden upgrade.`)];
 }
 
@@ -522,10 +522,10 @@ function statGapLever(gf, my, field, priority) {
     // peers do. Cite it when we have it; it's context (no swap exists to act on).
     const sd = field && field.statDelta;
     const worth = sd ? ` Measured: peers in the top half of ${priority} do ${Math.round(sd.pct)}% more (n=${sd.nHave}/${sd.nNot}).` : "";
-    return [finding("Gear", INFO, `${PRI}: yours (${f(my.statPct, 0)}%) is below your peers (${f(field.statPct, 0)}%), but NOT actionable now -- every item you own is already ${priority}-maxed and no ${priority}-itemized upgrade exists to swap to.${worth} It only rises when ${priority}-itemized drops come.`, sd ? "measured" : "est")];
+    return [finding(DIM.GEAR, INFO, `${PRI}: yours (${f(my.statPct, 0)}%) is below your peers (${f(field.statPct, 0)}%), but NOT actionable now -- every item you own is already ${priority}-maxed and no ${priority}-itemized upgrade exists to swap to.${worth} It only rises when ${priority}-itemized drops come.`, sd ? "measured" : "est")];
   }
   if (gf && !gf.swaps.length && !gf.restats.length && statGap < 4) {
-    return [finding("Gear", INFO, "GEAR/STATS: optimal for what you own -- no lever; gains are future drops + a sim (Droptimizer).")];
+    return [finding(DIM.GEAR, INFO, "GEAR/STATS: optimal for what you own -- no lever; gains are future drops + a sim (Droptimizer).")];
   }
   return [];
 }
@@ -590,7 +590,7 @@ export const isEliteParse = (medP) => medP != null && medP >= 90;
 // tree). When true, the rotation can't be compared button-for-button (no same-hero
 // peers), so a big "playstyle" remainder is partly the off-meta build itself -- which
 // the conservative talent/hero ESTIMATES above under-size -- not pure per-cast play.
-export const isOffMetaBuild = (findings) => (findings || []).some((x) => /^HERO TREE/.test(x.text || ""));
+export const isOffMetaBuild = (findings) => (findings || []).some((x) => x.kind === KIND.HERO_TREE);
 
 // THE SYNTHESIS, rendered: one answer anchored on the MEASURED DPS gap (your
 // kill vs the ilvl-matched field vs the top parses -- real numbers, not a sum of
@@ -600,20 +600,20 @@ export const isOffMetaBuild = (findings) => (findings || []).some((x) => /^HERO 
 // actionable findings sorted by impact desc (comp + the playstyle remainder
 // excluded) -- yours[0] is the biggest lever, so the verdict can never claim a
 // lever is "biggest / sort that first" when a bigger one outranks it in the list.
-// A talent swap reads "TALENTS…" but is dim "Rotation", so check its text first.
+// A talent swap is dim "Rotation" but should read as a BUILD lever, so check kind first.
 export function verdictLever(yours) {
   const top = yours && yours[0];
   if (!top) return "none";
-  if (/^TALENTS/.test(top.text)) return "build";
-  if (top.dim === "Rotation") return "rotation";
-  if (top.dim === "Gear" || top.dim === "Setup") return "setup";
-  if (top.dim === "Execution") return "execution";
+  if (top.kind === KIND.TALENTS || top.kind === KIND.HERO_TREE) return "build";
+  if (top.dim === DIM.ROTATION) return "rotation";
+  if (top.dim === DIM.GEAR || top.dim === DIM.SETUP) return "setup";
+  if (top.dim === DIM.EXECUTION) return "execution";
   return "none";
 }
 
 function renderPrescription(log, d) {
   const { rx, you, field, tp, execd, rot } = d;
-  const isComp = (r) => r.dim === "Comp";                  // raid-dependent, not yours to press
+  const isComp = (r) => r.dim === DIM.COMP;               // raid-dependent, not yours to press
   const yours = rx.filter((r) => r.impact > 0 && !isComp(r));
   const k = (n) => `${f((n || 0) / 1000, 1)}k`;
   const peerGap = (you && you.dps && field && field.dpsMed) ? Math.round(((field.dpsMed - you.dps) / you.dps) * 100) : null;
@@ -658,15 +658,15 @@ function renderPrescription(log, d) {
   // reads like a template -- and always points at an action (respec / the few
   // setup fixes / "tighten your play, there's no shortcut").
   const compList0 = rx.filter(isComp);
-  const setupFixes = yours.filter((r) => r.dim === "Gear" || r.dim === "Setup");
-  // Any talent/build change -- whether "TALENTS/BUILD" (a button you never press
-  // because you skipped its talent) or "TALENTS" (the field runs a meta talent you
-  // don't). Both are a build swap, the same VERDICT.
-  const hasBuild = yours.some((r) => /^TALENTS/.test(r.text));
-  // A talent/build swap reads "TALENTS…" but is dim "Rotation"; tell the play-lever
-  // version apart so verbs ("respec" vs "play differently") never mismatch.
-  const rotKindOf = (r) => /^EMPOWERMENT/.test(r.text) ? "an EMPOWERMENT timing fix (landing your hardest hit in its high-damage window)"
-    : /^COOLDOWN/.test(r.text) ? "a COOLDOWN you under-use"
+  const setupFixes = yours.filter((r) => r.dim === DIM.GEAR || r.dim === DIM.SETUP);
+  // Any talent/build change -- whether a never-pressed talented ability or a meta
+  // talent the field runs and you don't. Both carry KIND.TALENTS (a build swap, same
+  // VERDICT); the hero-tree swap carries KIND.HERO_TREE.
+  const hasBuild = yours.some((r) => r.kind === KIND.TALENTS || r.kind === KIND.HERO_TREE);
+  // A talent/build swap is dim "Rotation"; tell the play-lever version apart by kind so
+  // the verbs ("respec" vs "play differently") never mismatch.
+  const rotKindOf = (r) => r.kind === KIND.EMPOWERMENT ? "an EMPOWERMENT timing fix (landing your hardest hit in its high-damage window)"
+    : r.kind === KIND.COOLDOWN ? "a COOLDOWN you under-use"
     : "a ROTATION/priority fix";
   // The VERDICT must name the ACTUAL biggest character lever. `yours` is sorted by
   // impact desc (rx.sort, comp + the playstyle remainder excluded), so yours[0] IS
@@ -691,7 +691,7 @@ function renderPrescription(log, d) {
     // Only credit "pressing faster" when a press-faster lever survived -- for a
     // player who already out-casts the field it's suppressed, and the gap is
     // damage-per-cast (the gear/setup fixes), not activity.
-    const hasPress = yours.some((r) => /PRESS FASTER/.test(r.text));
+    const hasPress = yours.some((r) => r.kind === KIND.PRESS_FASTER);
     const buildNote = hasBuild ? " (plus a talent swap)" : "";
     // Metric-aware: a healer's residual gap is healing efficiency + damage-bound
     // throughput, never "damage-per-cast". (Same class of fix as the HPS metric-word
@@ -811,7 +811,7 @@ function renderPrescription(log, d) {
     } else {
       rtext = `THE REMAINDER (~${r}%): small and unattributed -- sim-only tuning (exact trinket/stat effect sizes) and kill-to-kill variance. No single button.`;
     }
-    renderYou.push({ dim: "Execution", impact: residual, label: pctLabel(residual), text: rtext, basis: "measured" });
+    renderYou.push({ dim: DIM.EXECUTION, impact: residual, label: pctLabel(residual), text: rtext, basis: "measured" });
   }
   const youOut = renderYou.concat(infoList);
 
