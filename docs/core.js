@@ -743,6 +743,12 @@ export async function collectPeers({
 // shared, not four divergent ones), we can afford a bigger sample than any single
 // section used before -- better medians for fewer total requests.
 export const PEER_SAMPLE = 10;
+// How many BOSSES to analyze concurrently in the cross-boss sections (overview,
+// timeline, prescribe's execution aggregate). Each boss is an independent peer
+// discovery + fetch wave, so fanning them out collapses ~8 sequential boss-analyses
+// into ~2 waves -- the dominant wall-clock win. Bounded (not unbounded Promise.all)
+// so the gql() batcher packs each wave instead of bursting WCL's per-second throttle.
+export const BOSS_FANOUT = 6;
 export async function ilvlPeers(name, server, region, encounter, difficulty, className, specName, { window = 3 } = {}) {
   const er = await characterEncounter(name, server, region, encounter.id, difficulty);
   const ranks = (er && er.ranks) || [];

@@ -3,7 +3,7 @@
 // vs ilvl-matched peers on the SAME boss (phase/intermission aware).
 import {
   characterZone, characterEncounter, playerMetrics, ilvlPeers, PEER_SAMPLE, median, f, mapLimit, collectUpTo,
-  fightWindow, fightEvents,
+  fightWindow, fightEvents, BOSS_FANOUT,
 } from "./core.js";
 
 function estimateGcd(gapsMs) {
@@ -171,14 +171,16 @@ export async function run(log, name, server, region, className = "Monk", specNam
   log("");
   log(`=== Comparative timeline diagnosis: ${name} (vs ilvl-matched peers, intermissions cancel out) ===`);
   const agg = { lostPerMin: [], rangeLostPerMin: [], pressLostPerMin: [], autoDownPct: [] };
-  for (const r of ranks) {
-    let comp;
-    try {
-      comp = await timelineFindings(name, server, region, r.encounter, difficulty, className, specName);
-    } catch (e) {
-      log(`  (${r.encounter.name}: ${e.message || e})`);
-      continue;
-    }
+  // Fan the bosses out -- each is an independent peer-fetch wave (timelineFindings is
+  // pure compute), so run them concurrently and the gql() batcher coalesces the misses.
+  // mapLimit preserves input order, so the per-boss printout below is unchanged; only
+  // the wall time drops (~8 sequential bosses -> ~2 concurrent waves).
+  const comps = await mapLimit(ranks, BOSS_FANOUT, async (r) => {
+    try { return { comp: await timelineFindings(name, server, region, r.encounter, difficulty, className, specName) }; }
+    catch (e) { return { err: `  (${r.encounter.name}: ${e.message || e})` }; }
+  });
+  for (const { comp, err } of comps) {
+    if (err) { log(err); continue; }
     if (comp) {
       printBossComparison(log, comp);
       for (const k of Object.keys(agg)) agg[k].push(comp.you[k] - comp.peer[k]);

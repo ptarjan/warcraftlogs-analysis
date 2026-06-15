@@ -7,7 +7,7 @@
 // need its own peer aggregates, then sorts + splits + renders.
 import {
   ENCHANTABLE_SLOTS, DIFFICULTY, characterZone, characterEncounter, playerMetrics,
-  ilvlPeers, PEER_SAMPLE, secondaryStats, buffUptimes, bossDebuffs, median, f, detectPriority, mapLimit, collectUpTo, topEntry, bestRank, bestKill,
+  ilvlPeers, PEER_SAMPLE, BOSS_FANOUT, secondaryStats, buffUptimes, bossDebuffs, median, f, detectPriority, mapLimit, collectUpTo, topEntry, bestRank, bestKill,
   DPS, INFO, finding, KIND, DIM, fieldDelta, metricUnit, throughputWord, runIsHealer, runIsSupport, healingBreakdown, manaStats,
 } from "./core.js";
 import { timelineFindings } from "./timeline.js";
@@ -274,13 +274,12 @@ async function mySetup(code, fight, sourceId, gear, priority = "crit", className
 }
 
 async function aggregateExecution(name, server, region, difficulty, className, specName, bosses) {
-  const perBoss = [];
-  for (const r of bosses) {
-    let c;
-    try { c = await timelineFindings(name, server, region, r.encounter, difficulty, className, specName); }
-    catch (e) { c = null; }
-    if (c) perBoss.push(c);
-  }
+  // Fan the bosses out -- independent peer-fetch waves, coalesced by the gql() batcher
+  // -- instead of one-at-a-time. mapLimit returns in order; perBoss content is identical.
+  const perBoss = (await mapLimit(bosses, BOSS_FANOUT, async (r) => {
+    try { return await timelineFindings(name, server, region, r.encounter, difficulty, className, specName); }
+    catch (e) { return null; }
+  })).filter(Boolean);
   if (!perBoss.length) return null;
   const med = (key) => median(perBoss.map((c) => c.you[key] - c.peer[key]));
   // Each boss's number is a median over your kills of it; with a single kill the

@@ -3,7 +3,7 @@
 import {
   DIFFICULTY, characterZone, characterEncounter, topRankings, playerMetrics,
   secondaryStats, gearSummary, median, topN, f, padL, padR, collectUpTo, bestRank,
-  ilvlPeers, PEER_SAMPLE, metricUnit, recentKills, runIsHealer,
+  ilvlPeers, PEER_SAMPLE, metricUnit, recentKills, runIsHealer, mapLimit, BOSS_FANOUT,
 } from "./core.js";
 
 export async function overview(log, name, server, region, difficulty) {
@@ -130,13 +130,20 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // makes for all bosses -- both go through core.ilvlPeers, so they pick the
   // identical peer set and the reportCore fetches coalesce.
   const recent = await recentKills(name, server, region, difficulty);
-  for (const r of recent.slice(0, bosses)) {
+  // Fan the bosses out: each boss's peer discovery + reportCore/event fetches are
+  // independent, so run them concurrently (the gql() batcher coalesces the resulting
+  // misses) instead of boss-by-boss. deepCompare streams its lines, so buffer each
+  // boss's output and flush IN ORDER -- identical printout, a fraction of the wall time.
+  const bufs = await mapLimit(recent.slice(0, bosses), BOSS_FANOUT, async (r) => {
+    const lines = [];
     try {
-      await deepCompare(log, name, server, region, r.encounter, difficulty, className, specName);
+      await deepCompare((l = "") => lines.push(l), name, server, region, r.encounter, difficulty, className, specName);
     } catch (e) {
-      log(`  (${r.encounter.name}: ${e.message || e})`);
+      lines.push(`  (${r.encounter.name}: ${e.message || e})`);
     }
-  }
+    return lines;
+  });
+  for (const lines of bufs) for (const l of lines) log(l);
   if (inflation && recent.length) {
     await difficultyInflation(log, name, server, region, recent[0].encounter, className, specName);
   }

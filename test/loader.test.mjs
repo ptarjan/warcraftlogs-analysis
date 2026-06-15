@@ -117,14 +117,16 @@ test("each report table/event is fetched at most once across a full run", async 
   const dupes = [...cover.entries()].filter(([, c]) => c > 1).sort((a, b) => b[1] - a[1]);
   assert.deepEqual(dupes, [], `these report tables were fetched more than once in a single run:\n${dupes.map(([u, c]) => `  ${u} x${c}`).join("\n")}`);
 
-  // STRUCTURAL COST GUARD: the whole run must stay under a request ceiling. WCL bills
-  // ~flat per REQUEST, so request COUNT is the cost. gql() AUTO-BATCHES concurrent
-  // fetches into one combined request, so this stays low as long as new fetches run
-  // CONCURRENTLY (via mapLimit/collectUpTo). If this fails, you likely added a
-  // SEQUENTIAL per-peer/per-boss fetch (awaited one at a time, so it can't batch) --
-  // issue them concurrently instead. Re-baseline the ceiling ONLY with justification.
-  assert.ok(queries.length <= 85,
-    `full mocked run made ${queries.length} requests (ceiling 85; auto-batching keeps it ~63). A sequential per-peer/per-boss fetch was likely added -- run such fetches concurrently so gql() auto-batches them.`);
+  // STRUCTURAL COST GUARD: the whole run must stay under a request ceiling. Billing is
+  // complexity-scaled (so request count is NOT the points budget -- units are; see
+  // wcl.js), but request COUNT still drives LATENCY and WCL's per-second throttle. gql()
+  // AUTO-BATCHES concurrent fetches into one combined request, AND the cross-boss
+  // sections fan out (BOSS_FANOUT), so this stays low as long as new fetches run
+  // CONCURRENTLY (via mapLimit/collectUpTo/the boss fan-out). If this fails, you likely
+  // added a SEQUENTIAL per-peer/per-boss fetch (awaited one at a time, so it can't
+  // batch) -- issue them concurrently instead. Re-baseline the ceiling ONLY with justification.
+  assert.ok(queries.length <= 55,
+    `full mocked run made ${queries.length} requests (ceiling 55; fan-out + auto-batching keeps it ~43). A sequential per-peer/per-boss fetch was likely added -- run such fetches concurrently so gql() auto-batches them.`);
 });
 
 // STRUCTURAL: report-data queries may be CONSTRUCTED only in core.js, where every
