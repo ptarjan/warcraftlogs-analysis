@@ -37,6 +37,15 @@ interface FieldDelta {
   nNot: number;
 }
 
+/** A FieldDelta plus the per-rating slope, for sizing a gear swap from the field
+ *  (gear.statValueScore). null when the field gave no counterfactual. */
+interface StatValue {
+  pct: number;
+  perRating: number;
+  nHave: number;
+  nNot: number;
+}
+
 /** The ilvl-matched field's gear/consumable/stat picture (prescribe.fieldGearConsumables).
  *  Tallies = what the field RUNS (Maps of name/id -> count); deltas = each lever's MEASURED
  *  value from that sample (FieldDelta | null). One named shape instead of an ad-hoc bag. */

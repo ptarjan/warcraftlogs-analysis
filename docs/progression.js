@@ -40,6 +40,7 @@ const secs = (ms) => ms / 1000;
 // The pulls of ONE boss in a report: filter to real encounters (encounterID>0),
 // and when no boss is named, pick the one the group pulled MOST (the progression
 // target that night). Returns { encounterID, name, pulls } or null.
+/** @param {any} fights @param {number|null} [encounterId] */
 export function pickEncounter(fights, encounterId = null) {
   const boss = (fights || []).filter((x) => x.encounterID && x.encounterID > 0);
   if (!boss.length) return null;
@@ -98,6 +99,7 @@ async function nameSpells(ids) {
 // run() formats. Fetches are bounded (see budget note at top). `fresh` polls a
 // live report's fight list without serving a stale cache.
 // ----------------------------------------------------------------------------- //
+/** @param {string} code @param {{encounterId?:number|null, fresh?:boolean}} [opts] */
 export async function progressionFindings(code, { encounterId = null, fresh = false } = {}) {
   // The fight LIST is primed by the caller (one fresh fetch in live mode); read it
   // from cache here. `fresh` governs the DEATHS query so a just-ended pull's deaths
@@ -123,7 +125,7 @@ export async function progressionFindings(code, { encounterId = null, fresh = fa
     nPulls: pulls.length, nWipes: wipes.length, nKills: kills.length,
     killed: kills.length > 0, lastKill: kills.length ? kills[kills.length - 1] : null,
     bestRemaining: deepest ? remaining(deepest) : 0, deepest, multiPhase,
-    pulls, recentWipes, findings: [], notes: [],
+    pulls, recentWipes, findings: /** @type {Finding[]} */ ([]), notes: /** @type {string[]} */ ([]),
   };
 
   // The wall: modal (lastPhase, 5%-bucket) among recent wipes.
@@ -306,6 +308,7 @@ function rosterDelta(result, pulls, roster) {
 // modules: "=== HEAD ===", "--- sub ---", numbered "N. [label] text" findings
 // (rendered as action rows), and aligned readout rows for the pull list.
 // ----------------------------------------------------------------------------- //
+/** @param {any} log @param {any} ref @param {{encounterId?:number|null, fresh?:boolean}} [opts] */
 export async function run(log, ref, { encounterId = null, fresh = false } = {}) {
   const code = typeof ref === "string" ? ref : (ref && ref.code);
   if (!code) { log("[error] No report code — paste a Warcraft Logs report URL."); return null; }

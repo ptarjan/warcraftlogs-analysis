@@ -643,7 +643,8 @@ async function runAnalysis({ name, server, region, serverLabel }) {
   // the warm cache); the supporting analyses are created right after it.
   // Record every streamed line so the finished report can be shared (see
   // buildSnapshot / addShareButton) -- a friend opens the link with no login.
-  const snap = { v: 1, name, serverLabel: serverLabel || server, region, pills: [], sections: [] };
+  const snap = { v: 1, name, serverLabel: serverLabel || server, region,
+    pills: /** @type {[string, boolean][]} */ ([]), sections: /** @type {any[]} */ ([]) };
   const rxCard = makeCard("What to change", { primary: true });
   setCardState(rxCard, "busy");
   cur = rxCard; note("Crunching your kills and your peers…", "muted");
@@ -945,6 +946,7 @@ function progBusy(on) {
 
 // Entry: run the progression analyzer for a report (from the form, a quick-pick,
 // or a deep link). `live` starts the auto-reload poll.
+/** @param {{code:string, encounterId?:number|null, live?:boolean}} opts */
 async function runProgression({ code, encounterId = null, live = false }) {
   if (!code) return;
   stopPolling();

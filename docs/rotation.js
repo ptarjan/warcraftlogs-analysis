@@ -301,7 +301,7 @@ export function usageDamageGaps(under, over, dmgTotals, dur, total, { perCap = 3
     const net = Math.max(0, dU - displaced);           // GCD-aware net damage per recovered cast
     const missed = Math.max(0, (u.field - u.you) * mins);
     const pct = dmgGapPct(missed, net, totalDmg, perCap);
-    if (pct >= 1) out[u.name] = pct;
+    if (pct != null && pct >= 1) out[u.name] = pct;
   }
   return out;
 }
@@ -384,15 +384,15 @@ export function buffWindowUplift(castTimes, dmgEvents, { window = 8, minCasts = 
   }
   // Union of [c, c+winMs] intervals -> total in-window seconds (clamped to the event span).
   const lo = dmgEvents[0].t, hi = dmgEvents[dmgEvents.length - 1].t;
-  let inMs = 0, curS = null, curE = null;
+  let inMs = 0, curS = -1, curE = -1;     // -1 = no open interval (timestamps are >= 0)
   for (const c of casts) {
     const s = Math.max(c, lo), e = Math.min(c + winMs, hi);
     if (e <= s) continue;
-    if (curS == null) { curS = s; curE = e; continue; }
+    if (curS < 0) { curS = s; curE = e; continue; }
     if (s <= curE) curE = Math.max(curE, e);
     else { inMs += curE - curS; curS = s; curE = e; }
   }
-  if (curS != null) inMs += curE - curS;
+  if (curS >= 0) inMs += curE - curS;
   const totMs = hi - lo;
   const outMs = totMs - inMs;
   if (inMs <= 0 || outMs <= 0) return null;               // can't contrast (buff covers whole fight)
@@ -568,6 +568,7 @@ async function fetchRotationPeers(name, server, region, boss, difficulty, classN
 // empowerment proc (outsized NON-crit hits) you under-use vs the field -- an
 // actionable list item. If big hits are merely crits, proc.isReal is false and
 // NOTHING is recommended (a "big hit" is usually a crit, not a missed button).
+/** @param {{code:any,fight:any,encounter:any}|null} [killOverride] */
 export async function rotationFindings(name, server, region, className, specName, difficulty, killOverride = null) {
   // Which kill we analyze. The rotation CARD analyzes your most-recent current-gear
   // kill (bestKill -- shared with gear/talents/topparse, so the fetch is cached).
@@ -591,7 +592,7 @@ export async function rotationFindings(name, server, region, className, specName
   // whose strength matters most, and the one a missed buff/combo window most hurts.
   // We measure the FIELD's empowered share of THIS ability so "your big hit lands
   // weak" can only fire on real under-empowerment, never on a uniform stat gap.
-  const biggest = you.hits.length ? [...you.hits].sort((a, b) => b.med - a.med)[0] : null;
+  const biggest = (you.hits || []).length ? [...(you.hits || [])].sort((a, b) => b.med - a.med)[0] : null;
   const isReal = biggest ? biggest.procBig >= 2 : false;   // null biggest -> no empowerment analysis
 
   // The ilvl-matched field (peers analyzed the SAME way as you), restricted to your
@@ -686,7 +687,7 @@ export async function rotationFindings(name, server, region, className, specName
   if (peers.length) {
     const yourMins = you.dur ? you.dur / 60 : 0;
     const yourAb = {};
-    for (const h of you.hits) {
+    for (const h of (you.hits || [])) {
       const casts = (you.castRate[h.name] || 0) * yourMins;
       const total = (you.dmgTotals || {})[h.name] || 0;
       if (casts > 0 && total > 0) yourAb[h.name] = { total, casts };
@@ -754,10 +755,10 @@ export async function run(log, name, server, region, className = "Monk",
       `Spec-agnostic: nothing about ${specName} is hard-coded.`);
 
   // Pet-heavy specs (Demo Lock) have no player-sourced per-hit data -> no hits.
-  if (fnd.hits.length && fnd.biggest) {
+  if ((fnd.hits || []).length && fnd.biggest) {
     log("");
     log(`=== YOUR ${runIsHealer() ? "BIGGEST HEALS" : "HARDEST-HITTING ABILITIES"} (per cast) ===`);
-    for (const h of [...fnd.hits].sort((a, b) => b.med - a.med))
+    for (const h of [...(fnd.hits || [])].sort((a, b) => b.med - a.med))
       log(`  ${h.name.padEnd(20)} median ${Math.round(h.med).toLocaleString().padStart(8)}  ` +
           `max ${Math.round(h.max).toLocaleString().padStart(8)}  (${Math.round(h.critPct)}% crit, ` +
           `${h.procBig} non-crit big hits)`);

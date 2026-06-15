@@ -102,7 +102,7 @@ export async function handleRedirectCallback() {
     grant_type: "authorization_code",
     client_id: CLIENT_ID,
     redirect_uri: REDIRECT_URI,
-    code,
+    code: code || "",
     code_verifier: verifier,
   });
   const r = await fetch(TOKEN_URL, {

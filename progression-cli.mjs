@@ -41,7 +41,7 @@ async function main() {
   const progression = await import("./docs/progression.js");
   if (opt["allow-fetch"] && !opt["cache-only"]) {
     const gate = await acquireFetchGate();
-    if (gate.ok) { process.env.WCL_ALLOW_FETCH = "1"; console.log(`[budget] fetching enabled (~${Math.round(gate.remaining)} WCL pts available).`); }
+    if (gate.ok) { process.env.WCL_ALLOW_FETCH = "1"; console.log(`[budget] fetching enabled (~${Math.round(gate.remaining ?? 0)} WCL pts available).`); }
     else console.log(`[budget] NOT fetching: ${gate.reason}. Running cache-only.`);
   }
   await primeRateReset();

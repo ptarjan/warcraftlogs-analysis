@@ -395,6 +395,7 @@ export async function fightWindow(code, fight) {
 }
 
 // Generic paginated events for one actor (overflow beyond the 10k page limit).
+/** @param {number|null} [abilityId] @param {number|null} [start] @param {number|null} [end] */
 export async function paginateEvents(code, fight, sourceId, dataType, abilityId = null, start = null, end = null) {
   const out = [];
   const ab = abilityId !== null ? `, abilityID: ${abilityId}` : "";
@@ -741,6 +742,7 @@ export async function recentKills(name, server, region, difficulty) {
 //   ilvl/window: when ilvl is set, keep only parses within +/-window of it
 // Callers then mapLimit() over the result to pull whatever per-peer data they
 // need (metrics, buffs, stats, timeline, ...).
+/** @param {{encounters:any,difficulty:any,className:any,specName:any,limit?:number,pages?:number,ilvl?:number|null,window?:number,dedupe?:boolean}} opts */
 export async function collectPeers({
   encounters, difficulty, className, specName,
   limit = 10, pages = 4, ilvl = null, window = 3, dedupe = true,

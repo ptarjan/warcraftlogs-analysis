@@ -13,9 +13,11 @@
     "lib": ["es2022", "dom", "dom.iterable"],
     "strict": false,
     "noImplicitAny": false,
-    // Catch dead code + missing returns (cheap rigor, no runtime change). Full strict /
-    // noImplicitAny is impractical on gradually-typed JS (~1300 implicit-any), but these
-    // two are free and catch real rot -- e.g. an unused import left after a refactor.
+    // Rigor we can actually hold on gradually-typed JS. strictNullChecks is the flagship --
+    // it catches null/undefined bugs (the #1 real JS bug class) and is now ENFORCED in CI
+    // (npm run typecheck): new code must be null-safe or the build fails. Full strict /
+    // noImplicitAny stays off (impractical -- ~1300 implicit-any across ~7k lines).
+    "strictNullChecks": true,
     "noUnusedLocals": true,
     "noImplicitReturns": true,
     "skipLibCheck": true,

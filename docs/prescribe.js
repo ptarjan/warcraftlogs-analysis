@@ -154,7 +154,7 @@ function tallyPeerField(peers, priority) {
 function computeFieldDeltas(peers, dps, priority, tally) {
   const { flasks, foods, potions, augRunes, oils } = tally;
   const mask = (test) => peers.map((p) => Object.entries(p.bf || {}).some(([nm, b]) => test(nm.toLowerCase(), b)));
-  /** @type {Record<string, FieldDelta>} */
+  /** @type {Record<string, FieldDelta|null>} */
   const deltas = {};
   for (const c of CONSUMABLES) deltas[c.field] = fieldDelta(dps, mask((lc, b) => consumableHit(c, lc, b)));
   const topMaskDelta = (counter, thr) => {
@@ -358,6 +358,7 @@ export function latencyLever(execd) {
     `Raise your spell-queue window (Options > Combat, or /console SpellQueueWindow 300-400), cut world latency, and pre-press your next ability so it queues.`)];
 }
 
+/** @param {any} execd @param {any} rot @param {number|null} [peerGapPct] @param {number|null} [activePct] */
 export function executionLevers(execd, rot, peerGapPct = null, activePct = null) {
   if (!execd) return [];
   const out = [];
@@ -949,6 +950,7 @@ function renderPrescription(log, d) {
   log("");
 }
 
+/** @param {string|null} [knownPriority] */
 export async function run(log, name, server, region, className = "Monk", specName = "Brewmaster",
   difficulty = 5, knownPriority = null) {
   // Healers are analyzed on HEALING (the run metric is set to hps for healer

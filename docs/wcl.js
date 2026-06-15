@@ -23,6 +23,7 @@ export class NeedsAuth extends Error {}
 // caller (pacing logic, the loop) can wait EXACTLY until the quota is back instead
 // of guessing. null `resetIn` means we couldn't read a clock this time.
 export class RateLimited extends Error {
+  /** @param {string} message @param {number|null} [resetIn] */
   constructor(message, resetIn = null) { super(message); this.resetIn = resetIn; }
 }
 

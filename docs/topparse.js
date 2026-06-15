@@ -185,6 +185,7 @@ export async function run(log, name, server, region, className, specName, diffic
 // the raid-comp amps your kill is missing, damage routing, and potion timing
 // from the actual top parses -- as the shared { dim, impact, label, text }
 // currency. Comp gaps are raid-dependent ("Comp"); potions are yours ("Setup").
+/** @param {any} tp @param {Record<string, FieldDelta>|null} [compDeltas] */
 export function topParseLevers(tp, compDeltas = null) {
   if (!tp) return [];
   const out = [];

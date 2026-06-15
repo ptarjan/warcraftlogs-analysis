@@ -442,6 +442,7 @@ export function embellishmentRx(gf) {
 // run it, or you split across more colors than peers (not stacking your best
 // stat), say so and link the field's gem. Pure -- unit-tested. Returns [] when
 // your gems already line up (or there's no field data to compare against).
+/** @param {any} gf @param {FieldDelta|null} [gemDelta] */
 export function gemLever(gf, gemDelta = null) {
   if (!gf || !gf.gems) return [];
   const gi = gf.gems;
@@ -490,6 +491,7 @@ export function statScore(gain) {
 // footing as the consumable/stat deltas. Capped at the whole spread's value and at
 // 5% so one swap can't dominate before reconcileImpacts. null when the field gave
 // no counterfactual -> caller falls back to statScore (the sim estimate).
+/** @param {number} gain @param {StatValue|null} statValue */
 export function statValueScore(gain, statValue) {
   if (!statValue || !(statValue.perRating > 0)) return null;
   const impact = Math.min(5, statValue.pct || 5, Math.max(0, (gain || 0) * statValue.perRating));
@@ -498,6 +500,7 @@ export function statValueScore(gain, statValue) {
 }
 
 // All gear levers as findings: priority-stat drop swaps, re-stats, embellishment.
+/** @param {any} gf @param {string} priority @param {StatValue|null} [statValue] @param {FieldDelta|null} [gemDelta] */
 export function gearLevers(gf, priority, statValue = null, gemDelta = null) {
   if (!gf) return [];
   const PRI = priority.toUpperCase();

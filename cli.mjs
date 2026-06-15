@@ -147,7 +147,7 @@ const log = (line = "") => console.log(line);
 let fetching = false;
 if (opt["allow-fetch"] && !opt["cache-only"]) {
   const gate = await acquireFetchGate();
-  if (gate.ok) { process.env.WCL_ALLOW_FETCH = "1"; fetching = true; log(`[budget] fetching enabled (~${Math.round(gate.remaining)} WCL pts available).`); }
+  if (gate.ok) { process.env.WCL_ALLOW_FETCH = "1"; fetching = true; log(`[budget] fetching enabled (~${Math.round(gate.remaining ?? 0)} WCL pts available).`); }
   else log(`[budget] NOT fetching: ${gate.reason}. Running cache-only.`);
 }
 // Learn WCL's point-reset clock up front so a mid-run 429 can say WHEN it resets.
