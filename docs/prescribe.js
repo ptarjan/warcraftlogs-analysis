@@ -468,7 +468,7 @@ export function executionLevers(execd, rot, peerGapPct = null, activePct = null)
   return out;
 }
 
-function consumableLevers(field, my) {
+export function consumableLevers(field, my) {
   const out = [];
   for (const cn of CONSUMABLES) {
     const counter = field[cn.field];
@@ -488,6 +488,10 @@ function consumableLevers(field, my) {
       // Swap: price the SPECIFIC field-favored item (peers on it vs not), not the
       // have-any delta -- so "defensive flask -> the DPS flask" reads measured.
       const td = field.topDeltas && field.topDeltas[cn.field];
+      // Don't recommend a swap the field MEASURED at ~0% -- telling someone to swap
+      // one food/flask/potion for another for no gain is noise, not coaching. (An
+      // est swap, with no counterfactual to trust, still surfaces at the estimate.)
+      if (td && Math.round(td.pct) === 0) continue;
       const swapCite = td ? ` (measured: peers on it do ${Math.round(td.pct)}% more than those without, n=${td.nHave}/${td.nNot})` : "";
       out.push(finding(DIM.SETUP, td ? DPS(Math.round(td.pct)) : cn.swap,
         `${cn.label}: ${wowheadSpell(mineGuid, mineName)} -> ${wowheadSpell(field.guids.get(top), top)}.${swapCite}`,

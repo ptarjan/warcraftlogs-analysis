@@ -53,7 +53,7 @@ test("fieldDelta measures an attribute's value from the field (have vs not)", ()
   // Too few on one side -> null.
   assert.equal(fieldDelta([110, 100, 100, 100, 100], [true, false, false, false, false]), null);
 });
-const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, strengths, killHistory } = await import("../docs/prescribe.js");
+const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, strengths, killHistory, consumableLevers } = await import("../docs/prescribe.js");
 
 test("killHistory: parse spread (consistency) + recent-vs-old trend (improvement), time-ordered", () => {
   const k = (p, t) => ({ rankPercent: p, startTime: t });
@@ -617,4 +617,18 @@ test("embellishments: you OWN the #1 items (slot keyed differently) -> no findin
     embCompare: EC({ yourCombo: ["Back", "Wrist"], yourRank: null, runsTopItems: true, recommended: [] }),
   });
   assert.equal(r, null);
+});
+
+test("consumableLevers: don't recommend a swap the field MEASURED at ~0% (pointless), but keep a real one", () => {
+  const base = (foodPct) => ({
+    foods: new Map([["Well Fed", 6], ["Hearty Well Fed", 2]]),
+    flasks: new Map(), potions: new Map(), augRunes: new Map(), oils: new Map(),
+    guids: new Map([["Well Fed", 12345]]),
+    deltas: {}, topDeltas: { foods: { pct: foodPct, nHave: 6, nNot: 4 } }, n: 10,
+  });
+  const my = { food: "Hearty Well Fed", foodGuid: 999 };       // a SWAP (you run a different food)
+  // measured 0% -> swapping your food for theirs gains nothing -> not a suggestion
+  assert.equal(consumableLevers(base(0), my).filter((f) => /FOOD/.test(f.text)).length, 0);
+  // measured 3% -> a real swap, still surfaces
+  assert.equal(consumableLevers(base(3), my).filter((f) => /FOOD/.test(f.text)).length, 1);
 });
