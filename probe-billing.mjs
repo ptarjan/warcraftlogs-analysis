@@ -13,7 +13,9 @@
  * Spends a small slice of budget (2N report reads + a few rateLimit reads). Run it
  * from the roster-review loop, which is the sanctioned budget-spender.
  */
-import { setupNodeCaches } from "./cli-common.mjs";
+import fs from "node:fs";
+import path from "node:path";
+import { setupNodeCaches, CACHE_DIR } from "./cli-common.mjs";
 
 async function main() {
   setupNodeCaches();
@@ -67,6 +69,18 @@ async function main() {
   console.log(`[probe] ${res.n} separate requests cost ${res.sepCost} pts (${res.perReqSeparate.toFixed(1)}/req)`);
   console.log(`[probe] 1 combined request cost ${res.combCost} pts`);
   console.log(`[probe] VERDICT: ${res.verdict}`);
+
+  // Persist the verdict so it OUTLIVES this process -- stdout evaporates, and the
+  // session that acts on this (raise _BATCH_MAX / fan out, or don't) is almost
+  // certainly a different one. Any future run reads this file to learn the answer
+  // without re-spending budget. Lives in the shared cache dir, next to the gql cache.
+  const out = path.join(CACHE_DIR, "billing-probe.json");
+  const record = { at: new Date().toISOString(), character: `${name}-${server} (${region})`, ...res };
+  try {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.writeFileSync(out, JSON.stringify(record, null, 2));
+    console.log(`[probe] verdict saved to ${out} -- a future session reads this to decide on _BATCH_MAX / fan-out.`);
+  } catch (e) { console.error(`[probe] could not save verdict: ${e.message || e}`); }
 }
 
 await main();
