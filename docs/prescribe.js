@@ -614,7 +614,12 @@ export function reconcileImpacts(impacts, target) {
 // (selection bias, applies to all roles) before healer before support before playstyle.
 export function remainderKind(residual, { elite = false, healer = false, support = false, underPress = false } = {}) {
   if (residual >= 8) return elite ? "elite" : healer ? "healer" : support ? "support" : "playstyle";
-  if (underPress) return "underpress";
+  // "underpress" headlines the remainder as GCD-uptime / press-on-more-pulls -- a DAMAGE
+  // press-faster conclusion. A healer/support can't have that lever (the press-faster lever
+  // itself is !healer && !support gated, and underPress is built from the DAMAGE cast gap),
+  // so never headline their small remainder that way; fall through to the role-neutral
+  // "small" (sim tuning + variance). Matches the >=8 branch already prioritizing healer/support.
+  if (underPress && !healer && !support) return "underpress";
   return "small";
 }
 

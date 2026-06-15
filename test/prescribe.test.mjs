@@ -501,6 +501,13 @@ test("remainderKind: a big remainder for an ELITE player is the gap to top parse
   assert.equal(remainderKind(4, { elite: true, underPress: true }), "underpress");
   assert.equal(remainderKind(4, { elite: true, underPress: false }), "small");
   assert.equal(remainderKind(4, { elite: false, underPress: true }), "underpress");
+  // A healer/support small remainder must NOT be headlined "underpress" (GCD-uptime /
+  // press-faster) -- that lever can't apply to them (it's built from the DAMAGE cast gap,
+  // and press-faster is itself !healer && !support gated). Fall through to role-neutral "small".
+  assert.equal(remainderKind(4, { healer: true, underPress: true }), "small");
+  assert.equal(remainderKind(4, { support: true, underPress: true }), "small");
+  // A DAMAGE player with the same small remainder + cast deficit still gets "underpress".
+  assert.equal(remainderKind(4, { healer: false, support: false, underPress: true }), "underpress");
 });
 
 test("verdictLever: headlines the ACTUAL biggest lever, not a fixed category precedence", () => {
