@@ -60,19 +60,16 @@ export function pickCurrentKill(kills, band = 1) {
     .reduce((a, b) => ((b.startTime || 0) > (a.startTime || 0) ? b : a));
 }
 
-async function fieldGearConsumables(name, server, region, encounter, difficulty, className, specName, priority = "crit") {
-  const enchBySlot = {};   // slot -> Map(name -> count)
-  const trinkets = new Map(), flasks = new Map(), foods = new Map(), potions = new Map(), augRunes = new Map(), oils = new Map();
-  const guids = new Map(); // flask/food name -> spell guid (for Wowhead links)
-  const statPcts = [];
-  // The ilvl-matched field, via the shared core.ilvlPeers (same set overview /
-  // timeline / rotation use -- one fetch shared, not a divergent copy). Then fetch
-  // each peer's gear/buffs/stats concurrently (bounded).
+// Your priority-stat as a % of your total secondary rating (crit/haste/mastery/vers).
+const secPct = (s, priority) => 100 * s[priority] / (["crit", "haste", "mastery", "vers"].reduce((a, k) => a + s[k], 0) || 1);
+
+// The ilvl-matched field, via the shared core.ilvlPeers (same set overview / timeline /
+// rotation use -- one fetch shared, not a divergent copy). Stop once PEER_SAMPLE
+// succeed; the candidate buffer only backfills failures. Per-peer reportCore + buff +
+// stat fetches run concurrently, so gql() auto-batches them (no hand-bundling needed).
+async function fetchPeerField(name, server, region, encounter, difficulty, className, specName) {
   const cands = await ilvlPeers(name, server, region, encounter, difficulty, className, specName);
-  // Stop once PEER_SAMPLE succeed -- fetch the candidate buffer only to backfill
-  // failures. Each wave's per-peer reportCore + buff-table fetches run concurrently,
-  // so gql() auto-batches them into one request (no hand-bundling needed).
-  const peers = await collectUpTo(cands, PEER_SAMPLE, 5, async (r) => {
+  return collectUpTo(cands, PEER_SAMPLE, 5, async (r) => {
     const code = r.report.code, fight = r.report.fightID;
     const m = await playerMetrics(code, fight, r.name, specName, className);
     if (!m) return null;
@@ -80,7 +77,18 @@ async function fieldGearConsumables(name, server, region, encounter, difficulty,
     const s = await secondaryStats(code, fight, m.sourceID, className);
     return { m, bf, s };
   });
+}
 
+// Tally what the field RUNS: enchants per slot, trinkets (by item id -- a name can
+// re-skin across ilvls; EFFECT-based so they get their own lever, never a stat-swap),
+// the self-applied consumables (via the shared CONSUMABLES matchers), and each peer's
+// priority-stat %. Pure over the fetched peers.
+function tallyPeerField(peers, priority) {
+  const enchBySlot = {};   // slot -> Map(name -> count)
+  const trinkets = new Map(), flasks = new Map(), foods = new Map(), potions = new Map(), augRunes = new Map(), oils = new Map();
+  const guids = new Map(); // consumable name -> spell guid (for Wowhead links)
+  const byField = { flasks, foods, potions, augRunes, oils };
+  const statPcts = [];
   for (const { m, bf, s } of peers) {
     for (const g of m.gear) {
       const slot = g.slot;
@@ -89,15 +97,11 @@ async function fieldGearConsumables(name, server, region, encounter, difficulty,
         (enchBySlot[slotName] = enchBySlot[slotName] || new Map())
           .set(g.permanentEnchantName, (enchBySlot[slotName].get(g.permanentEnchantName) || 0) + 1);
       }
-      // Tally trinkets by item id (a name can re-skin across ilvls); keep the name
-      // for display. Trinkets are EFFECT-based, so they get their own lever (a
-      // "sim this" candidate), never a stat-swap -- see trinketLevers / gear.js.
       if ((slot === 12 || slot === 13) && g.id) {
         const t = trinkets.get(g.id) || { name: g.name, count: 0 };
         t.count++; trinkets.set(g.id, t);
       }
     }
-    const byField = { flasks, foods, potions, augRunes, oils };
     for (const [nm, b] of Object.entries(bf)) {
       const lc = nm.toLowerCase();
       for (const c of CONSUMABLES) {
@@ -106,22 +110,24 @@ async function fieldGearConsumables(name, server, region, encounter, difficulty,
         tally.set(nm, (tally.get(nm) || 0) + 1); guids.set(nm, b.guid);
       }
     }
-    if (s) {
-      const sec = ["crit", "haste", "mastery", "vers"].reduce((acc, k) => acc + s[k], 0) || 1;
-      statPcts.push(100 * s[priority] / sec);
-    }
+    if (s) statPcts.push(secPct(s, priority));
   }
-  // Empirically value each lever from THIS ilvl-matched sample -- median DPS of
-  // peers who have it vs who don't (fieldDelta). null where the field gives no
-  // counterfactual (e.g. everyone flasks) -> the lever keeps its estimate.
-  const dps = peers.map((p) => p.m.dps);
+  return { enchBySlot, trinkets, flasks, foods, potions, augRunes, oils, guids, statPcts };
+}
+
+// Empirically VALUE each lever from the ilvl-matched sample -- median DPS of peers who
+// have it vs who don't (fieldDelta), a measured FLOOR (confounded: good players do more
+// of everything). null where the field gives no counterfactual (e.g. everyone flasks)
+// -> the lever keeps its estimate. Covers: having ANY consumable (deltas), the FIELD'S
+// TOP item for a wrong-choice swap (topDeltas), the priority stat by % (statDelta) and
+// per RATING point (statValue, to size gear swaps from the field not a sim constant),
+// the most-common gem (gemDelta), and self-buff raid amps (compDeltas; boss-side debuffs
+// are measured separately in bossDebuffDeltas -- they sit on the enemy, not a peer's buffs).
+function computeFieldDeltas(peers, dps, priority, tally) {
+  const { flasks, foods, potions, augRunes, oils } = tally;
   const mask = (test) => peers.map((p) => Object.entries(p.bf || {}).some(([nm, b]) => test(nm.toLowerCase(), b)));
   const deltas = {};
   for (const c of CONSUMABLES) deltas[c.field] = fieldDelta(dps, mask((lc, b) => consumableHit(c, lc, b)));
-  // The value of the SPECIFIC field-favored item, for a SWAP (you ran a different
-  // one -- e.g. a defensive flask vs the field's DPS flask). deltas above measure
-  // having ANY (null when everyone flasks); these measure peers on the FIELD'S TOP
-  // item vs not, so a wrong-choice swap can be priced from the field, not guessed.
   const topMaskDelta = (counter, thr) => {
     if (!counter.size) return null;
     const topName = topEntry(counter)[0];
@@ -131,19 +137,14 @@ async function fieldGearConsumables(name, server, region, encounter, difficulty,
     flasks: topMaskDelta(flasks, 50), foods: topMaskDelta(foods, 50),
     potions: topMaskDelta(potions, 0), augRunes: topMaskDelta(augRunes, 50), oils: topMaskDelta(oils, 50),
   };
-  // Priority-stat value: top-half vs bottom-half of the field's secondary %.
-  const secOf = (s) => 100 * s[priority] / (["crit", "haste", "mastery", "vers"].reduce((a, k) => a + s[k], 0) || 1);
-  const withStat = peers.map((p, i) => ({ pc: p.s ? secOf(p.s) : null, d: dps[i] })).filter((x) => x.pc != null && x.d > 0);
+  const withStat = peers.map((p, i) => ({ pc: p.s ? secPct(p.s, priority) : null, d: dps[i] })).filter((x) => x.pc != null && x.d > 0);
   let statDelta = null;
   if (withStat.length >= 8) {
     const medStat = median(withStat.map((x) => x.pc));
     statDelta = fieldDelta(withStat.map((x) => x.d), withStat.map((x) => x.pc >= medStat));
   }
-  // Measured VALUE of the priority stat per RATING POINT, to size gear swaps from
-  // the field instead of the ~75/point sim constant. Same ilvl, so more rating =
-  // an itemization choice, not more gear: split peers at the median priority RATING
-  // and price the DPS gap across the rating spread. Confounded -> a measured floor
-  // (like the consumable deltas). null with no counterfactual -> swaps keep the est.
+  // Per-rating value: same ilvl, so more rating = an itemization choice, not more gear.
+  // Split peers at the median priority RATING and price the DPS gap across the spread.
   const withRating = peers.map((p, i) => ({ r: p.s ? p.s[priority] : null, d: dps[i] })).filter((x) => x.r != null && x.d > 0);
   let statValue = null;
   if (withRating.length >= 8) {
@@ -153,9 +154,6 @@ async function fieldGearConsumables(name, server, region, encounter, difficulty,
                  - median(withRating.filter((x) => x.r < medR).map((x) => x.r));
     if (sd && spread > 0) statValue = { pct: sd.pct, perRating: sd.pct / spread, nHave: sd.nHave, nNot: sd.nNot };
   }
-  // Gem-choice value: peers running the field's most-common gem vs not (measured
-  // like a consumable -- no fragile per-rating math, and the net stat-redistribution
-  // is baked in because it's a real you-vs-the-field DPS delta).
   const gemTally = new Map();
   for (const { m } of peers) for (const g of (m.gear || [])) for (const gm of (g.gems || [])) if (gm.id) gemTally.set(gm.id, (gemTally.get(gm.id) || 0) + 1);
   let gemDelta = null;
@@ -163,21 +161,29 @@ async function fieldGearConsumables(name, server, region, encounter, difficulty,
     const topGem = topEntry(gemTally)[0];
     gemDelta = fieldDelta(dps, peers.map((p) => (p.m.gear || []).some((g) => (g.gems || []).some((gm) => gm.id === topGem))));
   }
-  // Raid-comp amp values from the SAME ilvl field: peers who had each self-buff vs
-  // not. A measured floor (confounded -- a raid that brings an Aug also plays well),
-  // null where there's no counterfactual -> the lever is shown UNSIZED, never guessed.
-  // Boss-side debuffs (Chaos Brand, Mystic Touch) live on the ENEMY, not in a peer's
-  // buff table -- they're measured separately + on demand (bossDebuffDeltas).
   const compDeltas = {};
   for (const e of RAID_DAMAGE) {
     if (e.on !== "self") continue;
     const d = fieldDelta(dps, peers.map((p) => Object.entries(p.bf || {}).some(([nm, b]) => e.match.test(nm) && b.pct > 1)));
     if (d) compDeltas[e.key] = d;
   }
+  return { deltas, topDeltas, statDelta, statValue, gemDelta, compDeltas };
+}
+
+// The field's gear/consumable/stat picture for prescribe: fetch the peers once, tally
+// what they run, and value each lever from the sample. (Split into fetch/tally/value so
+// each piece reads + tests on its own; the assembled shape is unchanged.)
+async function fieldGearConsumables(name, server, region, encounter, difficulty, className, specName, priority = "crit") {
+  const peers = await fetchPeerField(name, server, region, encounter, difficulty, className, specName);
+  const tally = tallyPeerField(peers, priority);
+  const dps = peers.map((p) => p.m.dps);
+  const fieldD = computeFieldDeltas(peers, dps, priority, tally);
+  const { enchBySlot, trinkets, flasks, foods, potions, augRunes, oils, guids, statPcts } = tally;
   return {
-    enchBySlot, trinkets, flasks, foods, potions, augRunes, oils, guids, deltas, topDeltas, statDelta, statValue, gemDelta, compDeltas,
+    enchBySlot, trinkets, flasks, foods, potions, augRunes, oils, guids,
+    ...fieldD,
     statPct: statPcts.length ? median(statPcts) : null, n: peers.length,
-    dpsMed: peers.length ? median(peers.map((p) => p.m.dps)) : null, // measured field DPS
+    dpsMed: peers.length ? median(dps) : null, // measured field DPS
     // Field overheal % (median over the SAME peers) -- the baseline the healer
     // OVERHEALING lever measures your spill against. 0 for a damage field (harmless).
     overhealMed: peers.length ? median(peers.map((p) => p.m.overhealPct)) : null,
