@@ -458,7 +458,6 @@ function note(text, cls = "") {
   const d = document.createElement("div"); d.className = "note " + cls;
   fillText(d, text); return appendBlock(cur, d);
 }
-function log(line) { if (!cur) cur = makeCard("Results"); return logTo(cur, line); }
 
 function setRunning(on) {
   goBtn.disabled = on;

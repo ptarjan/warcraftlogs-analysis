@@ -3,7 +3,7 @@
 // Wowhead proxy) and compares slot-by-slot to the field. Ported from gear.py.
 import { itemTooltip, itemXml, zoneTooltip, npcTooltip } from "./wcl.js";
 import {
-  playerMetrics, topField, f, mapLimit, topEntry, topN, bestKill, DPS, finding, DIM, metricUnit,
+  playerMetrics, topField, mapLimit, topEntry, topN, bestKill, DPS, finding, DIM, metricUnit,
 } from "./core.js";
 import { wowheadItem } from "./links.js";
 

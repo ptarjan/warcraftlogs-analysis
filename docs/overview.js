@@ -124,7 +124,7 @@ async function difficultyInflation(log, name, server, region, encounter, classNa
 
 export async function run(log, name, server, region, className = "Monk", specName = "Brewmaster",
   difficulty = 5, bosses = Infinity, inflation = false) {
-  const { killed } = await overview(log, name, server, region, difficulty);
+  await overview(log, name, server, region, difficulty);
   // Deep-compare EVERY killed boss (most recent first). It's affordable because
   // each boss's peers + your-kill data come from the same fetches timeline already
   // makes for all bosses -- both go through core.ilvlPeers, so they pick the

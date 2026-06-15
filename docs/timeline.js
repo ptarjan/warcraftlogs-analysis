@@ -1,7 +1,6 @@
 // @ts-check
 // Comparative timeline root-cause analysis: where in the fight your DPS leaks
 // vs ilvl-matched peers on the SAME boss (phase/intermission aware).
-import { gql } from "./wcl.js";
 import {
   characterZone, characterEncounter, playerMetrics, ilvlPeers, PEER_SAMPLE, median, f, mapLimit, collectUpTo,
   fightWindow, fightEvents,

@@ -13,8 +13,13 @@
     "lib": ["es2022", "dom", "dom.iterable"],
     "strict": false,
     "noImplicitAny": false,
+    // Catch dead code + missing returns (cheap rigor, no runtime change). Full strict /
+    // noImplicitAny is impractical on gradually-typed JS (~1300 implicit-any), but these
+    // two are free and catch real rot -- e.g. an unused import left after a refactor.
+    "noUnusedLocals": true,
+    "noImplicitReturns": true,
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["docs/**/*.js", "cli.mjs", "types.d.ts"]
+  "include": ["docs/**/*.js", "cli.mjs", "cli-common.mjs", "progression-cli.mjs", "types.d.ts"]
 }
