@@ -3,7 +3,7 @@
 // Wowhead proxy) and compares slot-by-slot to the field. Ported from gear.py.
 import { itemTooltip, itemXml, zoneTooltip, npcTooltip } from "./wcl.js";
 import {
-  playerMetrics, topField, f, mapLimit, topEntry, bestKill, DPS, finding, metricUnit,
+  playerMetrics, topField, f, mapLimit, topEntry, topN, bestKill, DPS, finding, metricUnit,
 } from "./core.js";
 import { wowheadItem } from "./links.js";
 
@@ -280,7 +280,7 @@ export async function gearFindings(name, server, region, difficulty, className, 
   // embellishments rank among what top performers actually run?
   const fe = await fieldEmbellishments(className, specName, difficulty, enc);
   const yourCombo = embellishedSlots.slice().sort();
-  const comboList = [...fe.combos.entries()].sort((a, b) => b[1] - a[1])
+  const comboList = topN(fe.combos)
     .map(([k, cnt]) => [JSON.parse(k), cnt]);
   const yourComboKey = JSON.stringify(yourCombo);
   let yourRank = null;
@@ -288,7 +288,7 @@ export async function gearFindings(name, server, region, difficulty, className, 
     if (JSON.stringify(comboList[i][0]) === yourComboKey) { yourRank = [i + 1, comboList[i][1]]; break; }
   }
   const yourItemsPop = yourEmbItems.map((nm) => [nm, fe.items.get(nm) || 0]);
-  const topItems = [...fe.items.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const topItems = topN(fe.items, 4);
   // The concrete recommendation: for the #1 slot-combo the field runs, name the
   // single most popular embellishment ITEM in each of those slots -- so the
   // advice is "craft <item> on your <slot>", not just "pick some combo".
@@ -322,7 +322,7 @@ export async function gearFindings(name, server, region, difficulty, className, 
   const myGems = you.gear.flatMap((g) => (g.gems || []).map((gm) => gm.id)).filter(Boolean);
   const gemCount = new Map();
   for (const id of myGems) gemCount.set(id, (gemCount.get(id) || 0) + 1);
-  const fieldTop = [...fc.gems.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const fieldTop = topN(fc.gems, 3);
   const variety = fc.gemVariety.slice().sort((a, b) => a - b);
   // Resolve the field's #1 gem's real NAME here (gearFindings is async + already
   // reads item tooltips) so the lever can link it by name, not a generic phrase.
@@ -447,7 +447,7 @@ export function gemLever(gf, gemDelta = null) {
   const gi = gf.gems;
   const fieldTopId = gi.fieldTop && gi.fieldTop[0] && gi.fieldTop[0][0];
   if (!fieldTopId || !gi.yourGems.size) return [];
-  const yourTop = [...gi.yourGems.entries()].sort((a, b) => b[1] - a[1])[0];
+  const yourTop = topEntry(gi.yourGems);
   const yourTopId = yourTop && yourTop[0];
   const overVariety = gi.fieldVarietyMed != null && gi.yourVariety > gi.fieldVarietyMed;
   const wrongPrimary = yourTopId !== fieldTopId;

@@ -2,7 +2,7 @@
 // Overview + item-level / duration-controlled comparison vs the field.
 import {
   DIFFICULTY, characterZone, characterEncounter, topRankings, playerMetrics,
-  secondaryStats, gearSummary, median, f, padL, padR, collectUpTo, bestRank,
+  secondaryStats, gearSummary, median, topN, f, padL, padR, collectUpTo, bestRank,
   ilvlPeers, PEER_SAMPLE, metricUnit, recentKills, runIsHealer,
 } from "./core.js";
 
@@ -81,7 +81,7 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
   log(`    trinkets: [${g.trinkets.map((t) => `'${t}'`).join(", ")}]`);
   const peerTrinkets = new Map();
   for (const p of peers) for (const t of gearSummary(p.gear).trinkets) peerTrinkets.set(t, (peerTrinkets.get(t) || 0) + 1);
-  const top4 = [...peerTrinkets.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map((e) => e[0]);
+  const top4 = topN(peerTrinkets, 4).map((e) => e[0]);
   log(`    peer trinkets: [${top4.map((t) => `'${t}'`).join(", ")}]`);
 }
 

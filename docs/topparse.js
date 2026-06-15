@@ -16,7 +16,7 @@
 // list), NOT a spec's rotation/stat weights -- which is what the no-hard-coding
 // rule is actually about.
 import {
-  playerMetrics, topRankings, buffUptimes, bossDebuffs, median, f, mapLimit, bestKill,
+  playerMetrics, topRankings, buffUptimes, bossDebuffs, median, topN, f, mapLimit, bestKill,
   DPS, COMP, INFO, finding, runIsHealer, metricUnit,
 } from "./core.js";
 import { wowheadSpell } from "./links.js";
@@ -126,7 +126,7 @@ export async function topParseFindings(name, server, region, difficulty, classNa
     const addAgg = new Map();
     for (const r of topRoutes) for (const [nm, tot] of r.byAdd) addAgg.set(nm, (addAgg.get(nm) || 0) + tot);
     const youHits = new Set([...youRoute.byAdd.keys()]);
-    const addNames = [...addAgg.entries()].sort((a, b) => b[1] - a[1])
+    const addNames = topN(addAgg)
       .map(([n]) => n).filter((n) => !youHits.has(n)).slice(0, 3);
     routing = { you: youRoute.pct, top: median(topRoutes.map((r) => r.pct)), addNames };
     potions = { you: potionCount(you.casts), top: Math.round(median(tops.map((t) => potionCount(t.m.casts)))) };

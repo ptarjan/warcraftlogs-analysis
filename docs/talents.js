@@ -10,7 +10,7 @@
 // node `id`, and WCL `id` === Raidbots entry `id`, which carries the real name +
 // spellId. We match the spec by CombatantInfo.specID === Raidbots specId.
 import { spellTooltip } from "./wcl.js";
-import { reportCore, playerMetrics, topField, mapLimit, median, f, bestKill, DPS, finding } from "./core.js";
+import { reportCore, playerMetrics, topField, mapLimit, median, topN, f, bestKill, DPS, finding } from "./core.js";
 import { wowheadSpell } from "./links.js";
 
 const TALENTS_URL = "https://www.raidbots.com/static/data/live/talents.json";
@@ -264,7 +264,7 @@ export async function talentFindings(name, server, region, className, specName, 
   };
   const heroCounts = new Map();
   for (const p of peers) { const h = heroName(p.map); if (h) heroCounts.set(h, (heroCounts.get(h) || 0) + 1); }
-  const heroField = [...heroCounts.entries()].sort((a, b) => b[1] - a[1])
+  const heroField = topN(heroCounts)
     .map(([name, ct]) => ({ name, pct: 100 * ct / peers.length }));
   const hero = heroField.length ? { yours: heroName(you.map), field: heroField } : null;
 

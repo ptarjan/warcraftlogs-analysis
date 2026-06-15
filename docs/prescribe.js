@@ -174,7 +174,7 @@ async function fieldGearConsumables(name, server, region, encounter, difficulty,
   for (const { m } of peers) for (const g of (m.gear || [])) for (const gm of (g.gems || [])) if (gm.id) gemTally.set(gm.id, (gemTally.get(gm.id) || 0) + 1);
   let gemDelta = null;
   if (gemTally.size) {
-    const topGem = [...gemTally.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    const topGem = topEntry(gemTally)[0];
     gemDelta = fieldDelta(dps, peers.map((p) => (p.m.gear || []).some((g) => (g.gems || []).some((gm) => gm.id === topGem))));
   }
   // Raid-comp amp values from the SAME ilvl field: peers who had each self-buff vs
