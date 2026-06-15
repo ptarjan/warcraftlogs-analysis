@@ -253,7 +253,9 @@ test("executionLevers: movement lever needs a POSITIVE median loss, not worstRan
   assert.ok(!executionLevers(zero, {}, 40).some((x) => /MOVEMENT/.test(x.text)), "zero median -> no movement line");
   // A real positive loss still fires.
   const real = { pressExcess: 0, rangeExcess: 4.4, worstRange: ["Boss A (3 kills)"], overshootExcess: 0 };
-  assert.ok(executionLevers(real, {}, 40).some((x) => /MOVEMENT/.test(x.text)), "positive median -> movement line fires");
+  const mv = executionLevers(real, {}, 40).find((x) => /MOVEMENT/.test(x.text));
+  assert.ok(mv, "positive median -> movement line fires");
+  assert.equal(mv.kind, "MOVEMENT");   // tagged so the verdict names "cutting movement", not "uptime/pressing"
 });
 
 test("executionLevers: small gap scales down via the headroom cap", () => {

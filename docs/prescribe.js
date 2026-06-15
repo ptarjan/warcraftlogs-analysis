@@ -463,7 +463,7 @@ export function executionLevers(execd, rot, peerGapPct = null, activePct = null)
     // ("out of melee", "gap-closers to stay on target") -- it's wrong for a ranged
     // healer, whom this lever also fires for.
     out.push(finding(DIM.EXECUTION, DPS(Math.round(Math.max(execd.rangeExcess, 0.1) / 60 * 100)),
-      `MOVEMENT uptime on specific fights: you lose ~${f(execd.rangeExcess, 1)}s/min of casting to moving / being out of range more than peers (intermissions excluded).${where} Pre-position and cut avoidable movement so your GCD keeps rolling through mechanics.`, "measured"));
+      `MOVEMENT uptime on specific fights: you lose ~${f(execd.rangeExcess, 1)}s/min of casting to moving / being out of range more than peers (intermissions excluded).${where} Pre-position and cut avoidable movement so your GCD keeps rolling through mechanics.`, "measured", KIND.MOVEMENT));
   }
   return out;
 }
@@ -863,7 +863,13 @@ function renderPrescription(log, d) {
   } else if (lever === "rotation") {
     log(`VERDICT: your biggest character lever is ${rotKindOf(yours[0])}${thenExtra}. The gap is mostly HOW you play the same gear, not a setup overhaul${compList0.length ? " (comp aside)" : ""}.`);
   } else if (lever === "execution") {
-    log(`VERDICT: your biggest character lever is EXECUTION (uptime / pressing on time)${thenExtra}. The gap is HOW you play, not a setup overhaul${compList0.length ? " (comp aside)" : ""}.`);
+    // Name the SPECIFIC execution issue: a movement/range lever is NOT "uptime / pressing
+    // on time" -- saying that contradicts the "~100% active, barely idling" strength a
+    // movement-bound player (e.g. a Disc Priest at 9.3s/min of movement) earns.
+    const execWhat = yours[0] && yours[0].kind === KIND.MOVEMENT
+      ? "EXECUTION (cutting avoidable movement -- staying in range to cast)"
+      : "EXECUTION (uptime / pressing on time)";
+    log(`VERDICT: your biggest character lever is ${execWhat}${thenExtra}. The gap is HOW you play, not a setup overhaul${compList0.length ? " (comp aside)" : ""}.`);
   } else if (lever === "setup") {
     // Only credit "pressing faster" when a press-faster lever survived -- for a
     // player who already out-casts the field it's suppressed, and the gap is
