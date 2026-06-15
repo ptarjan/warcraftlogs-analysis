@@ -104,6 +104,7 @@ export async function timelineFindings(name, server, region, encounter, difficul
   const recentRanks = [...er.ranks].sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
   const perKill = await mapLimit(recentRanks.slice(0, KILLS_PER_BOSS), 4, async (rk) => {
     const you = await playerMetrics(rk.report.code, rk.report.fightID, name, specName, className);
+    if (!you) return null;
     const fm = await fightMetrics(rk.report.code, rk.report.fightID, you.sourceID, className);
     // Carry active% (uptime) alongside the timeline metrics -- the press-faster
     // lever must be judged against your TYPICAL uptime, not one low-uptime fight.
@@ -162,6 +163,7 @@ function printBossComparison(log, c) {
   }
 }
 
+/** @param {string|null} [boss] */
 export async function run(log, name, server, region, className = "Monk", specName = "Brewmaster",
   difficulty = 5, boss = null) {
   const c = await characterZone(name, server, region, difficulty);

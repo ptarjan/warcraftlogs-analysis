@@ -179,7 +179,7 @@ async function fieldLoadouts(encounterId, difficulty, className, specName, n = 1
   const outs = await mapLimit(cands, 5, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
     const lo = m ? await loadout(r.report.code, r.report.fightID, m.sourceID) : null;
-    return lo ? { map: lo.map, dmgBy: m.dmgBy, total: m.total } : null;
+    return (m && lo) ? { map: lo.map, dmgBy: m.dmgBy, total: m.total } : null;
   });
   return outs.filter(Boolean).slice(0, n);
 }
