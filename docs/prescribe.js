@@ -743,8 +743,14 @@ export function residualText(kind, r, d, rot, rx) {
     // Only cite empowered shares when the ability HAS a meaningful empowered version in
     // the field (fieldEmp > ~5%); a uniform-hit ability would print a meaningless "0% vs 0%".
     const hasEmp = pr && pr.youEmp != null && pr.fieldEmp != null && pr.fieldEmp >= 0.05;
+    // Point at "the EMPOWERMENT item" ONLY when that lever actually fired -- its gates
+    // are stricter than this cite's (field empowers >= 20%, per-cast gap >= 1%), so a
+    // fieldEmp in [5%,20%) or a sub-1% gap trails enough to cite here but produces NO
+    // EMPOWERMENT lever -> a dangling "(see the EMPOWERMENT item)". Check by kind (robust
+    // to threshold drift), like the off-meta-build / overheal-pointer gates.
+    const hasEmpItem = (rx || []).some((x) => x.kind === KIND.EMPOWERMENT);
     const cite = hasEmp && pr.fieldEmp - pr.youEmp >= 0.12
-      ? ` We can see the biggest piece: only ${ep(pr.youEmp)} of your ${pr.name} casts land empowered vs the field's ${ep(pr.fieldEmp)} (see the EMPOWERMENT item) -- the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps).`
+      ? ` We can see the biggest piece: only ${ep(pr.youEmp)} of your ${pr.name} casts land empowered vs the field's ${ep(pr.fieldEmp)}${hasEmpItem ? " (see the EMPOWERMENT item)" : ""} -- the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps).`
       : hasEmp
       ? ` We checked the obvious culprit: your ${pr.name} lands empowered ${
           pr.youEmp - pr.fieldEmp >= 0.05 ? "more often than"

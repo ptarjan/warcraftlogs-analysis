@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { DPS, COMP, INFO, finding, fieldDelta, setRunMetric } = await import("../docs/core.js");          // shared Finding currency
+const { DPS, COMP, INFO, finding, fieldDelta, setRunMetric, KIND } = await import("../docs/core.js");          // shared Finding currency
 const { rotationLevers, usageDamageGaps, perCastValue, dmgGapPct } = await import("../docs/rotation.js");
 
 test("perCastValue/dmgGapPct: the shared 'missed casts x your per-cast / total' kernel", () => {
@@ -121,6 +121,20 @@ test("strengths: surfaces the checks you PASSED (silent levers), gated + metric-
     assert.match(above, /EFFICIENCY: your 31% overheal is in line with the field's 29%/);
     assert.doesNotMatch(above, /at or below/);
   } finally { setRunMetric("dps"); }
+});
+
+test("residualText: playstyle cite points at 'the EMPOWERMENT item' only when that lever fired", () => {
+  // You trail on empowerment enough to cite (gap >= 12pp, fieldEmp >= 5%) BUT the
+  // EMPOWERMENT lever's stricter gate (fieldEmp >= 20%, per-cast >= 1%) didn't fire --
+  // fieldEmp 15% here. The cite must NOT dangle "(see the EMPOWERMENT item)".
+  const d = { medP: 50 };
+  const rot = { proc: { name: "Big Hit", youEmp: 0.02, fieldEmp: 0.15 }, usage: { under: [] }, talent: null };
+  const noItem = residualText("playstyle", 30, d, rot, []);   // no EMPOWERMENT finding present
+  assert.match(noItem, /land empowered vs the field's/);      // still states the measured fact
+  assert.doesNotMatch(noItem, /see the EMPOWERMENT item/);    // but no dangling pointer
+  // When the lever DID fire (an EMPOWERMENT finding is in the list), the pointer appears.
+  const withItem = residualText("playstyle", 30, d, rot, [{ kind: KIND.EMPOWERMENT, text: "EMPOWERMENT: ..." }]);
+  assert.match(withItem, /see the EMPOWERMENT item/);
 });
 
 test("isOffMetaBuild: true only when a HERO TREE mismatch lever is present", () => {
