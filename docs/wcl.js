@@ -654,9 +654,24 @@ export function fmtRateWait(seconds) {
   return seconds >= 60 ? `${Math.max(1, Math.ceil(seconds / 60))} min` : `${Math.ceil(seconds)}s`;
 }
 
+// --- per-run request accounting (billing diagnostics) -----------------------
+// A natural --allow-fetch run counts billable POSTs and the report-UNITS they carry
+// (a combined K-report request = 1 request, K units). cli.mjs reads the points spent
+// around a run and appends (requests, units, points); across runs, whichever of
+// points/request vs points/unit stays CONSTANT reveals the billing basis -- constant
+// per-request => flat (batching wins), constant per-unit => complexity (it doesn't).
+// Free: rides the loop's existing spend, no separate probe invocation.
+let _statRequests = 0, _statUnits = 0;
+const _aliasCount = (q) => Math.max(1, (q.match(/(^|\s)_\d+:/g) || []).length);
+export function resetRunStats() { _statRequests = 0; _statUnits = 0; }
+export function getRunStats() { return { requests: _statRequests, units: _statUnits }; }
+
 // Run a GraphQL query, returning the parsed `data`. Retries transient errors;
 // throws PrivateReport on permission errors so callers can skip a report.
 async function _gqlRun(query, retries = 6) {
+  // Count the billable request + its report-units; skip rateLimitData meta-probes,
+  // which would pollute the requests/units ratio the billing fit depends on.
+  if (!query.includes("rateLimitData")) { _statRequests++; _statUnits += _aliasCount(query); }
   let last;
   for (let attempt = 0; attempt < retries; attempt++) {
     let status, j, retryAfter = null;
