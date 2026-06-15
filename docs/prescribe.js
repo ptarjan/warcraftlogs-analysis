@@ -173,6 +173,7 @@ function computeFieldDeltas(peers, dps, priority, tally) {
 // The field's gear/consumable/stat picture for prescribe: fetch the peers once, tally
 // what they run, and value each lever from the sample. (Split into fetch/tally/value so
 // each piece reads + tests on its own; the assembled shape is unchanged.)
+/** @returns {Promise<PeerField>} */
 async function fieldGearConsumables(name, server, region, encounter, difficulty, className, specName, priority = "crit") {
   const peers = await fetchPeerField(name, server, region, encounter, difficulty, className, specName);
   const tally = tallyPeerField(peers, priority);
