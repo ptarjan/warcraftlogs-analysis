@@ -613,6 +613,59 @@ export function verdictLever(yours) {
   return "none";
 }
 
+// The prose for the unexplained REMAINDER, by remainderKind (see that fn for why each
+// kind exists). The big one is NOT "press faster" -- a big remainder is the analysis
+// admitting it can't fully explain the gap, so it's framed by kind, never relabeled as a
+// small lever. `r` is the rounded residual %; rot/rx provide the measured pieces to cite.
+function residualText(kind, r, d, rot, rx) {
+  if (kind === "elite") {
+    // Already top-decile: the remainder is the distance to the BEST parses at your ilvl,
+    // not a setup/rotation you're getting wrong. Don't manufacture a "playstyle" problem.
+    return `GAP TO TOP PARSES (~${r}%): you already parse ${d.medP}th percentile -- the "field" here is the BEST players at your item level, and this is the distance to them. The concrete levers above are small because there isn't much on your character to fix; the rest is raid comp + executing on optimal pulls (lust/cooldown windows, perfect target swaps), not gear or a rotation you're getting wrong.`;
+  }
+  if (kind === "healer") {
+    // HPS is bounded by the damage the raid TAKES + your assignment -- a big HPS remainder
+    // is mostly the encounter/healer comp/overheal, NOT a personal playstyle gap.
+    return `HEALING IS DAMAGE-BOUND (~${r}%): HPS measures healing DONE, which is capped by the damage your raid takes and your healing assignment -- you can't out-heal damage that didn't happen. Most of this gap is the encounter (how much went out), the healer comp, and overheal differences, not how you play. The concrete levers above are what you actually control; chase effective throughput on a fixed kill, not the raw HPS number.`;
+  }
+  if (kind === "support") {
+    // A support's personal DPS is a fraction of their value: Ebon Might / Prescience amp
+    // ALLIES, credited to THEIR parses. A big personal-DPS remainder is buff value the
+    // comparison can't see; what they control is buff UPTIME, not personal damage.
+    return `SUPPORT VALUE IS OFF YOUR SHEET (~${r}%): your throughput is mostly the amps you keep on allies (Ebon Might / Prescience / Breath of Eons), which WCL credits to THEIR parses, not your personal DPS. So most of this gap isn't personal DPS you can add -- it's buff value a personal-DPS comparison can't see. What you DO control is buff UPTIME (keep your amps rolling -- see the Support buffs card) and your own cooldown/gear use above; chase those, not the raw personal-DPS number.`;
+  }
+  if (kind === "playstyle") {
+    // A big remainder at matched ilvl is NOT gear/sim and NOT "press faster" -- it's
+    // PLAYSTYLE. The concrete pieces are their OWN levers above; for the rest we DIRECTLY
+    // check empowerment with a measured fact (your biggest hit's empowered share vs the
+    // field). If yours trails -> point at it; if it matches, say so -- the gap is per-cast
+    // damage, not a button. Only cite castable under-pressed abilities (a respec lever
+    // otherwise). Never hand-wave "sequencing".
+    const under = ((rot && rot.usage && rot.usage.under) || []).filter((a) => castable(a.name, rot && rot.talent));
+    const pr = rot && rot.proc;
+    const ep = (n) => `${Math.round(n * 100)}%`;
+    // Only cite empowered shares when the ability HAS a meaningful empowered version in
+    // the field (fieldEmp > ~5%); a uniform-hit ability would print a meaningless "0% vs 0%".
+    const hasEmp = pr && pr.youEmp != null && pr.fieldEmp != null && pr.fieldEmp >= 0.05;
+    const cite = hasEmp && pr.fieldEmp - pr.youEmp >= 0.12
+      ? ` We can see the biggest piece: only ${ep(pr.youEmp)} of your ${pr.name} casts land empowered vs the field's ${ep(pr.fieldEmp)} (see the EMPOWERMENT item) -- the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps).`
+      : hasEmp
+      ? ` We checked the obvious culprit: your ${pr.name} lands empowered ${pr.youEmp >= pr.fieldEmp ? "as often as" : "nearly as often as"} the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}), so it's NOT timing -- the gap is per-cast ${throughputWord()} (crit/stat scaling, plus comp re-attribution and fight amp windows you don't fully control).`
+      : under.length
+      ? ` We can see part of it: you press ${under.slice(0, 2).map((a) => `${a.name} ${f(a.you, 1)}/min vs ${f(a.field, 1)}`).join(", ")}.`
+      : ` The cooldown/ability gaps we could measure are listed above; the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps) we can't pin to one ability.`;
+    // Off-meta build: no same-hero peers to compare against, so a big part of the
+    // remainder is the build itself (HERO TREE + TALENTS items), not "how you play".
+    return isOffMetaBuild(rx)
+      ? `OFF-META BUILD + PLAYSTYLE (~${r}%): the biggest chunk, and a large part is your BUILD -- you run a hero tree (and talents) the field doesn't (see the HERO TREE + TALENTS items), so we can't compare your rotation to theirs button-for-button and a sim would value the build swap well above the small estimate above. Switch to the meta build and re-run first.${cite}`
+      : `PLAYSTYLE (~${r}%): the biggest chunk, and it's NOT gear (a sim would value your gear swaps at a few %) and NOT "press faster" -- it's how you play the same gear the field plays.${cite}`;
+  }
+  if (kind === "underpress") {
+    return `THE REMAINDER (~${r}%): not a setup item -- it's GCD uptime and hitting your priority on more pulls (see the measured cast/idle gaps above). That's where the rest of your gap lives.`;
+  }
+  return `THE REMAINDER (~${r}%): small and unattributed -- sim-only tuning (exact trinket/stat effect sizes) and kill-to-kill variance. No single button.`;
+}
+
 function renderPrescription(log, d) {
   const { rx, you, field, tp, execd, rot } = d;
   const isComp = (r) => r.dim === DIM.COMP;               // raid-dependent, not yours to press
@@ -756,63 +809,7 @@ function renderPrescription(log, d) {
     const underPress = (rot && rot.castGap && rot.castGap.field > rot.castGap.you)
       || (execd && execd.pressExcess >= 1 && !outpaces);
     const kind = remainderKind(residual, { elite: isEliteParse(d.medP), healer: runIsHealer(), support: runIsSupport(), underPress });
-    let rtext;
-    if (kind === "elite") {
-      // Already top-decile: the remainder is the distance to the BEST parses at your
-      // ilvl, not a setup/rotation you're getting wrong. Say so -- don't manufacture
-      // an 86%-of-your-DPS "playstyle" problem for a 94th-%ile player.
-      rtext = `GAP TO TOP PARSES (~${r}%): you already parse ${d.medP}th percentile -- the "field" here is the BEST players at your item level, and this is the distance to them. The concrete levers above are small because there isn't much on your character to fix; the rest is raid comp + executing on optimal pulls (lust/cooldown windows, perfect target swaps), not gear or a rotation you're getting wrong.`;
-    } else if (kind === "healer") {
-      // HPS is bounded by the damage the raid TAKES and your assignment -- you can't
-      // heal damage that didn't happen. So a big HPS remainder is mostly the encounter
-      // (how much went out), healer comp, and overheal, NOT a personal playstyle gap.
-      // Don't tell a healer 100%+ of their gap is "how you play the gear worse".
-      rtext = `HEALING IS DAMAGE-BOUND (~${r}%): HPS measures healing DONE, which is capped by the damage your raid takes and your healing assignment -- you can't out-heal damage that didn't happen. Most of this gap is the encounter (how much went out), the healer comp, and overheal differences, not how you play. The concrete levers above are what you actually control; chase effective throughput on a fixed kill, not the raw HPS number.`;
-    } else if (kind === "support") {
-      // A support's personal DPS is a fraction of their value: Ebon Might / Prescience
-      // amp ALLIES, and WCL credits that damage to the allies' parses, not the support's.
-      // So a big personal-DPS remainder mostly measures buff value the comparison can't
-      // see -- NOT "how you play the gear worse". The part the support DOES control is
-      // buff UPTIME (the Support buffs card / BUFF UPTIME levers), not personal damage.
-      rtext = `SUPPORT VALUE IS OFF YOUR SHEET (~${r}%): your throughput is mostly the amps you keep on allies (Ebon Might / Prescience / Breath of Eons), which WCL credits to THEIR parses, not your personal DPS. So most of this gap isn't personal DPS you can add -- it's buff value a personal-DPS comparison can't see. What you DO control is buff UPTIME (keep your amps rolling -- see the Support buffs card) and your own cooldown/gear use above; chase those, not the raw personal-DPS number.`;
-    } else if (kind === "playstyle") {
-      // A big remainder at matched ilvl is NOT a gear/sim gap (sims model gear, worth
-      // a few % here) and NOT "press faster" -- it's PLAYSTYLE. The concrete pieces
-      // surface as their OWN levers above (a missed CAST you under-press; your big
-      // hit landing in its high-damage window less). For the rest, we DIRECTLY check
-      // empowerment with a measured fact: what share of your biggest hit lands
-      // empowered vs the field. If yours trails -> point at it; if it MATCHES, say so
-      // plainly -- the gap is per-cast damage (crit/stats + comp re-attribution and
-      // this boss's damage-taken windows), NOT a button. Never hand-wave "sequencing".
-      // Only cite under-pressed abilities the player can actually cast (the peer pool
-      // can skew to a different hero tree -- that's a respec lever, not playstyle).
-      const under = ((rot && rot.usage && rot.usage.under) || []).filter((a) => castable(a.name, rot && rot.talent));
-      const pr = rot && rot.proc;
-      const ep = (n) => `${Math.round(n * 100)}%`;
-      // Only cite empowered shares when the ability HAS a meaningful empowered
-      // version in the field (fieldEmp > ~5%); a uniform-hit ability (no empowered
-      // form) would print a meaningless "0% vs 0%".
-      const hasEmp = pr && pr.youEmp != null && pr.fieldEmp != null && pr.fieldEmp >= 0.05;
-      const cite = hasEmp && pr.fieldEmp - pr.youEmp >= 0.12
-        ? ` We can see the biggest piece: only ${ep(pr.youEmp)} of your ${pr.name} casts land empowered vs the field's ${ep(pr.fieldEmp)} (see the EMPOWERMENT item) -- the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps).`
-        : hasEmp
-        ? ` We checked the obvious culprit: your ${pr.name} lands empowered ${pr.youEmp >= pr.fieldEmp ? "as often as" : "nearly as often as"} the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}), so it's NOT timing -- the gap is per-cast ${throughputWord()} (crit/stat scaling, plus comp re-attribution and fight amp windows you don't fully control).`
-        : under.length
-        ? ` We can see part of it: you press ${under.slice(0, 2).map((a) => `${a.name} ${f(a.you, 1)}/min vs ${f(a.field, 1)}`).join(", ")}.`
-        : ` The cooldown/ability gaps we could measure are listed above; the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps) we can't pin to one ability.`;
-      // Off-meta build: the field runs a different hero tree, so we have NO same-hero
-      // peers to compare your rotation against -- a big part of this remainder is the
-      // build itself (the HERO TREE + TALENTS items, conservatively estimated above),
-      // not "how you play the same gear". Lead with that instead of mis-calling it
-      // pure per-cast playstyle. (Rezaa: Colossus Arms vs a 100%-Slayer field.)
-      rtext = isOffMetaBuild(rx)
-        ? `OFF-META BUILD + PLAYSTYLE (~${r}%): the biggest chunk, and a large part is your BUILD -- you run a hero tree (and talents) the field doesn't (see the HERO TREE + TALENTS items), so we can't compare your rotation to theirs button-for-button and a sim would value the build swap well above the small estimate above. Switch to the meta build and re-run first.${cite}`
-        : `PLAYSTYLE (~${r}%): the biggest chunk, and it's NOT gear (a sim would value your gear swaps at a few %) and NOT "press faster" -- it's how you play the same gear the field plays.${cite}`;
-    } else if (kind === "underpress") {
-      rtext = `THE REMAINDER (~${r}%): not a setup item -- it's GCD uptime and hitting your priority on more pulls (see the measured cast/idle gaps above). That's where the rest of your gap lives.`;
-    } else {
-      rtext = `THE REMAINDER (~${r}%): small and unattributed -- sim-only tuning (exact trinket/stat effect sizes) and kill-to-kill variance. No single button.`;
-    }
+    const rtext = residualText(kind, r, d, rot, rx);
     renderYou.push({ dim: DIM.EXECUTION, impact: residual, label: pctLabel(residual), text: rtext, basis: "measured" });
   }
   const youOut = renderYou.concat(infoList);
