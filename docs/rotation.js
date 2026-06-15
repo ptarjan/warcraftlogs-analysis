@@ -539,6 +539,31 @@ export function castable(name, talent) {
 
 // --- findings (data the prescription consumes) -------------------------------
 
+// The ilvl-matched field for the rotation comparison, each peer analyzed the SAME way
+// you were (analyzeKill), restricted to your hero tree. Via the shared core.ilvlPeers
+// (same set overview / timeline / prescribe use, so fetches dedupe). If NO ilvl-matched
+// peers exist (under-geared / low-pop spec), widen the window: which buttons you press,
+// pet usage, and DoT uptime are ~ilvl-independent, so a slightly-higher-ilvl field is a
+// valid PLAYSTYLE comparison and an approximate one beats none. Two hero trees swap whole
+// buttons (a mixed field makes the cast-rate diff lie both ways), so we compare only to
+// SAME-tree peers; hero detection is best-effort (null -> whole field). Returns the top 5.
+async function fetchRotationPeers(name, server, region, boss, difficulty, className, specName, best, you, biggest) {
+  let cands = await ilvlPeers(name, server, region, boss, difficulty, className, specName);
+  if (!cands.length) cands = await ilvlPeers(name, server, region, boss, difficulty, className, specName, { window: 15 });
+  let yourHero = null;
+  try { yourHero = await heroTreeOf(best.code, best.fight, you.sourceID); } catch (e) { /* no talent data */ }
+  const analyzed = (await mapLimit(cands, 4, async (r) => {
+    try {
+      const a = await analyzeKill(r.name, r.report.code, r.report.fightID, specName, className,
+                                  { onlyAbility: biggest ? biggest.name : "__noempower__", dotIds: (you.dots || []).map((d) => d.guid) });
+      if (!a) return null;
+      const hero = yourHero ? await heroTreeOf(r.report.code, r.report.fightID, a.sourceID).catch(() => null) : null;
+      return { ...a, hero };
+    } catch (e) { return null; }
+  })).filter(Boolean);
+  return { peers: sameHeroPeers(analyzed, yourHero).slice(0, 5), yourHero };
+}
+
 // Returns structured rotation findings. The key output is `proc`: a genuine
 // empowerment proc (outsized NON-crit hits) you under-use vs the field -- an
 // actionable list item. If big hits are merely crits, proc.isReal is false and
@@ -569,33 +594,11 @@ export async function rotationFindings(name, server, region, className, specName
   const biggest = you.hits.length ? [...you.hits].sort((a, b) => b.med - a.med)[0] : null;
   const isReal = biggest ? biggest.procBig >= 2 : false;   // null biggest -> no empowerment analysis
 
-  // The ilvl-matched field, via the shared core.ilvlPeers (same set overview /
-  // timeline / prescribe use, so the fetches dedupe). It feeds the empowered-share
-  // + proc rate of your biggest hit, the opener, AND the ability-usage comparison.
-  let cands = await ilvlPeers(name, server, region, boss, difficulty, className, specName);
-  // Under-geared, or a low-population spec: if NO ilvl-matched peers exist (everyone
-  // logged is far higher ilvl), widen the window so we can still compare PLAYSTYLE.
-  // Which buttons you press, pet usage, and DoT uptime are ~ilvl-independent, so a
-  // slightly-higher-ilvl field is a valid rotation comparison -- and an approximate
-  // one beats none (0 peers = no rotation levers + a uninformative remainder). The
-  // raw-DPS gap stays strict (it's measured elsewhere against the tight ilvl band).
-  if (!cands.length) cands = await ilvlPeers(name, server, region, boss, difficulty, className, specName, { window: 15 });
-  // Your hero tree, so we can compare you only to peers who run the SAME one --
-  // two hero trees swap whole buttons, and a mixed field makes the cast-rate diff
-  // lie in BOTH directions (you "over-press" a button the other tree dropped, and
-  // "under-press" one it added). Best-effort; null -> compare to the whole field.
-  let yourHero = null;
-  try { yourHero = await heroTreeOf(best.code, best.fight, you.sourceID); } catch (e) { /* no talent data */ }
-  const analyzed = (await mapLimit(cands, 4, async (r) => {
-    try {
-      const a = await analyzeKill(r.name, r.report.code, r.report.fightID, specName, className,
-                                  { onlyAbility: biggest ? biggest.name : "__noempower__", dotIds: (you.dots || []).map((d) => d.guid) });
-      if (!a) return null;
-      const hero = yourHero ? await heroTreeOf(r.report.code, r.report.fightID, a.sourceID).catch(() => null) : null;
-      return { ...a, hero };
-    } catch (e) { return null; }
-  })).filter(Boolean);
-  const peers = sameHeroPeers(analyzed, yourHero).slice(0, 5);
+  // The ilvl-matched field (peers analyzed the SAME way as you), restricted to your
+  // hero tree. Feeds the empowered-share + proc rate of your biggest hit, the opener,
+  // and the whole ability-usage comparison.
+  const { peers, yourHero } = await fetchRotationPeers(
+    name, server, region, boss, difficulty, className, specName, best, you, biggest);
   const fieldProc = (isReal && peers.length) ? median(peers.map((a) => a.procPerMin)) : null;
   // Field's empowered-cast share of your biggest hit (median over peers who had
   // enough hits to judge). Pairs with your own share to SHOW the comparison and to
