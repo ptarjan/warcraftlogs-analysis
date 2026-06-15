@@ -1,7 +1,7 @@
 // @ts-check
 // Shared constants, formatting helpers, and low-level WCL fetchers.
 // Ported from analyze.py's fetcher layer; imported by the analysis modules.
-import { gql, isCached, primeQueryCache } from "./wcl.js";
+import { gql } from "./wcl.js";
 import { IS_NODE } from "./config.js";
 
 export const DIFFICULTY = { 2: "LFR", 3: "Normal", 4: "Heroic", 5: "Mythic" };
@@ -197,27 +197,6 @@ export async function characterEncounter(name, server, region, encounterId, diff
   return c ? c.encounterRankings : null;
 }
 
-// Pre-warm a character's encounterRankings for MANY bosses in ONE request (aliased
-// within the single character node), split back to each per-encounter cache key.
-// bestKill/recentKills each loop characterEncounter over every killed boss; this turns
-// that ~8-request fan-out into ~1. Fail-soft; Node only; primes the same keys (no orphaning).
-export async function prefetchCharacterEncounters(name, server, region, encounterIds, difficulty, { batch = 8 } = {}) {
-  if (!IS_NODE) return;
-  const todo = [];
-  for (const eid of encounterIds || []) {
-    const q = _characterEncounterQuery(name, server, region, eid, difficulty);
-    if (todo.some((t) => t.eid === eid) || isCached(q)) continue;
-    todo.push({ eid, q });
-  }
-  for (let i = 0; i < todo.length; i += batch) {
-    const group = todo.slice(i, i + batch);
-    const aliased = group.map((t, j) => `e${j}: ${_encField(t.eid, difficulty)}`).join("\n    ");
-    try {
-      const c = (await gql(`query { characterData { ${_charHead(name, server, region)} {\n    ${aliased} } } }`, 2, { fresh: true })).characterData.character;
-      if (c) group.forEach((t, j) => { const er = c[`e${j}`]; if (er !== undefined) primeQueryCache(t.q, { characterData: { character: { encounterRankings: er } } }); });
-    } catch (_) { /* fall back to individual characterEncounter */ }
-  }
-}
 
 export async function topRankings(encounterId, difficulty, className, specName, page = 1) {
   const q = `query { worldData { encounter(id:${encounterId}) { characterRankings(
@@ -307,9 +286,8 @@ function metricsFromTables(dmg, casts, name, specName) {
 // metricsFromTables -- so a kill's DamageDone/Casts is fetched exactly ONCE no
 // matter who asks or what class filter they'd otherwise use. WCL bills ~flat per
 // request, so one bundled fetch per report+fight is the structural point saving.
-// The report-block fields reportCore reads -- shared by the single-report query and
-// the bundled multi-report query (prefetchReportCores), so a bundled fetch and a
-// later individual reportCore() are byte-identical and cache-compatible.
+// The report-block fields reportCore reads. Factored out + frozen (loader test) so
+// the query string is a stable cache key the gql() auto-batcher can combine and split.
 const _reportCoreBody = (fight) => `
     dmg: table(fightIDs:${fight}, dataType:${throughputTable()})
     casts: table(fightIDs:${fight}, dataType:Casts)
@@ -324,52 +302,10 @@ export async function reportCore(code, fight) {
   return (await gql(_reportCoreQuery(code, fight))).reportData.report;
 }
 
-// REQUEST BUNDLING -- the core "fewest POSTs" optimization. WCL bills ~flat per
-// REQUEST, and the dominant cost is per-peer fetches (reportCore + timeline events +
-// buff uptimes) repeated for ~10 peers x ~8 bosses. So pre-warm them in ONE aliased
-// multi-report request instead of one each, then split the result back to each
-// report's INDIVIDUAL query key (primeQueryCache) so the normal accessors hit the
-// cache and stay separately reusable (cross-character/section). Fail-soft and never
-// worse: a cache hit is skipped; any batch error (WCL complexity cap, cache-only)
-// just leaves those reports to be fetched individually as before. Node only -- the
-// browser keeps per-request behavior (its own budget + IndexedDB cache).
-//
-// Each "entry" is { q, code, body }: q = the individual accessor's exact query string
-// (the cache key to prime), code = report code, body = the report-block selection.
-async function _bundlePrime(entries, batch) {
-  for (let i = 0; i < entries.length; i += batch) {
-    const group = entries.slice(i, i + batch);
-    const aliased = group.map((e, j) => `b${j}: reportData { report(code:"${e.code}") {${e.body} } }`).join("\n");
-    try {
-      const res = await gql(`query {\n${aliased}\n}`, 2, { fresh: true }); // fail fast to the per-report fallback; don't persist the bundle itself
-      group.forEach((e, j) => { const rd = res && res[`b${j}`]; if (rd && rd.report) primeQueryCache(e.q, { reportData: rd }); });
-    } catch (_) { /* rejected / cache-only -> the individual accessor fetches it as before */ }
-  }
-}
-const _uncached = (entries) => {           // dedupe + drop already-cached
-  const seen = new Set(), out = [];
-  for (const e of entries) { if (!e || seen.has(e.q) || isCached(e.q)) continue; seen.add(e.q); out.push(e); }
-  return out;
-};
-
-// Bundle peers' reportCore (dmg/casts/CombatantInfo/fights). pairs: [{code, fight}].
-export async function prefetchReportCores(pairs, { batch = 4 } = {}) {
-  if (!IS_NODE) return;
-  await _bundlePrime(_uncached((pairs || []).filter((p) => p && p.code != null && p.fight != null)
-    .map((p) => ({ q: _reportCoreQuery(p.code, p.fight), code: p.code, body: _reportCoreBody(p.fight) }))), batch);
-}
-// Bundle peers' timeline events (casts+autos). specs: [{code, fight, sourceId, start, end}].
-export async function prefetchFightEvents(specs, { batch = 4 } = {}) {
-  if (!IS_NODE) return;
-  await _bundlePrime(_uncached((specs || []).filter((s) => s && s.code != null)
-    .map((s) => ({ q: _fightEventsQuery(s.code, s.fight, s.sourceId, s.start, s.end), code: s.code, body: _fightEventsBody(s.fight, s.sourceId, s.start, s.end) }))), batch);
-}
-// Bundle peers' buff-uptime tables. specs: [{code, fight, sourceId}].
-export async function prefetchBuffUptimes(specs, { batch = 4 } = {}) {
-  if (!IS_NODE) return;
-  await _bundlePrime(_uncached((specs || []).filter((s) => s && s.code != null)
-    .map((s) => ({ q: _buffUptimesQuery(s.code, s.fight, s.sourceId), code: s.code, body: _buffUptimesBody(s.fight, s.sourceId) }))), batch);
-}
+// Request bundling is now AUTOMATIC in the fetch layer: concurrent cache-misses are
+// combined into one GraphQL request by gql() itself (wcl.js), so the per-peer loops
+// (which already run concurrently via mapLimit/collectUpTo) batch with no wiring here.
+// The old hand-written prefetch* bundlers were replaced by that.
 
 // Damage + cast metrics for one player on one fight (className arg ignored -- the
 // loader is unfiltered; kept for call-site compatibility).
@@ -712,7 +648,6 @@ export const bestRank = (ranks, specName) => {
 export async function bestKill(name, server, region, difficulty) {
   const c = await characterZone(name, server, region, difficulty);
   const ranks = (c.zoneRankings.rankings || []).filter((r) => (r.totalKills || 0) > 0);
-  await prefetchCharacterEncounters(name, server, region, ranks.map((r) => r.encounter.id), difficulty);
   const ers = await mapLimit(ranks, 5, (r) =>
     characterEncounter(name, server, region, r.encounter.id, difficulty));
   // Every individual kill, tagged with its boss, so we can pick the most recent
@@ -744,7 +679,6 @@ export async function bestKill(name, server, region, difficulty) {
 export async function recentKills(name, server, region, difficulty) {
   const c = await characterZone(name, server, region, difficulty);
   const ranks = (c.zoneRankings.rankings || []).filter((r) => (r.totalKills || 0) > 0);
-  await prefetchCharacterEncounters(name, server, region, ranks.map((r) => r.encounter.id), difficulty);
   const ers = await mapLimit(ranks, 5, (r) =>
     characterEncounter(name, server, region, r.encounter.id, difficulty));
   const out = [];
@@ -818,7 +752,6 @@ export async function ilvlPeers(name, server, region, encounter, difficulty, cla
   // Pre-warm the peers we'll actually use (the buffer is left for lazy backfill) in
   // ONE bundled request instead of one each -- the big per-request budget win. Best
   // effort; on any issue the consumers fetch each peer individually as before.
-  await prefetchReportCores(cands.slice(0, PEER_SAMPLE).map((c) => ({ code: c.report.code, fight: c.report.fightID })));
   return cands;
 }
 

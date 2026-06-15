@@ -5,6 +5,9 @@
 // full analysis against a mock and fails if any logical data unit is fetched twice.
 process.env.WCL_CLIENT_ID = "x";
 process.env.WCL_CLIENT_SECRET = "y";
+// This test verifies the AUTO-BATCHER (gql() combining concurrent misses), so it opts
+// back IN to batching that test/setup.mjs turns off for the fixed-mock logic tests.
+delete process.env.WCL_NO_BATCH;
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -19,33 +22,39 @@ const comb = () => Array.from({ length: 6 }, (_, i) => ({ sourceID: i + 1, critM
 const evs = () => Array.from({ length: 200 }, (_, i) => ({ timestamp: i * 800, type: "cast", abilityGameID: 1, sourceID: 1 }));
 const resp = (o) => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => o, text: async () => JSON.stringify(o) });
 
-function shape(q) {
-  if (/zoneRankings/.test(q)) return { characterData: { character: { id: 1, classID: 1, zoneRankings: {
+// The VALUE WCL returns for ONE top-level field selection (`seg`), shaped by content.
+function shapeVal(seg) {
+  if (/zoneRankings/.test(seg)) return { character: { id: 1, classID: 1, zoneRankings: {
     zone: 1, bestPerformanceAverage: 60, medianPerformanceAverage: 55,
-    rankings: Array.from({ length: 8 }, (_, i) => ({ encounter: { id: i + 1, name: "B" + i }, totalKills: 8, rankPercent: 60, bracketData: IL })) } } } };
-  if (/characterRankings/.test(q)) return { worldData: { encounter: { characterRankings: { rankings: Array.from({ length: 100 }, (_, i) => ({
+    rankings: Array.from({ length: 8 }, (_, i) => ({ encounter: { id: i + 1, name: "B" + i }, totalKills: 8, rankPercent: 60, bracketData: IL })) } } };
+  if (/characterRankings/.test(seg)) return { encounter: { characterRankings: { rankings: Array.from({ length: 100 }, (_, i) => ({
     name: "Peer" + i, class: CLS, spec: SPEC, amount: 2e7 - i, bracketData: IL - 2 + (i % 5),
-    server: { name: "S", region: "US" }, report: { code: "PR" + (i % 20), fightID: (i % 5) + 1 }, duration: 2e5, startTime: i })) } } } };
-  if (/encounterRankings/.test(q)) {
-    const ranksFor = (eid) => ({ ranks: Array.from({ length: 8 }, (_, k) => ({
-      bracketData: IL, rankPercent: 60, startTime: k, report: { code: `RK${eid}_${k}`, fightID: k + 1 }, duration: 2e5 })) });
-    // Bundled (aliased) multi-encounter query: e0:/e1:/... each with its own encounterID.
-    const aliases = [...q.matchAll(/(\w+):\s*encounterRankings\(encounterID:\s*(\d+)/g)];
-    if (aliases.length) { const ch = {}; for (const [, a, eid] of aliases) ch[a] = ranksFor(eid); return { characterData: { character: ch } }; }
-    const eid = (q.match(/encounterID:\s*(\d+)/) || [])[1] || "0";
-    return { characterData: { character: { encounterRankings: ranksFor(eid) } } }; }
-  if (/reportData/.test(q)) { // universal report -- shape each field per the query
-    const report = () => ({
-      dmg: { data: tbl() },
-      casts: /casts:\s*events/.test(q) ? { data: evs(), nextPageTimestamp: null } : { data: tbl() },
-      combatant: { data: comb() }, fightWin: [{ startTime: 0, endTime: 2e5 }],
-      autos: { data: evs(), nextPageTimestamp: null }, fights: [{ startTime: 0, endTime: 2e5 }], table: { data: tbl() },
-      events: { data: /CombatantInfo/.test(q) ? comb() : evs(), nextPageTimestamp: null } });
-    // Bundled (aliased) multi-report query: one report per alias (b0:, b1:, ...).
-    const aliases = [...q.matchAll(/(\w+):\s*reportData/g)].map((m) => m[1]);
-    if (aliases.length) { const o = {}; for (const a of aliases) o[a] = { report: report() }; return o; }
-    return { reportData: { report: report() } };
+    server: { name: "S", region: "US" }, report: { code: "PR" + (i % 20), fightID: (i % 5) + 1 }, duration: 2e5, startTime: i })) } } };
+  if (/encounterRankings/.test(seg)) { const eid = (seg.match(/encounterID:\s*(\d+)/) || [])[1] || "0";
+    return { character: { encounterRankings: { ranks: Array.from({ length: 8 }, (_, k) => ({
+      bracketData: IL, rankPercent: 60, startTime: k, report: { code: `RK${eid}_${k}`, fightID: k + 1 }, duration: 2e5 })) } } }; }
+  if (/report\s*\(\s*code:/.test(seg) || /reportData/.test(seg)) return { report: {
+    dmg: { data: tbl() },
+    casts: /casts:\s*events/.test(seg) ? { data: evs(), nextPageTimestamp: null } : { data: tbl() },
+    combatant: { data: comb() }, fightWin: [{ startTime: 0, endTime: 2e5 }],
+    autos: { data: evs(), nextPageTimestamp: null }, fights: [{ startTime: 0, endTime: 2e5 }], table: { data: tbl() },
+    events: { data: /CombatantInfo/.test(seg) ? comb() : evs(), nextPageTimestamp: null } } };
+  return {};
+}
+function shape(q) {
+  // Auto-batched (combined) query: top-level `_N: <field>` aliases. Slice into per-alias
+  // segments and shape each -- this is what makes the request-bundling testable.
+  const aliases = [...q.matchAll(/(_\d+):/g)];
+  if (aliases.length) {
+    const out = {};
+    for (let i = 0; i < aliases.length; i++)
+      out[aliases[i][1]] = shapeVal(q.slice(aliases[i].index, i + 1 < aliases.length ? aliases[i + 1].index : q.length));
+    return out;
   }
+  // Single query -> { <topField>: value }.
+  if (/zoneRankings/.test(q) || /encounterRankings/.test(q)) return { characterData: shapeVal(q) };
+  if (/characterRankings/.test(q)) return { worldData: shapeVal(q) };
+  if (/reportData/.test(q)) return { reportData: shapeVal(q) };
   return {};
 }
 
@@ -109,13 +118,13 @@ test("each report table/event is fetched at most once across a full run", async 
   assert.deepEqual(dupes, [], `these report tables were fetched more than once in a single run:\n${dupes.map(([u, c]) => `  ${u} x${c}`).join("\n")}`);
 
   // STRUCTURAL COST GUARD: the whole run must stay under a request ceiling. WCL bills
-  // ~flat per REQUEST, so request COUNT is the cost. Peer fetches (reportCore /
-  // timeline events / buff uptimes) are BUNDLED (prefetch* in core.js) to keep this
-  // low. If this fails, you almost certainly added an UN-bundled per-peer/per-boss
-  // fetch -- route it through a prefetch bundler instead of a loop of individual
-  // gql() calls. Re-baseline the ceiling ONLY with a deliberate justification.
-  assert.ok(queries.length <= 120,
-    `full mocked run made ${queries.length} requests (ceiling 120). Expensive un-bundled fetches were added -- bundle them (prefetchReportCores/prefetchFightEvents/prefetchBuffUptimes), don't loop individual gql() calls.`);
+  // ~flat per REQUEST, so request COUNT is the cost. gql() AUTO-BATCHES concurrent
+  // fetches into one combined request, so this stays low as long as new fetches run
+  // CONCURRENTLY (via mapLimit/collectUpTo). If this fails, you likely added a
+  // SEQUENTIAL per-peer/per-boss fetch (awaited one at a time, so it can't batch) --
+  // issue them concurrently instead. Re-baseline the ceiling ONLY with justification.
+  assert.ok(queries.length <= 85,
+    `full mocked run made ${queries.length} requests (ceiling 85; auto-batching keeps it ~63). A sequential per-peer/per-boss fetch was likely added -- run such fetches concurrently so gql() auto-batches them.`);
 });
 
 // STRUCTURAL: report-data queries may be CONSTRUCTED only in core.js, where every
@@ -157,9 +166,9 @@ test("cache-key stability: report query strings are frozen (changing them orphan
     'query { reportData { report(code:"AbCd") {\n    table(fightIDs:3, dataType:Buffs, sourceID:7) } } }');
 });
 
-// Request BUNDLING: N peers' reportCore fetched in ONE aliased request (the per-request
-// budget win), then each reportCore() is served from the primed cache -- no re-fetch.
-test("prefetchReportCores bundles N reports into one request; reportCore then hits cache", async () => {
+// CONCURRENT accessor calls auto-batch: 4 reportCore() in flight -> ONE request, and
+// each still caches under its own key (a 2nd call is a cache hit, no fetch).
+test("concurrent reportCore calls auto-batch into one request, then cache per key", async () => {
   const { clearGqlCache, _resetGqlDisk } = await import("../docs/wcl.js");
   const core = await import("../docs/core.js");
   clearGqlCache(); _resetGqlDisk();
@@ -171,9 +180,10 @@ test("prefetchReportCores bundles N reports into one request; reportCore then hi
     return resp({});
   };
   const pairs = [1, 2, 3, 4].map((i) => ({ code: "BN" + i, fight: 1 }));
-  await core.prefetchReportCores(pairs, { batch: 4 });
-  assert.equal(calls.filter((c) => /reportData/.test(c)).length, 1, "4 reports fetched in ONE bundled request");
+  const got = await Promise.all(pairs.map((p) => core.reportCore(p.code, p.fight)));   // concurrent -> batched
+  assert.equal(calls.filter((c) => /reportData/.test(c)).length, 1, "4 concurrent reportCore -> ONE combined request");
+  assert.ok(got.every((r) => r && r.dmg), "each caller gets its own report");
   const before = calls.length;
-  for (const p of pairs) assert.ok((await core.reportCore(p.code, p.fight)).dmg, "served from primed cache");
-  assert.equal(calls.length, before, "reportCore hits the primed cache -- no extra fetch");
+  for (const p of pairs) assert.ok((await core.reportCore(p.code, p.fight)).dmg, "served from cache");
+  assert.equal(calls.length, before, "second pass hits the cache -- no extra fetch");
 });
