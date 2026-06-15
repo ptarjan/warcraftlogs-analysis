@@ -108,7 +108,14 @@ test("strengths: surfaces the checks you PASSED (silent levers), gated + metric-
     const h = strengths({ priority: "haste", rot: { fieldPeers: 5, proc: { name: "V", youEmp: 0.9, fieldEmp: 0.1 }, usage: { under: [] }, cooldowns: [], cdUsage: [], buffCds: [], dotGaps: [], dotCount: 0 },
       execd: { activePct: 100 }, you: { overhealPct: 25 }, field: { overhealMed: 26 }, my: {}, tp: {} }).join(" | ");
     assert.match(h, /EFFICIENCY/); assert.match(h, /UPTIME/);
+    assert.match(h, /at or below/, "25% vs 26% -> truly below");
     assert.doesNotMatch(h, /EMPOWERMENT|PRIORITY|TARGETING/, "healer: damage-shaped strengths suppressed");
+    // 1-5pp ABOVE the field (within noise -> still fires) must NOT claim "at or below"
+    // -- 31% is above 29% (Cheoeqar, Disc Priest). Say "in line with" instead.
+    const above = strengths({ priority: "haste", rot: { fieldPeers: 5 }, execd: { activePct: 100 },
+      you: { overhealPct: 31 }, field: { overhealMed: 29 }, my: {}, tp: {} }).join(" | ");
+    assert.match(above, /EFFICIENCY: your 31% overheal is in line with the field's 29%/);
+    assert.doesNotMatch(above, /at or below/);
   } finally { setRunMetric("dps"); }
 });
 

@@ -675,8 +675,13 @@ export function strengths(d) {
     out.push(`GEAR: your ${d.priority} is at or above the field's (${P(my.statPct)} vs ${P(field.statPct)}) -- well itemized.`);
   }
   // Healer efficiency: overheal at or below the field's (not spilling).
+  // Fires when you're not FLAGGED as spilling (within the OVERHEALING lever's noise
+  // band, i.e. <= field + 5pp) -- but only CLAIM "at or below" when you actually are;
+  // 1-5pp above the field is "in line with", not below (Cheoeqar: 31% vs the field's 29%).
   if (heal && you && you.overhealPct != null && field && field.overhealMed != null && you.overhealPct <= field.overhealMed + 5) {
-    out.push(`EFFICIENCY: your ${P(you.overhealPct)} overheal is at or below the field's ${P(field.overhealMed)} -- efficient healing, not spilling.`);
+    out.push(you.overhealPct <= field.overhealMed
+      ? `EFFICIENCY: your ${P(you.overhealPct)} overheal is at or below the field's ${P(field.overhealMed)} -- efficient healing, not spilling.`
+      : `EFFICIENCY: your ${P(you.overhealPct)} overheal is in line with the field's ${P(field.overhealMed)} -- not spilling more than your peers.`);
   }
   return out;
 }
