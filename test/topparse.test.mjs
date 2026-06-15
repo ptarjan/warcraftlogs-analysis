@@ -115,21 +115,28 @@ test("topParseLevers: damage-ROUTING lever is suppressed for healers (HPS run)",
   }
 });
 
-test("topParseLevers: routing is a TANK-ASSIGNMENT note (comp) when you tanked a different target", () => {
-  // Data-derived (no isTank): if your damage-taken shows you were tanking an enemy that
-  // ISN'T one of the adds the field funnels, the gap is your assignment, not a free swap.
+test("topParseLevers: routing is ASSIGNMENT (comp) only when you tanked a DIFFERENT target than the field", () => {
+  // Data-derived (no isTank): assignment is real only when YOUR tank target differs from
+  // the field's consensus. You held the boss, they held an add -> assignment (comp).
   const assigned = { comp: { missing: [] },
-    routing: { top: 75, you: 60, addNames: ["Add A", "Add B"], tank: { name: "The Boss", share: 61 } } };
+    routing: { top: 75, you: 60, addNames: ["Add A", "Add B"],
+      tank: { name: "The Boss", share: 61 }, fieldTank: { name: "Add A", n: 2, of: 3 } } };
   const r1 = topParseLevers(assigned).find((r) => /^ROUTING/.test(r.text));
-  assert.equal(r1.dim, DIM.COMP, "tanked a different target -> assignment, lands in the comp box");
+  assert.equal(r1.dim, DIM.COMP, "different tank target than the field -> assignment, comp box");
   assert.match(r1.text, /TANKING The Boss/);
   assert.match(r1.text, /assignment/i);
-  // You WERE tanking one of the funnel adds but still under-funnel -> a real choice gap (yours).
-  const onAdd = { comp: { missing: [] },
-    routing: { top: 75, you: 60, addNames: ["Add A", "Add B"], tank: { name: "Add A", share: 55 } } };
-  const r2 = topParseLevers(onAdd).find((r) => /^ROUTING/.test(r.text));
-  assert.equal(r2.dim, DIM.ROTATION, "tanking the funnel add -> still your target choice");
-  // No clear tank target (a DPS eating diffuse mechanics -> tank null) -> stays a yours lever.
-  const dps = { comp: { missing: [] }, routing: { top: 75, you: 60, addNames: ["Add A"], tank: null } };
-  assert.equal(topParseLevers(dps).find((r) => /^ROUTING/.test(r.text)).dim, DIM.ROTATION);
+  // SAME tank target as the field, but they funnel MORE -> achievable on your duty -> YOURS.
+  // (The Crown-of-the-Cosmos bug: both tank Alleria, field out-funnels -> NOT assignment.)
+  const same = { comp: { missing: [] },
+    routing: { top: 75, you: 60, addNames: ["Add A", "Add B"],
+      tank: { name: "Alleria", share: 61 }, fieldTank: { name: "Alleria", n: 3, of: 3 } } };
+  const r2 = topParseLevers(same).find((r) => /^ROUTING/.test(r.text));
+  assert.equal(r2.dim, DIM.ROTATION, "same tank target -> a real (yours) funnel gap, not assignment");
+  assert.match(r2.text, /just like you/);
+  // No tank read (DPS / diffuse) -> generic funnel lever, ALONGSIDE not instead.
+  const dps = { comp: { missing: [] }, routing: { top: 75, you: 60, addNames: ["Add A"], tank: null, fieldTank: null } };
+  const r3 = topParseLevers(dps).find((r) => /^ROUTING/.test(r.text));
+  assert.equal(r3.dim, DIM.ROTATION);
+  assert.match(r3.text, /ALONGSIDE/);
+  assert.doesNotMatch(r3.text, /instead of tunneling/);
 });

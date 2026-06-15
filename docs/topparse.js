@@ -116,7 +116,7 @@ export async function topParseFindings(name, server, region, difficulty, classNa
   const ranked = (await topRankings(mine.encounter.id, difficulty, className, specName, 1)).slice(0, TOPN);
   const tops = (await mapLimit(ranked, 4, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
-    return m ? { m } : null;
+    return m ? { m, code: r.report.code, fight: r.report.fightID } : null;
   })).filter(Boolean);
 
   const youRoute = nonBossShare(you.dmgTargets, mine.encounter.name);
@@ -128,15 +128,29 @@ export async function topParseFindings(name, server, region, difficulty, classNa
     const youHits = new Set([...youRoute.byAdd.keys()]);
     const addNames = topN(addAgg)
       .map(([n]) => n).filter((n) => !youHits.has(n)).slice(0, 3);
-    // Only spend the damage-taken fetch when there's actually a routing GAP to explain
-    // (and addNames to compare against) -- and only for DAMAGE runs. Reads what YOU were
-    // tanking so the lever can tell an assignment gap from a target-choice gap.
+    // Only spend the damage-taken fetches when there's actually a routing GAP to explain
+    // (and addNames) -- and only for DAMAGE runs. Read what YOU tanked AND the field's
+    // CONSENSUS tank target: an assignment gap is only real when you held a DIFFERENT
+    // target than the field. If you both tanked the same thing yet they funneled more,
+    // it's achievable on your duty -> a real lever, NOT "assignment" (the bug the
+    // player-only check had: it called Crown-of-the-Cosmos "assignment" when the top
+    // Brewmasters tanked the same Alleria and still out-funneled).
     const route = median(topRoutes.map((r) => r.pct)) - youRoute.pct;
-    let tank = null;
+    let tank = null, fieldTank = null;
     if (!runIsHealer() && route >= 5 && addNames.length) {
       try { tank = await tankTarget(mine.code, mine.fight, you.sourceID); } catch (e) { /* no read -> stays a choice lever */ }
+      try {
+        const fts = (await mapLimit(tops.slice(0, 3), 3, (t) => tankTarget(t.code, t.fight, t.m.sourceID).catch(() => null)))
+          .filter(Boolean).map((t) => t.name);
+        if (fts.length) {
+          const counts = {};
+          for (const n of fts) counts[n] = (counts[n] || 0) + 1;
+          const winner = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+          fieldTank = { name: winner[0], n: winner[1], of: fts.length };
+        }
+      } catch (e) { /* no field read -> treat as no assignment difference */ }
     }
-    routing = { you: youRoute.pct, top: median(topRoutes.map((r) => r.pct)), addNames, tank };
+    routing = { you: youRoute.pct, top: median(topRoutes.map((r) => r.pct)), addNames, tank, fieldTank };
     potions = { you: potionCount(you.casts), top: Math.round(median(tops.map((t) => potionCount(t.m.casts)))) };
   }
 
@@ -218,20 +232,28 @@ export function topParseLevers(tp, compDeltas = null) {
   // DPS-only (compares where you put DAMAGE); suppressed for healers (nonsense for HPS).
   const route = tp.routing ? tp.routing.top - tp.routing.you : 0;
   if (!runIsHealer() && tp.routing && route >= 5 && tp.routing.addNames.length) {
-    const tank = tp.routing.tank;
-    const assigned = tank && tank.name && !tp.routing.addNames.includes(tank.name);
-    if (assigned) {
-      // Real DPS, but raid-dependent (a tank ASSIGNMENT), so it belongs in the comp
-      // bucket (sized, not a "yours to press" lever and not dumped into "unexplained").
+    const adds = tp.routing.addNames.join(", ");
+    const top = f(tp.routing.top, 0), youPct = f(tp.routing.you, 0);
+    const tank = tp.routing.tank, fieldTank = tp.routing.fieldTank;
+    if (tank && tank.name && fieldTank && fieldTank.name && tank.name !== fieldTank.name) {
+      // ASSIGNMENT difference: you held a DIFFERENT target than the field's consensus.
+      // Real DPS but raid-dependent -> the comp bucket (sized), not a "yours" lever.
       out.push(finding(DIM.COMP, COMP(Math.round(route)),
-        `ROUTING: top parses put ${f(tp.routing.top, 0)}% of damage on ${tp.routing.addNames.join(", ")} (you ${f(tp.routing.you, 0)}%) -- ` +
-        `but your damage-taken shows you were TANKING ${tank.name} (${tank.share}% of the damage you took), not those adds. So this gap is ` +
-        `mostly your tank ASSIGNMENT -- who holds what is a raid call, not a target you freely swap. To shift it, sort funnel/tank duties with your team; ` +
-        `it isn't a button you press differently.`, "measured"));
-    } else {
+        `ROUTING: top parses put ${top}% of damage on ${adds} (you ${youPct}%) -- but you were TANKING ${tank.name} while ` +
+        `the top parses tanked ${fieldTank.name} (${fieldTank.n}/${fieldTank.of}). That's a tank ASSIGNMENT difference -- who holds what is a raid ` +
+        `call, not a target you freely swap. To shift it, sort funnel/tank duties with your team.`, "measured"));
+    } else if (tank && fieldTank && tank.name === fieldTank.name) {
+      // SAME assignment, field funnels MORE -> achievable on your duty, so it IS yours
+      // (positioning/cleave while tanking the same target) -- NOT an assignment excuse.
       out.push(finding(DIM.ROTATION, DPS(Math.round(route)),
-        `ROUTING: top parses put ${f(tp.routing.top, 0)}% of damage on ${tp.routing.addNames.join(", ")} ` +
-        `(you ${f(tp.routing.you, 0)}%). Cleave/funnel those instead of tunneling the boss when they're up ` +
+        `ROUTING: the top parses tank ${tank.name} just like you, yet put ${top}% of their damage on ${adds} vs your ${youPct}% -- ` +
+        `so funneling the adds WHILE tanking ${tank.name} is doable on your assignment (cleave/AoE/positioning), it isn't a target swap. ` +
+        `If the adds never come into your range, that part is your group's positioning, not your buttons.`, "measured"));
+    } else {
+      // No tank read -> generic funnel lever. "ALONGSIDE", not "instead": funneling adds
+      // is usually cleaving them WITH the boss, not abandoning it.
+      out.push(finding(DIM.ROTATION, DPS(Math.round(route)),
+        `ROUTING: top parses put ${top}% of damage on ${adds} (you ${youPct}%). Cleave/funnel those ALONGSIDE the boss when they're up ` +
         `(how much is available depends on the fight, but the target choice is yours).`, "measured"));
     }
   }
