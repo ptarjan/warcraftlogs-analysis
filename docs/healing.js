@@ -9,7 +9,7 @@
 // names come from YOUR own healing breakdown (the Healing table), never hard-coded.
 import {
   ilvlPeers, playerMetrics, bestKill, mapLimit, median, healingBreakdown, manaStats,
-  f, DPS, INFO, finding, DIM, runIsHealer,
+  f, DPS, INFO, finding, DIM, KIND, runIsHealer,
 } from "./core.js";
 
 // Overheal % above the field by this many points reads as real spill worth a
@@ -52,11 +52,15 @@ export function overhealLever(you, field) {
   const pct = Math.min(Math.max(1, Math.round(recoverFrac * 100 * 0.5)), 10);
   const worst = worstSpill(you);
   const where = worst.length ? ` Your biggest spill: ${worst.join(", ")}.` : "";
-  return [finding(DIM.SETUP, DPS(pct),
+  // DIM.ROTATION + KIND.OVERHEAL: overhealing is a HOW-YOU-HEAL technique fix (which
+  // heals you cast, when), NOT a gear/setup item. Tagging it SETUP made the verdict
+  // miscount it as one of "the N gear/setup fixes" and headline gear even when cutting
+  // overheal was the player's single biggest lever (Lisalisa: 10% #1, all gear smaller).
+  return [finding(DIM.ROTATION, DPS(pct),
     `OVERHEALING: ${f(yourPct, 0)}% of your healing is overheal vs the ilvl field's ${f(fieldPct, 0)}% -- ` +
     `that's output landing on already-full targets.${where} Hold big/slow heals for real damage, snipe with cheaper ` +
     `spells, and don't pre-cast into full health bars; the recovered efficiency is mana and effective throughput when it counts.`,
-    "measured")];
+    "measured", KIND.OVERHEAL)];
 }
 
 // MANA lever. Fires only when measured mana data is present (you.mana). HPS is

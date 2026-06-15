@@ -30,6 +30,8 @@ test("overhealLever: fires when you spill more than the field, sized + named, me
     assert.equal(lev.basis, "measured");
     assert.ok(lev.impact >= 1 && lev.impact <= 10, "sized within the 1..10 cap");
     assert.match(lev.label, /% HPS/);                // healer unit
+    assert.equal(lev.dim, "Rotation");               // a how-you-HEAL technique fix, NOT a gear/setup item
+    assert.equal(lev.kind, "OVERHEAL");              // so the verdict headlines "healing smarter", not "gear/setup fixes"
   });
 });
 

@@ -843,6 +843,7 @@ function renderPrescription(log, d) {
   // the verbs ("respec" vs "play differently") never mismatch.
   const rotKindOf = (r) => r.kind === KIND.EMPOWERMENT ? "an EMPOWERMENT timing fix (landing your hardest hit in its high-damage window)"
     : r.kind === KIND.COOLDOWN ? "a COOLDOWN you under-use"
+    : r.kind === KIND.OVERHEAL ? "healing SMARTER -- cutting your overhealing (output landing on already-full health bars)"
     : "a ROTATION/priority fix";
   // The VERDICT must name the ACTUAL biggest character lever. `yours` is sorted by
   // impact desc (rx.sort, comp + the playstyle remainder excluded), so yours[0] IS

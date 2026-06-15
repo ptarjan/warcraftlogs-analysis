@@ -159,7 +159,7 @@ export const DIM = Object.freeze({
 // silently break a code path). An ordinary lever needs no kind (absent = null).
 export const KIND = Object.freeze({
   TALENTS: "TALENTS", HERO_TREE: "HERO_TREE", EMPOWERMENT: "EMPOWERMENT",
-  COOLDOWN: "COOLDOWN", PRESS_FASTER: "PRESS_FASTER",
+  COOLDOWN: "COOLDOWN", PRESS_FASTER: "PRESS_FASTER", OVERHEAL: "OVERHEAL",
 });
 
 // Empirically value an attribute from the FIELD's own logs -- the natural
