@@ -709,7 +709,7 @@ export function verdictLever(yours) {
 // kind exists). The big one is NOT "press faster" -- a big remainder is the analysis
 // admitting it can't fully explain the gap, so it's framed by kind, never relabeled as a
 // small lever. `r` is the rounded residual %; rot/rx provide the measured pieces to cite.
-function residualText(kind, r, d, rot, rx) {
+export function residualText(kind, r, d, rot, rx) {
   if (kind === "elite") {
     // Already top-decile: the remainder is the distance to the BEST parses at your ilvl,
     // not a setup/rotation you're getting wrong. Don't manufacture a "playstyle" problem.
@@ -742,7 +742,11 @@ function residualText(kind, r, d, rot, rx) {
     const cite = hasEmp && pr.fieldEmp - pr.youEmp >= 0.12
       ? ` We can see the biggest piece: only ${ep(pr.youEmp)} of your ${pr.name} casts land empowered vs the field's ${ep(pr.fieldEmp)} (see the EMPOWERMENT item) -- the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps).`
       : hasEmp
-      ? ` We checked the obvious culprit: your ${pr.name} lands empowered ${pr.youEmp >= pr.fieldEmp ? "as often as" : "nearly as often as"} the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}), so it's NOT timing -- the gap is per-cast ${throughputWord()} (crit/stat scaling, plus comp re-attribution and fight amp windows you don't fully control).`
+      ? ` We checked the obvious culprit: your ${pr.name} lands empowered ${
+          pr.youEmp - pr.fieldEmp >= 0.05 ? "more often than"
+          : pr.youEmp >= pr.fieldEmp - 0.05 ? "about as often as"
+          : "nearly as often as"
+        } the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}), so it's NOT timing -- the gap is per-cast ${throughputWord()} (crit/stat scaling, plus comp re-attribution and fight amp windows you don't fully control).`
       : under.length
       ? ` We can see part of it: you press ${under.slice(0, 2).map((a) => `${a.name} ${f(a.you, 1)}/min vs ${f(a.field, 1)}`).join(", ")}.`
       : ` The cooldown/ability gaps we could measure are listed above; the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps) we can't pin to one ability.`;

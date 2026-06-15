@@ -53,7 +53,7 @@ test("fieldDelta measures an attribute's value from the field (have vs not)", ()
   // Too few on one side -> null.
   assert.equal(fieldDelta([110, 100, 100, 100, 100], [true, false, false, false, false]), null);
 });
-const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, strengths, killHistory, consumableLevers } = await import("../docs/prescribe.js");
+const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, strengths, killHistory, consumableLevers, residualText } = await import("../docs/prescribe.js");
 
 test("killHistory: parse spread (consistency) + recent-vs-old trend (improvement), time-ordered", () => {
   const k = (p, t) => ({ rankPercent: p, startTime: t });
@@ -650,4 +650,14 @@ test("consumableLevers: don't recommend a swap the field MEASURED at ~0% (pointl
   assert.equal(consumableLevers(base(0), my).filter((f) => /FOOD/.test(f.text)).length, 0);
   // measured 3% -> a real swap, still surfaces
   assert.equal(consumableLevers(base(3), my).filter((f) => /FOOD/.test(f.text)).length, 1);
+});
+
+test("residualText (playstyle): empowered-share wording reflects ahead / even / behind, not always 'as often'", () => {
+  const rot = (you, field) => ({ proc: { name: "Tiger Palm", youEmp: you, fieldEmp: field }, usage: { under: [] } });
+  // genuinely AHEAD (40% vs 20%, Hadryan): say MORE often, don't tell them they're "the same"
+  assert.match(residualText("playstyle", 28, {}, rot(0.40, 0.20), []), /lands empowered more often than the field \(you 40% vs 20%\)/);
+  // roughly equal (22% vs 20%): about as often as
+  assert.match(residualText("playstyle", 28, {}, rot(0.22, 0.20), []), /about as often as the field/);
+  // a bit behind but within the no-lever band (12% vs 20%): nearly as often as
+  assert.match(residualText("playstyle", 28, {}, rot(0.12, 0.20), []), /nearly as often as the field/);
 });
