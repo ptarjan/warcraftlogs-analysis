@@ -594,6 +594,57 @@ export const isEliteParse = (medP) => medP != null && medP >= 90;
 // the conservative talent/hero ESTIMATES above under-size -- not pure per-cast play.
 export const isOffMetaBuild = (findings) => (findings || []).some((x) => x.kind === KIND.HERO_TREE);
 
+// "WHAT YOU'RE DOING WELL" -- the checks you PASSED. Most levers come back SILENT
+// because you're already at or above the field on them; left unsaid, the report
+// reads as nothing-but-problems. Surface those passes as positives so the player
+// sees what to KEEP (and so a habit they recently fixed reads as a win, not a nag).
+// Pure: reads the already-computed domain data (rot/execd/tp/you/field/my); no fetch.
+// Metric-aware (DPS vs HPS). Each entry is a short "<TAG>: <why it's good>" string.
+export function strengths(d) {
+  const { rot, execd, tp, you, field, my } = d || {};
+  const out = [];
+  const P = (n) => `${Math.round(n)}%`;        // a 0-100 percent
+  const F = (n) => `${Math.round(n * 100)}%`;  // a 0-1 fraction
+  const W = throughputWord();
+  const heal = runIsHealer();
+  const peers = rot && rot.fieldPeers > 0;
+  // Empowerment: you land your hardest hit in its high-damage window as often as / more
+  // than the field (the per-cast lever stays silent because of this -- name the win).
+  const pr = rot && rot.proc;
+  if (!heal && pr && pr.name && pr.youEmp != null && pr.fieldEmp != null && pr.fieldEmp >= 0.05 && pr.youEmp >= pr.fieldEmp) {
+    out.push(`EMPOWERMENT: you land ${pr.name} in its high-damage window ${F(pr.youEmp)} of the time vs the field's ${F(pr.fieldEmp)} -- at or above the field. Keep timing it.`);
+  }
+  // Uptime: near-perfect active time (this is why press-faster stayed silent).
+  if (execd && execd.activePct != null && execd.activePct >= 98) {
+    out.push(`UPTIME: ~${P(execd.activePct)} active -- near-perfect GCD uptime, you're barely idling.`);
+  }
+  // Priority: you press the field's buttons (no under-used ability).
+  if (!heal && peers && rot.usage && (rot.usage.under || []).length === 0) {
+    out.push(`PRIORITY: you press the field's priority abilities -- nothing the field casts that you're skipping.`);
+  }
+  // Cooldowns: none skipped vs the field.
+  if (peers && !(rot.cooldowns || []).length && !(rot.cdUsage || []).length && !(rot.buffCds || []).length) {
+    out.push(`COOLDOWNS: you use your ${W} cooldowns on cooldown -- nothing the field gets that you skip.`);
+  }
+  // DoTs: maintained at field-level uptime (only when you actually run DoTs).
+  if (!heal && rot && rot.dotCount > 0 && (rot.dotGaps || []).length === 0) {
+    out.push(`DOTS: your damage-over-time effects are kept up at field-level uptime -- no clipping.`);
+  }
+  // Targeting: you funnel/cleave the adds about as much as the top parses.
+  if (!heal && tp && tp.routing && (tp.routing.addNames || []).length && (tp.routing.top - tp.routing.you) < 5) {
+    out.push(`TARGETING: you put about as much damage on the adds as the top parses (${P(tp.routing.you)} vs ${P(tp.routing.top)}) -- good target priority.`);
+  }
+  // Itemization: your priority stat is at or above the field's.
+  if (my && my.statPct != null && field && field.statPct != null && my.statPct >= field.statPct) {
+    out.push(`GEAR: your ${d.priority} is at or above the field's (${P(my.statPct)} vs ${P(field.statPct)}) -- well itemized.`);
+  }
+  // Healer efficiency: overheal at or below the field's (not spilling).
+  if (heal && you && you.overhealPct != null && field && field.overhealMed != null && you.overhealPct <= field.overhealMed + 5) {
+    out.push(`EFFICIENCY: your ${P(you.overhealPct)} overheal is at or below the field's ${P(field.overhealMed)} -- efficient healing, not spilling.`);
+  }
+  return out;
+}
+
 // THE SYNTHESIS, rendered: one answer anchored on the MEASURED DPS gap (your
 // kill vs the ilvl-matched field vs the top parses -- real numbers, not a sum of
 // per-lever guesses), what that gap is made of, then the change-list split into
@@ -840,6 +891,14 @@ function renderPrescription(log, d) {
     log(`--- Raid comp (real ${metricUnit()}, but a roster/buff gap — NOT something you change on your character) ---`);
     compList.forEach(line);
   }
+  // Close on the positives: the checks you PASSED (silent levers = you're at/above the
+  // field). So the report isn't all problems, and you can see what to KEEP doing.
+  const wins = strengths(d);
+  if (wins.length) {
+    log("");
+    log("--- What you're doing well (keep it) ---");
+    for (const w of wins) log(`  ✓ ${w}`);
+  }
   log("");
 }
 
@@ -982,6 +1041,6 @@ export async function run(log, name, server, region, className = "Monk", specNam
     topReport: topKill ? { code: topKill.code, fight: topKill.fight } : null,
     difficultyName: DIFFICULTY[difficulty] || `difficulty ${difficulty}`,
     medP, bestP, topParse, nBosses: ranks.length, gearAgeDays,
-    you, field, execd, rot, tp, gf, priority, rx, skipped,
+    you, field, execd, rot, tp, gf, my, priority, rx, skipped,
   });
 }

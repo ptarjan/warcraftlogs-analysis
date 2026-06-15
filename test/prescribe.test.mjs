@@ -53,7 +53,45 @@ test("fieldDelta measures an attribute's value from the field (have vs not)", ()
   // Too few on one side -> null.
   assert.equal(fieldDelta([110, 100, 100, 100, 100], [true, false, false, false, false]), null);
 });
-const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever } = await import("../docs/prescribe.js");
+const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, strengths } = await import("../docs/prescribe.js");
+
+test("strengths: surfaces the checks you PASSED (silent levers), gated + metric-aware", () => {
+  // A clean DPS player: empowerment beats the field, ~99% active, no under-use, no CD
+  // gaps, DoTs maintained, routing matched, stat at/above field -> all positives fire.
+  const good = {
+    priority: "crit",
+    rot: { fieldPeers: 5, proc: { name: "Tiger Palm", youEmp: 0.4, fieldEmp: 0.2 },
+      usage: { under: [], over: [] }, cooldowns: [], cdUsage: [], buffCds: [], dotGaps: [], dotCount: 2 },
+    execd: { activePct: 99 },
+    tp: { routing: { you: 55, top: 57, addNames: ["Add"] } },
+    my: { statPct: 60 }, field: { statPct: 55 }, you: {},
+  };
+  const w = strengths(good).join(" | ");
+  assert.match(w, /EMPOWERMENT/); assert.match(w, /UPTIME/); assert.match(w, /PRIORITY/);
+  assert.match(w, /COOLDOWNS/); assert.match(w, /DOTS/); assert.match(w, /TARGETING/); assert.match(w, /GEAR/);
+  // Gates: an under-used ability, a CD gap, a routing gap, and a stat deficit each
+  // remove their positive (you can't be "doing well" at a thing you have a lever for).
+  const gaps = {
+    priority: "crit",
+    rot: { fieldPeers: 5, proc: { name: "X", youEmp: 0.1, fieldEmp: 0.3 },   // trails -> no EMPOWERMENT
+      usage: { under: [{ name: "Y" }], over: [] }, cooldowns: [{ name: "Z", pct: 5 }], cdUsage: [], buffCds: [], dotGaps: [{ name: "D" }], dotCount: 2 },
+    execd: { activePct: 90 },                                                 // idling -> no UPTIME
+    tp: { routing: { you: 40, top: 60, addNames: ["Add"] } },                 // 20pp gap -> no TARGETING
+    my: { statPct: 40 }, field: { statPct: 55 }, you: {},                     // stat deficit -> no GEAR
+  };
+  const g = strengths(gaps).join(" | ");
+  for (const tag of ["EMPOWERMENT", "UPTIME", "PRIORITY", "COOLDOWNS", "DOTS", "TARGETING", "GEAR"]) {
+    assert.doesNotMatch(g, new RegExp(tag), `${tag} must be gated off when there's a lever for it`);
+  }
+  // Healer: efficiency fires (overheal <= field+5), empowerment/priority/targeting suppressed.
+  try {
+    setRunMetric("hps");
+    const h = strengths({ priority: "haste", rot: { fieldPeers: 5, proc: { name: "V", youEmp: 0.9, fieldEmp: 0.1 }, usage: { under: [] }, cooldowns: [], cdUsage: [], buffCds: [], dotGaps: [], dotCount: 0 },
+      execd: { activePct: 100 }, you: { overhealPct: 25 }, field: { overhealMed: 26 }, my: {}, tp: {} }).join(" | ");
+    assert.match(h, /EFFICIENCY/); assert.match(h, /UPTIME/);
+    assert.doesNotMatch(h, /EMPOWERMENT|PRIORITY|TARGETING/, "healer: damage-shaped strengths suppressed");
+  } finally { setRunMetric("dps"); }
+});
 
 test("isOffMetaBuild: true only when a HERO TREE mismatch lever is present", () => {
   // The field runs a hero tree you don't -> the rotation can't be compared, so the

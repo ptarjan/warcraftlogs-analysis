@@ -738,7 +738,7 @@ export async function rotationFindings(name, server, region, className, specName
   const petGap = (you.petShare != null && fieldPetShare != null) ? petShareGap(you.petShare, fieldPetShare) : null;
   return {
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener,
-    usage, cooldowns, cdUsage, buffCds, perCast, dotGaps, petGap, castGap, fieldPeers: peers.length, talent, abilityIds,
+    usage, cooldowns, cdUsage, buffCds, perCast, dotGaps, dotCount: (you.dots || []).length, petGap, castGap, fieldPeers: peers.length, talent, abilityIds,
     heroMatched: yourHero && peers.length ? (peers.every((p) => p.hero === yourHero) ? yourHero : null) : null,
     proc: { name: biggest ? biggest.name : null, isReal, youPerMin: biggest ? biggest.procPerMin : 0, fieldPerMin: fieldProc, youEmp, fieldEmp },
   };
