@@ -208,7 +208,7 @@ export async function _cacheWrite(query, data) {
   try { await _storeSet(_hash(query), { q: query, t: Date.now(), d: data }); } catch { /* skip caching */ }
 }
 
-export function clearGqlCache() { _gqlCache.clear(); }
+export function clearGqlCache() { _gqlCache.clear(); _loadedShards.clear(); }  // cleared cache reloads shards lazily
 
 // ---- Node-only on-disk cache -------------------------------------------------
 // The browser path is already cached by the Worker (shared, keyed by query
@@ -229,6 +229,28 @@ let _diskFs = null;
 let _diskPath = null;
 let _diskZlib = null;
 let _diskTimer = null;
+let _loadedShards = new Set();   // which shard ids have been lazily read in this process
+
+// Lazily load ONE shard on demand (the cache is sharded by _shardId; a run touches
+// only a handful of shards). Replaces decompressing ALL ~256 gzipped shards at startup,
+// which was the dominant CLI latency (~26s on a warm cache). Idempotent; synchronous
+// (initDisk already imported fs/zlib). Reads the gzipped shard plus a legacy plain one
+// if present, applies TTL, and seeds _gqlCache + _diskStore. No-op in the browser
+// (_diskStore stays null) and during the eager one-time migration (which pre-marks
+// every shard loaded). MUST run before gql()'s _gqlCache.has() check or a warm entry
+// would look like a miss and refetch.
+function _ensureShardLoaded(id) {
+  if (!_diskStore || !_diskFs || _loadedShards.has(id)) return;
+  _loadedShards.add(id);           // mark first: a missing/corrupt shard isn't retried every call
+  const now = Date.now();
+  for (const file of [_shardFile(id), _legacyShardFile(id)]) {
+    let buf; try { buf = _diskFs.readFileSync(file); } catch { continue; }   // shard not written yet
+    try {
+      for (const [q, e] of Object.entries(_decodeShard(buf)))
+        if (e && (now - e.t) < _ttlFor(q) && (!_diskStore[q] || _diskStore[q].t < e.t)) { _diskStore[q] = e; _gqlCache.set(q, e.d); }
+    } catch { /* a corrupt shard is skipped -- the next flush preserves it (never-clobber) */ }
+  }
+}
 
 // Decode a shard file's raw bytes to its JSON object. Shards are gzipped (WCL
 // event/table JSON compresses ~7x), but we SNIFF the gzip magic (1f 8b) so we
@@ -304,34 +326,36 @@ async function initDisk() {
     _diskDir = `${_diskFile}.shards`;
     try { fs.mkdirSync(_diskDir, { recursive: true }); } catch { /* ignore */ }
     _diskStore = {};
-    const now = Date.now();
-    const load = (buf) => {
-      try {
-        for (const [q, e] of Object.entries(_decodeShard(buf))) {
-          if (e && (now - e.t) < _ttlFor(q) && (!_diskStore[q] || _diskStore[q].t < e.t)) {
-            _diskStore[q] = e; _gqlCache.set(q, e.d);
-          }
-        }
-      } catch { /* a corrupt shard is skipped -- every other shard still loads */ }
-    };
-    // Read every shard that exists -- these ARE the cache. Both new gzipped
-    // (.json.gz) and legacy plain (.json) shards; _decodeShard sniffs the format.
-    let legacyShards = false;
-    try {
-      for (const f of fs.readdirSync(_diskDir)) {
-        if (!f.endsWith(".json") && !f.endsWith(".json.gz")) continue;
-        if (f.endsWith(".json")) legacyShards = true;       // a plain shard -> rewrite it compressed
-        load(fs.readFileSync(path.join(_diskDir, f)));
-      }
-    } catch { /* none yet */ }
-    // Back-compat + one-time migration: an old monolithic gql-cache.json, and any
-    // legacy plain .json shards, are read then rewritten as gzipped .json.gz and the
-    // originals removed. Flush EAGERLY (not lazily on the next fetch): the point is to
-    // get onto the durable/compressed format ASAP, so even a read-only / cache-only run
-    // migrates it (no WCL points -- it's a disk reformat, not a fetch).
-    let haveMonolith = false;
-    try { load(fs.readFileSync(_diskFile)); haveMonolith = true; } catch { /* no monolith */ }
+    _loadedShards.clear();
+    // Cheaply detect whether a one-time MIGRATION is owed -- a legacy monolith file, or
+    // any plain .json shard -- WITHOUT decompressing anything (just stat + a filename
+    // scan). Steady state (all shards already .json.gz, no monolith) skips the bulk load
+    // ENTIRELY: each shard then loads LAZILY via _ensureShardLoaded on the first query
+    // that needs it. initDisk used to gunzip ALL ~256 shards here, which was ~the entire
+    // CLI startup latency (~26s on a warm cache) -- paid before any analysis ran.
+    let legacyShards = false, haveMonolith = false;
+    try { for (const f of fs.readdirSync(_diskDir)) if (f.endsWith(".json") && !f.endsWith(".json.gz")) { legacyShards = true; break; } } catch { /* no dir yet */ }
+    try { haveMonolith = fs.existsSync(_diskFile); } catch { /* none */ }
     if (haveMonolith || legacyShards) {
+      // Back-compat one-time migration: read the old monolithic gql-cache.json and/or any
+      // legacy plain .json shards, then rewrite as gzipped .json.gz and remove the
+      // originals. Flush EAGERLY so even a read-only / cache-only run migrates (no WCL
+      // points -- it's a disk reformat). This is the only path that still bulk-loads.
+      const now = Date.now();
+      const load = (buf) => {
+        try {
+          for (const [q, e] of Object.entries(_decodeShard(buf)))
+            if (e && (now - e.t) < _ttlFor(q) && (!_diskStore[q] || _diskStore[q].t < e.t)) { _diskStore[q] = e; _gqlCache.set(q, e.d); }
+        } catch { /* a corrupt shard is skipped -- every other shard still loads */ }
+      };
+      try {
+        for (const f of fs.readdirSync(_diskDir)) {
+          if (!f.endsWith(".json") && !f.endsWith(".json.gz")) continue;
+          load(fs.readFileSync(path.join(_diskDir, f)));
+          _loadedShards.add(f.replace(/\.json(\.gz)?$/, ""));   // pre-mark: don't lazily re-read it
+        }
+      } catch { /* none yet */ }
+      try { load(fs.readFileSync(_diskFile)); } catch { /* no monolith */ }
       _migrate = haveMonolith;                              // only the monolith file needs deleting
       for (const q of Object.keys(_diskStore)) _dirty.add(_shardId(q));
       if (_dirty.size) { clearTimeout(_diskTimer); _diskTimer = setTimeout(_flushDisk, 0); }
@@ -405,7 +429,7 @@ function _flushDisk() {
 // fresh initDisk() re-reads the shards (simulating a separate CLI run).
 export function _flushGqlDisk() { _flushDisk(); }
 export function _resetGqlDisk() {
-  clearTimeout(_diskTimer); _dirty.clear(); _migrate = false; _flushRetries = 0;
+  clearTimeout(_diskTimer); _dirty.clear(); _migrate = false; _flushRetries = 0; _loadedShards.clear();
   _diskReady = _diskStore = _diskFile = _diskDir = _diskFs = _diskPath = _diskZlib = null;
 }
 
@@ -614,7 +638,8 @@ export async function probeBilling(queries) {
 }
 
 export async function gql(query, retries = 6, { fresh = false } = {}) {
-  await initDisk();                 // seeds _gqlCache from disk on first call (Node)
+  await initDisk();                 // sets up disk paths + runs any one-time migration (Node)
+  _ensureShardLoaded(_shardId(query));  // lazily decompress just THIS query's shard into _gqlCache
   if (!fresh) {
     if (_gqlCache.has(query)) return _gqlCache.get(query);
     if (_gqlInflight.has(query)) return _gqlInflight.get(query);
