@@ -337,8 +337,6 @@ export function talentLevers(tf) {
 
 // --- card output -------------------------------------------------------------
 
-const link = (spellId, name) => (spellId ? `[${name}](https://www.wowhead.com/spell=${spellId})` : name);
-
 export async function run(log, name, server, region, className = "Monk", specName = "Brewmaster", difficulty = 5) {
   const fnd = await talentFindings(name, server, region, className, specName, difficulty);
   if (!fnd) { log("(couldn't read your talents or the field's)"); return; }
@@ -357,19 +355,19 @@ export async function run(log, name, server, region, className = "Monk", specNam
   if (dpsMiss.length) {
     log("");
     log("DAMAGE talents you're MISSING (peers take them here, you don't):");
-    for (const t of dpsMiss.slice(0, 8)) log(`  - ${link(t.spellId, t.name)} — ${f(100 * t.adopt, 0)}% of peers`);
+    for (const t of dpsMiss.slice(0, 8)) log(`  - ${wowheadSpell(t.spellId, t.name)} — ${f(100 * t.adopt, 0)}% of peers`);
   }
   // Utility/defensive talents are listed only as context -- they aren't DPS, so
   // they never become recommendations.
   if (utilMiss.length) {
     log("");
-    log(`Also missing (utility/defensive the field takes here — not DPS): ${utilMiss.slice(0, 6).map((t) => link(t.spellId, t.name)).join(", ")}.`);
+    log(`Also missing (utility/defensive the field takes here — not DPS): ${utilMiss.slice(0, 6).map((t) => wowheadSpell(t.spellId, t.name)).join(", ")}.`);
   }
   const offDps = fnd.offMeta.filter((t) => t.dps);
   if (offDps.length) {
     log("");
     log("Off-meta DAMAGE picks (few peers run these here — worth re-checking):");
-    for (const t of offDps.slice(0, 6)) log(`  - ${link(t.spellId, t.name)} — only ${f(100 * t.adopt, 0)}% of peers`);
+    for (const t of offDps.slice(0, 6)) log(`  - ${wowheadSpell(t.spellId, t.name)} — only ${f(100 * t.adopt, 0)}% of peers`);
   }
   if (!dpsMiss.length && !offDps.length) {
     log("");
