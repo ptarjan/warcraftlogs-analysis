@@ -8,7 +8,16 @@ import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
 const { DPS, COMP, INFO, finding, fieldDelta, setRunMetric } = await import("../docs/core.js");          // shared Finding currency
-const { rotationLevers, usageDamageGaps } = await import("../docs/rotation.js");
+const { rotationLevers, usageDamageGaps, perCastValue, dmgGapPct } = await import("../docs/rotation.js");
+
+test("perCastValue/dmgGapPct: the shared 'missed casts x your per-cast / total' kernel", () => {
+  assert.equal(perCastValue(10000, 10), 1000);        // total/casts
+  assert.equal(perCastValue(10000, 0.3), null);       // < min casts -> unmeasurable
+  assert.equal(perCastValue(10000, 0.6, 1), null);    // custom min
+  assert.equal(dmgGapPct(25, 1000, 100000), 25);      // 25 missed x 1000 / 100000 = 25%
+  assert.equal(dmgGapPct(25, null, 100000), null);    // unmeasurable per-cast -> null
+  assert.equal(dmgGapPct(25, 1000, 100000, 10), 10);  // capped
+});
 
 test("finding tags its basis: estimate by default, measured on opt-in", () => {
   assert.equal(finding("Gear", DPS(2), "x").basis, "est");          // levers must opt IN to "measured"

@@ -230,6 +230,18 @@ export function realOveruse(over, heroMatched, floor = 0.5) {
   return (over || []).filter((a) => heroMatched || a.field >= floor);
 }
 
+// The shared kernel of every "missed casts x your per-cast / total" sizer
+// (cooldownGaps / usageDamageGaps / the cdUsage lever). Sizing from YOUR OWN
+// damage-per-cast is deliberate: robust to multi-hit, and conservative (never claims
+// the field's bigger hit -- the empowerment/per-cast levers own that, gated).
+// perCastValue: total / casts, but only when you have >= min casts to divide by
+// (else null -- too few to measure). dmgGapPct: the % of your throughput the casts
+// you're MISSING are worth; null when per-cast is unmeasurable; optional cap so one
+// ability can't dominate before reconcileImpacts. Pure -> testable.
+export const perCastValue = (total, casts, min = 0.5) => (casts >= min ? (total || 0) / casts : null);
+export const dmgGapPct = (missedCasts, perCast, total, cap = Infinity) =>
+  perCast == null ? null : Math.min(cap, Math.round((100 * missedCasts * perCast) / (total || 1)));
+
 // Under-used DAMAGE COOLDOWNS -- the lever usageDivergence structurally MISSES.
 // usageDivergence floors at 0.5 casts/min (filler-tuned), but a damage cooldown is
 // cast ~0.1-1.0/min, so a player skipping it is invisible there -- and that's
@@ -248,10 +260,8 @@ export function cooldownGaps(youRate, fieldRate, dmgTotals, dur, { band = 1.0, m
     if (fr < minField || fr > band) continue;          // only the low-frequency cooldown band
     if (fr <= yr * 1.3 || fr - yr < 0.1) continue;     // you already use it about as much
     const youCasts = yr * mins, fieldCasts = fr * mins;
-    // Size from your OWN damage-per-cast (robust to multi-hit; conservative if you
-    // use it in worse windows than the field). Needs >=1 of your casts to measure.
-    const dpc = youCasts >= 0.5 ? (dmgTotals[n] || 0) / youCasts : null;
-    const pct = dpc != null ? Math.round((100 * (fieldCasts - youCasts) * dpc) / totalDmg) : null;
+    const dpc = perCastValue(dmgTotals[n], youCasts);
+    const pct = dmgGapPct(fieldCasts - youCasts, dpc, totalDmg);
     out.push({ name: n, you: yr, field: fr, youCasts, fieldCasts, pct });
   }
   return out.sort((a, b) => (b.pct || 0) - (a.pct || 0));
@@ -277,10 +287,7 @@ export function usageDamageGaps(under, over, dmgTotals, dur, total, { perCap = 3
   const mins = dur ? dur / 60 : 0;
   if (!mins) return {};
   const totalDmg = total || Object.values(dmgTotals || {}).reduce((a, b) => a + b, 0) || 1;
-  const dpc = (n, rate) => {
-    const casts = rate * mins;
-    return casts >= 0.5 ? (dmgTotals[n] || 0) / casts : null;     // your measured damage-per-cast
-  };
+  const dpc = (n, rate) => perCastValue(dmgTotals[n], rate * mins);
   // The cheapest over-pressed button's per-cast damage = what a GCD-capped swap
   // displaces. 0 when you over-press nothing (the extra casts are pure additions into
   // the idle GCDs your cast deficit implies). Subtracting it keeps the estimate
@@ -293,7 +300,7 @@ export function usageDamageGaps(under, over, dmgTotals, dur, total, { perCap = 3
     if (dU == null) continue;                          // can't measure -> talent branch owns it
     const net = Math.max(0, dU - displaced);           // GCD-aware net damage per recovered cast
     const missed = Math.max(0, (u.field - u.you) * mins);
-    const pct = Math.min(perCap, Math.round((100 * missed * net) / totalDmg));
+    const pct = dmgGapPct(missed, net, totalDmg, perCap);
     if (pct >= 1) out[u.name] = pct;
   }
   return out;
@@ -640,8 +647,8 @@ export async function rotationFindings(name, server, region, className, specName
       if (dmg.length) {
         // DIRECT-DAMAGE cooldown: size from your own damage-per-cast (existing lever).
         const abilityDmg = dmg.reduce((sm, x) => sm + (x.amount || 0), 0);
-        const dpc = g.youPerFight >= 1 ? abilityDmg / g.youPerFight : null;
-        const pct = dpc != null ? Math.round((100 * (g.fieldPerFight - g.youPerFight) * dpc) / yourTotal) : null;
+        const dpc = perCastValue(abilityDmg, g.youPerFight, 1);
+        const pct = dmgGapPct(g.fieldPerFight - g.youPerFight, dpc, yourTotal);
         return { kind: "cd", name: nm, youPerFight: g.youPerFight, fieldPerFight: g.fieldPerFight, id, pct };
       }
       // NO direct damage -> candidate BUFF (Weapons of Order, Recklessness, Avatar) OR
