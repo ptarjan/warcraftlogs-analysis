@@ -1,5 +1,6 @@
-# Tests + type-check on every push/PR. Type-check is opt-in per file (// @ts-check)
-# and emits nothing -- it's a static gate, the runtime is untouched.
+# Tests + type-check + browser build on every push/PR. Type-check is opt-in per file
+# (// @ts-check) and emits nothing -- a static gate, the runtime is untouched. The build
+# step bundles the browser app so a browser-only break can't slip through to the deploy.
 name: CI
 
 on:
@@ -19,3 +20,6 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npm test
       - run: npm run typecheck
+      # Also bundle the browser app: a browser-only break (e.g. a node:* import not
+      # marked external) passes test+typecheck but fails the Pages deploy. Catch it here.
+      - run: npm run build
