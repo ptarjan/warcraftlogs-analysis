@@ -509,15 +509,20 @@ export async function acquireFetchGate({ reserve = 400 } = {}) {
 // We still update _gqlCache with the latest result so same-tick non-fresh readers
 // downstream see the new fight list rather than a stale one.
 // --- automatic request batching (DataLoader-style) ---------------------------
-// WCL bills ~flat PER REQUEST, so the lever is fewer requests. Instead of each call
-// site hand-bundling, the FETCH LAYER does it: concurrent cache-misses landing in the
-// same microtask are combined into ONE GraphQL request via top-level aliasing, then
-// the response is split back to each caller and cached under its OWN key. The peer
-// mapLimit loops are already concurrent, so they batch with zero call-site wiring.
-// Fail-soft + never wrong: if the combined request errors (a private report, a
-// complexity cap, partial errors), the chunk re-runs as individual requests so each
-// caller still gets its own result or error. GraphQL aliasing of multiple top-level
-// fields is standard; our queries are all single-operation `query { <field> { … } }`.
+// What this DOES buy: latency + request-count headroom (WCL also throttles requests/
+// second), and the small ~1.2 pts/request fixed overhead. What it does NOT buy: the
+// hourly POINTS budget -- billing is complexity-scaled (measured: ~4.25 pts/report of
+// DATA regardless of packaging; probe-billing.mjs, 2026-06-14), so a combined N-report
+// query costs ~N x a single one. To cut POINTS, fetch fewer UNITS (peers/kills/bosses),
+// NOT tighter batches. So don't crank _BATCH_MAX or fan out loops expecting a quota win.
+// Mechanism: concurrent cache-misses landing in the same microtask are combined into ONE
+// GraphQL request via top-level aliasing, then the response is split back to each caller
+// and cached under its OWN key. The peer mapLimit loops are already concurrent, so they
+// batch with zero call-site wiring. Fail-soft + never wrong: if the combined request
+// errors (a private report, a complexity cap, partial errors), _runCombinable BISECTS
+// and retries each half down to individual requests, so each caller still gets its own
+// result or error. GraphQL aliasing of multiple top-level fields is standard; our
+// queries are all single-operation `query { <field> { … } }`.
 const _BATCH_MAX = 6;            // reports per combined request (stay well under WCL's complexity cap)
 const _noBatch = () => typeof process !== "undefined" && process.env && process.env.WCL_NO_BATCH === "1";
 let _batchQueue = [];

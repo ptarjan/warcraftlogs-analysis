@@ -284,10 +284,12 @@ function metricsFromTables(dmg, casts, name, specName) {
 // CombatantInfo events (secondary stats), and the fight window. The tables are
 // fetched UNFILTERED (no sourceClass) -- consumers pick their player by name in
 // metricsFromTables -- so a kill's DamageDone/Casts is fetched exactly ONCE no
-// matter who asks or what class filter they'd otherwise use. WCL bills ~flat per
-// request, so one bundled fetch per report+fight is the structural point saving.
-// The report-block fields reportCore reads. Factored out + frozen (loader test) so
-// the query string is a stable cache key the gql() auto-batcher can combine and split.
+// matter who asks or what class filter they'd otherwise use. WCL bills by query
+// COMPLEXITY (measured: ~4.25 pts per report read + ~1.2 pts/request overhead), so the
+// structural point saving is fetching each table ONCE -- fewer report-UNITS, the thing
+// that actually costs points -- not the request count. The report-block fields
+// reportCore reads. Factored out + frozen (loader test) so the query string is a
+// stable cache key the gql() auto-batcher can combine and split.
 const _reportCoreBody = (fight) => `
     dmg: table(fightIDs:${fight}, dataType:${throughputTable()})
     casts: table(fightIDs:${fight}, dataType:Casts)
