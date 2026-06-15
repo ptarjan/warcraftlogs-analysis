@@ -11,26 +11,13 @@
  *
  * Credentials: WCL_CLIENT_ID / WCL_CLIENT_SECRET via env, .env, or worker/.dev.vars.
  */
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { setupNodeCaches } from "./cli-common.mjs";
 
 async function main() {
-  const CACHE_DIR = path.join(os.homedir(), ".cache", "warcraftlogs-analysis");
-  process.env.WCL_GQL_CACHE = "1";
-  process.env.WCL_GQL_CACHE_FILE = process.env.WCL_GQL_CACHE_FILE || path.join(CACHE_DIR, "gql-cache.json");
-
-  // Minimal file-backed localStorage shim (Wowhead item cache), matching cli.mjs.
-  const CACHE_FILE = path.join(CACHE_DIR, "item-cache.json");
-  try { fs.mkdirSync(CACHE_DIR, { recursive: true }); } catch { /* ignore */ }
-  let _store = {};
-  try { _store = JSON.parse(fs.readFileSync(CACHE_FILE, "utf8")); } catch { /* none yet */ }
-  globalThis.localStorage = {
-    getItem: (k) => (k in _store ? _store[k] : null),
-    setItem: (k, v) => { _store[k] = String(v); },
-    removeItem: (k) => { delete _store[k]; },
-  };
+  // WCL disk cache + file-backed localStorage shim, shared across worktrees (and now
+  // persisted -- the old inline shim here didn't save Wowhead lookups). See cli-common.mjs.
+  setupNodeCaches();
 
   const argv = process.argv.slice(2);
   const positional = [];

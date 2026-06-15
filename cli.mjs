@@ -17,10 +17,8 @@
  *   node cli.mjs "Hadryan" proudmoore US --only prescribe
  *   node cli.mjs "Name" server EU --class Monk --spec Brewmaster --difficulty 4
  */
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { setupNodeCaches } from "./cli-common.mjs";
 
 // The card wiring as PURE DATA so it can be verified without running anything.
 // Each spec names the module + exported method the CLI invokes and how to build
@@ -69,48 +67,9 @@ export const loadSectionModule = (spec) => import(new URL(spec.module, import.me
 // reuses the same GraphQL results -- otherwise each worktree kept its own
 // repo-root cache and re-spent points the others had already paid for.
 async function main() {
-const CACHE_DIR = path.join(os.homedir(), ".cache", "warcraftlogs-analysis");
-process.env.WCL_GQL_CACHE = "1";
-process.env.WCL_GQL_CACHE_FILE = process.env.WCL_GQL_CACHE_FILE || path.join(CACHE_DIR, "gql-cache.json");
-
-// --- file-backed localStorage shim (persists gear.js's item-stat/instance cache
-// between runs). Shared across git worktrees -- one cache in the home dir, like
-// the GraphQL cache -- so parallel worktrees reuse each other's Wowhead lookups.
-const CACHE_FILE = path.join(CACHE_DIR, "item-cache.json");
-try { fs.mkdirSync(CACHE_DIR, { recursive: true }); } catch { /* ignore */ }
-let _store = {};
-try { _store = JSON.parse(fs.readFileSync(CACHE_FILE, "utf8")); } catch { /* none yet */ }
-let _saveTimer = null;
-const _save = () => {
-  clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(() => {
-    // Merge with concurrent worktrees' writes, then atomic rename (temp+rename).
-    try {
-      let merged;
-      try {
-        merged = { ...JSON.parse(fs.readFileSync(CACHE_FILE, "utf8")), ..._store };
-      } catch (e) {
-        // NEVER-CLOBBER: if the file EXISTS but can't be read, writing only OUR
-        // store would wipe concurrent worktrees' entries. Skip this write and keep
-        // our store for the next flush. Only write ours when there's genuinely no file.
-        if (fs.existsSync(CACHE_FILE)) return;
-        merged = { ..._store };
-      }
-      _store = merged;
-      const tmp = `${CACHE_FILE}.${process.pid}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(merged));
-      fs.renameSync(tmp, CACHE_FILE);
-    } catch {}
-  }, 200);
-};
-globalThis.localStorage = {
-  getItem: (k) => (k in _store ? _store[k] : null),
-  setItem: (k, v) => { _store[k] = String(v); _save(); },
-  removeItem: (k) => { delete _store[k]; _save(); },
-  clear: () => { _store = {}; _save(); },
-  key: (i) => Object.keys(_store)[i] ?? null,
-  get length() { return Object.keys(_store).length; },
-};
+// WCL disk cache + file-backed localStorage shim, shared across git worktrees
+// (see cli-common.mjs). Must run before importing anything that pulls in wcl.js.
+setupNodeCaches();
 
 // --- args ---
 const argv = process.argv.slice(2);
