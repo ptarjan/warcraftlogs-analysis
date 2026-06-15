@@ -544,6 +544,18 @@ test("gemLever: silent when your gems already match the field", () => {
   assert.equal(gemLever({ gems: null }).length, 0);
 });
 
+test("gemLever: drop a re-socket the field MEASURED at ~0% (was a self-contradicting ~1%)", () => {
+  const gf = { gems: { yourGems: new Map([[111, 3]]), yourVariety: 1, fieldTop: [[999, 40]], fieldVarietyMed: 1 } };
+  // measured 0% -> socketing the field's gem gains nothing -> not a suggestion
+  assert.equal(gemLever(gf, { pct: 0, nHave: 6, nNot: 4 }).length, 0);
+  // a real measured gain still fires, sized to it (not floored to a fake 1%)
+  const [g] = gemLever(gf, { pct: 3, nHave: 6, nNot: 4 });
+  assert.match(g.text, /^GEMS:/);
+  assert.match(g.label, /~3%/);
+  // no counterfactual (est) still surfaces at the flat estimate
+  assert.equal(gemLever(gf, null).length, 1);
+});
+
 test("DPS/COMP/INFO build impact and label together (no drift)", () => {
   assert.deepEqual(DPS(3), { impact: 3, label: "~3% DPS" });
   assert.deepEqual(DPS(1, 3), { impact: 2, label: "~1-3% DPS" });   // impact = midpoint

@@ -464,8 +464,13 @@ export function gemLever(gf, gemDelta = null) {
     : `GEMS: your main gem isn't the one most of the field runs -- re-socket toward ${link}. Gems are the cheapest stat change there is.`;
   // Measured value: peers running the field's gem vs not (same natural experiment
   // as a consumable swap). Falls back to the flat estimate with no counterfactual.
+  // Don't push a re-socket the field MEASURED at ~0% -- socketing their gem gains
+  // nothing, so the old DPS(max(1, 0)) forced a "~1%" claim that contradicted its own
+  // "(measured: 0% more)" cite. (An est gem lever, with no counterfactual, still
+  // surfaces at the flat estimate -- same call as the 0%-consumable-swap fix.)
+  if (gemDelta && Math.round(gemDelta.pct) === 0) return [];
   const cite = gemDelta ? ` (measured: peers on the field's gem do ${Math.round(gemDelta.pct)}% more, n=${gemDelta.nHave}/${gemDelta.nNot})` : "";
-  return [finding(DIM.GEAR, gemDelta ? DPS(Math.max(1, Math.round(gemDelta.pct))) : DPS(1, 2), msg + cite, gemDelta ? "measured" : "est")];
+  return [finding(DIM.GEAR, gemDelta ? DPS(Math.round(gemDelta.pct)) : DPS(1, 2), msg + cite, gemDelta ? "measured" : "est")];
 }
 
 // A stat-gain lever's size scales with the ACTUAL rating gained, so a +260 swap
