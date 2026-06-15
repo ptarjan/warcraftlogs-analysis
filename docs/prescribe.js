@@ -709,6 +709,12 @@ export function verdictLever(yours) {
   return "none";
 }
 
+// Verdict-relevant sections that, when SKIPPED (rate limit), make a "nothing to fix"
+// all-clear dishonest: we can't claim build/gear/rotation "match the field" if we never
+// loaded them. (A "top-parse comparison" / "boss-debuff comp" skip doesn't undercut that
+// specific claim, so it's excluded.) Returns the offending skip labels. Pure -> testable.
+export const verdictBlindSpots = (skipped) => (skipped || []).filter((s) => /rotation|talents|gear/.test(s));
+
 // The prose for the unexplained REMAINDER, by remainderKind (see that fn for why each
 // kind exists). The big one is NOT "press faster" -- a big remainder is the analysis
 // admitting it can't fully explain the gap, so it's framed by kind, never relabeled as a
@@ -890,7 +896,17 @@ function renderPrescription(log, d) {
       : "damage-per-cast (stats/gear), not activity";
     log(`VERDICT: your biggest character levers are the ${setupFixes.length} gear/setup fix${setupFixes.length > 1 ? "es" : ""} below${buildNote}${hasPress ? " + pressing faster" : ""}. The big gap is ${compList0.length ? "comp + " : ""}${residualWord}, not a rotation overhaul.`);
   } else {
-    log(`VERDICT: build, gear, enchants, and rotation all match the field -- there's NO setup or talent fix to make. Your gap is ${compList0.length ? "comp + " : ""}execution (press faster / uptime). Tighten your play; there's no gear/talent shortcut.`);
+    // "Nothing to fix" must NOT be claimed over sections we never loaded. An empty
+    // actionable list is MORE likely under a partial run (a skipped rotation/talents/gear
+    // contributes no levers), so a verdict-relevant skip turns "it all matches the field"
+    // into a false all-clear that contradicts the partial-data NOTE above. Say "we couldn't
+    // check" instead, and name exactly what's missing.
+    const blind = verdictBlindSpots(d.skipped);
+    if (blind.length) {
+      log(`VERDICT: nothing actionable in what we COULD load -- but we couldn't load ${blind.join(", ")} (see the NOTE above), so this is NOT a complete check. Re-run when the budget resets before concluding there's nothing to fix.`);
+    } else {
+      log(`VERDICT: build, gear, enchants, and rotation all match the field -- there's NO setup or talent fix to make. Your gap is ${compList0.length ? "comp + " : ""}execution (press faster / uptime). Tighten your play; there's no gear/talent shortcut.`);
+    }
   }
   // (No "biggest fix" / "what the gap is made of" summary here -- the VERDICT
   // above names the situation and the numbered list below IS the breakdown,

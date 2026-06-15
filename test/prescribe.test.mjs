@@ -53,7 +53,7 @@ test("fieldDelta measures an attribute's value from the field (have vs not)", ()
   // Too few on one side -> null.
   assert.equal(fieldDelta([110, 100, 100, 100, 100], [true, false, false, false, false]), null);
 });
-const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, strengths, killHistory, consumableLevers, residualText } = await import("../docs/prescribe.js");
+const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, verdictBlindSpots, strengths, killHistory, consumableLevers, residualText } = await import("../docs/prescribe.js");
 
 test("killHistory: parse spread (consistency) + recent-vs-old trend (improvement), time-ordered", () => {
   const k = (p, t) => ({ rankPercent: p, startTime: t });
@@ -519,6 +519,20 @@ test("verdictLever: headlines the ACTUAL biggest lever, not a fixed category pre
   assert.equal(verdictLever([uptime, gear]), "execution");
   assert.equal(verdictLever([gear, talent]), "setup");
   assert.equal(verdictLever([]), "none");
+});
+
+test("verdictBlindSpots: a 'nothing to fix' verdict can't claim sections it never loaded match", () => {
+  // The bug this guards: a rate-limited run that skipped rotation still emitted
+  // "build, gear, enchants, and rotation all match the field -- NO fix to make",
+  // a false all-clear over a section we never loaded (it contradicts the partial NOTE).
+  assert.deepEqual(verdictBlindSpots(["rotation"]), ["rotation"]);
+  assert.deepEqual(verdictBlindSpots(["your gear/consumables", "talents"]), ["your gear/consumables", "talents"]);
+  // A skip that DOESN'T undercut the build/gear/rotation match claim -> not a blind spot.
+  assert.deepEqual(verdictBlindSpots(["top-parse comparison"]), []);
+  assert.deepEqual(verdictBlindSpots(["boss-debuff comp"]), []);
+  // A full run skips nothing -> the confident all-clear is allowed to stand.
+  assert.deepEqual(verdictBlindSpots([]), []);
+  assert.deepEqual(verdictBlindSpots(null), []);
 });
 
 test("latencyLever: fires only above the threshold, never below", () => {
