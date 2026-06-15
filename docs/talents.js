@@ -10,7 +10,7 @@
 // node `id`, and WCL `id` === Raidbots entry `id`, which carries the real name +
 // spellId. We match the spec by CombatantInfo.specID === Raidbots specId.
 import { spellTooltip } from "./wcl.js";
-import { reportCore, playerMetrics, topField, mapLimit, median, topN, f, bestKill, DPS, finding, KIND } from "./core.js";
+import { reportCore, playerMetrics, topField, mapLimit, median, topN, f, bestKill, DPS, finding, DIM, KIND } from "./core.js";
 import { wowheadSpell } from "./links.js";
 
 const TALENTS_URL = "https://www.raidbots.com/static/data/live/talents.json";
