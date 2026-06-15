@@ -816,18 +816,13 @@ export async function run(log, name, server, region, className = "Monk",
   }
 }
 
-// Findings for prescribe.js (rotation domain): the actionable levers from
-// rotationFindings() data as the shared { dim, impact, label, text } currency.
-// Only a GENUINE under-used proc is actionable -- crit-driven big hits are
-// deliberately NOT recommended (a big hit is usually just a crit). Pure.
-export function rotationLevers(rot) {
+// Findings for prescribe.js (rotation domain), split by lever kind below; rotationLevers
+// concatenates them. Biggest rotation lever: where your ability USAGE diverges from the field. Pressing
+// the wrong button (over-use one, never press the field's) or skipping a cooldown is
+// usually the largest gap for an underperformer. A never-pressed talent is a respec
+// (flat estimate); under-pressed damage abilities are sized from real damage.
+function usageLevers(rot, link) {
   const out = [];
-  const ids = (rot && rot.abilityIds) || {};
-  const link = (n) => wowheadSpell(ids[n], n);   // ability name -> Wowhead link when we have the id
-  // Biggest rotation lever: where your ability USAGE diverges from the field.
-  // Pressing the wrong button (over-use one, never press the field's) or skipping
-  // a cooldown is usually the largest gap for an underperformer -- sorts above
-  // gear. Impact is an estimate (we can't sim it), sized by wrong-button vs under-use.
   const u = rot && rot.usage;
   // Over-press findings, minus hero-tree/build differences (see realOveruse): a
   // button the field replaced isn't something you're pressing "too much".
@@ -895,10 +890,15 @@ export function rotationLevers(rot) {
         `(verify in a log/sim).`));
     }
   }
-  // Under-used DAMAGE COOLDOWNS -- a measured PLAYSTYLE lever (the kind that
-  // explains a big remainder; gear/sims don't). Sized from real damage-per-cast.
-  // Two sources: cooldowns (the truncated damage table) and cdUsage (cast events,
-  // which catch cooldowns beyond the top-5 the damage table shows). Dedupe by name.
+  return out;
+}
+
+// Under-used DAMAGE COOLDOWNS -- a measured PLAYSTYLE lever (the kind that explains a
+// big remainder; gear/sims don't). Sized from real damage-per-cast. Two sources:
+// cooldowns (the truncated damage table) and cdUsage (cast events, which catch cooldowns
+// beyond the top-5 the damage table shows). Dedupe by name.
+function cooldownLevers(rot, link) {
+  const out = [];
   const seenCd = new Set();
   for (const cd of ((rot && rot.cooldowns) || []).slice(0, 2)) {
     if (cd.pct && cd.pct >= 1) {
@@ -918,13 +918,18 @@ export function rotationLevers(rot) {
         `skipping, not gear.`, "est", KIND.COOLDOWN));
     }
   }
-  // BUFF COOLDOWN: a damage-buff cooldown (Weapons of Order, Recklessness, Avatar)
-  // you press LESS than the field. These deal NO direct damage, so cooldownGaps/cdUsage
-  // can't see OR size them. The CAUSAL gate already confirmed it's a real buff (casting
-  // it put a self-buff aura on you -- a taunt/utility like Provoke grants none and was
-  // excluded), and the windowed uplift SIZED it: missed casts x the window's extra
-  // throughput. The "never recommend a defensive/taunt" guarantee is now the self-buff
-  // aura check, not a correlation that pull/burst timing could fake. Measured.
+  return out;
+}
+
+// BUFF COOLDOWN: a damage-buff cooldown (Weapons of Order, Recklessness, Avatar) you
+// press LESS than the field. These deal NO direct damage, so cooldownGaps/cdUsage can't
+// see OR size them. The CAUSAL gate already confirmed it's a real buff (casting it put a
+// self-buff aura on you -- a taunt/utility like Provoke grants none and was excluded),
+// and the windowed uplift SIZED it: missed casts x the window's extra throughput. The
+// "never recommend a defensive/taunt" guarantee is the self-buff aura check, not a
+// correlation that pull/burst timing could fake. Measured.
+function buffCdLevers(rot) {
+  const out = [];
   for (const b of ((rot && rot.buffCds) || [])) {
     if (b.pct && b.pct >= 1) {
       out.push(finding(DIM.ROTATION, DPS(b.pct),
@@ -934,8 +939,13 @@ export function rotationLevers(rot) {
         `it's a buff you're skipping, not gear.`, "measured"));
     }
   }
-  // PET DAMAGE: a pet-heavy spec whose pets do less of its damage than the field's
-  // is under-using its biggest hidden lever (summon/transform/Army timing). Measured.
+  return out;
+}
+
+// PET DAMAGE: a pet-heavy spec whose pets do less of its damage than the field's is
+// under-using its biggest hidden lever (summon/transform/Army timing). Measured.
+function petLever(rot) {
+  const out = [];
   if (rot && rot.petGap) {
     const g = rot.petGap;
     out.push(finding(DIM.ROTATION, DPS(g.pct),
@@ -943,9 +953,14 @@ export function rotationLevers(rot) {
       `Use your pet cooldowns more: summon on cooldown, keep the pet active/transformed, and line up your ` +
       `big pet windows (Army/Gargoyle/burst). It's a major damage source you're under-using, not gear.`, "measured"));
   }
-  // DoT UPTIME: a damage-over-time you keep up LESS than the field is lost damage
-  // that cast/cooldown levers can't see -- THE missing lever for DoT specs. Measured
-  // (boss uptime vs the field's), sized by the DoT's damage share x the shortfall.
+  return out;
+}
+
+// DoT UPTIME: a damage-over-time you keep up LESS than the field is lost damage
+// that cast/cooldown levers can't see -- THE missing lever for DoT specs. Measured
+// (boss uptime vs the field's), sized by the DoT's damage share x the shortfall.
+function dotLevers(rot) {
+  const out = [];
   for (const d of ((rot && rot.dotGaps) || []).slice(0, 2)) {
     // Don't assume a dedicated "refresh" button: some high-uptime DoTs are auto-applied
     // by your other casts/crits (Astral Smolder, Burning Blades, Deep Wounds) rather
@@ -957,7 +972,10 @@ export function rotationLevers(rot) {
       `-- ~${d.pct}% of your ${throughputWord()}. Keep its uptime up: refresh it before it falls off (or, if it's ` +
       `auto-applied by your other casts/crits, keep those flowing), and don't let it lapse in movement -- that uptime is ~free ${throughputWord()}.`, "measured"));
   }
-  // EMPOWERMENT: your biggest hit lands in its high-damage window LESS than the
+  return out;
+}
+
+// EMPOWERMENT: your biggest hit lands in its high-damage window LESS than the
   // field. We only claim this when the EVIDENCE shows it -- your empowered-cast
   // SHARE actually trails the field's. A per-cast DAMAGE gap alone isn't enough:
   // it's confounded (comp re-attribution, a boss's damage-taken debuff, stat
@@ -969,7 +987,9 @@ export function rotationLevers(rot) {
   // HEALERS: no empowerment lever. "Land your hardest hit in its high-damage window"
   // is a damage-mechanic concept; a big cooldown heal's outsized cluster can also
   // false-trigger the underlying proc detection. A healer's efficiency lever is
-  // overhealing (healing.js), not empowerment timing.
+// overhealing (healing.js), not empowerment timing.
+function empowermentLever(rot, link) {
+  const out = [];
   const emp = !runIsHealer() && ((rot && rot.perCast) || []).find(
     (pc) => pc.youEmp != null && pc.fieldEmp != null && pc.pct >= 1 &&
             pc.fieldEmp >= 0.2 && pc.fieldEmp - pc.youEmp >= 0.12);
@@ -981,4 +1001,21 @@ export function rotationLevers(rot) {
       "measured", KIND.EMPOWERMENT));
   }
   return out;
+}
+
+// Assemble all rotation levers into the shared { dim, impact, label, text } currency.
+// Each kind is its own pure (rot, link) -> Finding[] above; this just concatenates in
+// priority order. Only a GENUINE under-used proc is actionable -- crit-driven big hits
+// are deliberately NOT recommended (a big hit is usually just a crit).
+export function rotationLevers(rot) {
+  const ids = (rot && rot.abilityIds) || {};
+  const link = (n) => wowheadSpell(ids[n], n);   // ability name -> Wowhead link when we have the id
+  return [
+    ...usageLevers(rot, link),
+    ...cooldownLevers(rot, link),
+    ...buffCdLevers(rot),
+    ...petLever(rot),
+    ...dotLevers(rot),
+    ...empowermentLever(rot, link),
+  ];
 }
