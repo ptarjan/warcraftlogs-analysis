@@ -60,6 +60,45 @@ test("gql auto-batches concurrent cache-misses into ONE combined request, split 
   }
 });
 
+test("a failing combined batch BISECTS (isolates the bad report) instead of dropping all to individual", async () => {
+  const { gql, clearGqlCache } = await import("../docs/wcl.js");
+  const saved = process.env.WCL_NO_BATCH;
+  const r = (o) => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => o, text: async () => JSON.stringify(o) });
+  try {
+    delete process.env.WCL_NO_BATCH;   // enable batching
+    clearGqlCache();
+    const combinedSizes = [];          // # of aliases in each combined request we see
+    globalThis.fetch = async (url, opts) => {
+      if (String(url).includes("oauth/token")) return r({ access_token: "t", expires_in: 3600 });
+      const q = JSON.parse(opts.body).query;
+      const aliases = [...q.matchAll(/_(\d+):\s*reportData\s*\{\s*report\(code:"([^"]+)"/g)];
+      if (aliases.length) {
+        combinedSizes.push(aliases.length);
+        // Report "BAD" poisons any combined request it's in (like a private report /
+        // partial error _gqlRun throws on) -> forces a bisect.
+        if (aliases.some(([, , code]) => code === "BAD")) return r({ errors: [{ message: "no access" }] });
+        const data = {}; for (const [, n, code] of aliases) data[`_${n}`] = { report: { code } };
+        return r({ data });
+      }
+      const code = (q.match(/report\(code:"([^"]+)"/) || [])[1];
+      if (code === "BAD") return r({ errors: [{ message: "no access" }] });
+      return r({ data: { reportData: { report: { code } } } });
+    };
+    const codes = ["A", "BAD", "C", "D"];
+    const results = await Promise.allSettled(codes.map((c) =>
+      gql(`query { reportData { report(code:"${c}") { x } } }`)));
+    // The 3 good reports still resolve (their halves combine fine); only BAD rejects.
+    assert.deepEqual(results.map((x) => x.status), ["fulfilled", "rejected", "fulfilled", "fulfilled"]);
+    assert.deepEqual(results[0].value, { reportData: { report: { code: "A" } } });
+    // Bisected, NOT dropped to 4 individual: we should have seen at least one combined
+    // request of size > 1 succeed (the good half), proving graceful degradation.
+    assert.ok(combinedSizes.some((s) => s > 1), `expected a surviving multi-report batch, saw sizes ${combinedSizes}`);
+  } finally {
+    if (saved === undefined) delete process.env.WCL_NO_BATCH; else process.env.WCL_NO_BATCH = saved;
+    clearGqlCache();
+  }
+});
+
 test("rateLimit surfaces the EXACT reset on a 429 (not bare null), so callers wait precisely", async () => {
   const { rateLimit, clearGqlCache } = await import("../docs/wcl.js");
   clearGqlCache();

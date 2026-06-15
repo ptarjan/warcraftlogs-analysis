@@ -550,17 +550,62 @@ async function _runBatchChunk(chunk) {
   const parts = chunk.map((it) => ({ it, p: _splitQuery(it.query) }));
   const solo = parts.filter((x) => !x.p), combinable = parts.filter((x) => x.p);
   for (const { it } of solo) _gqlRun(it.query, it.retries).then(it.resolve, it.reject);  // unparseable -> individual
-  if (combinable.length <= 1) { for (const { it } of combinable) _gqlRun(it.query, it.retries).then(it.resolve, it.reject); return; }
-  const combined = `query { ${combinable.map((x, j) => `_${j}: ${x.p.inner}`).join(" ")} }`;
-  const retries = Math.max(...combinable.map((x) => x.it.retries));
+  await _runCombinable(combinable);
+}
+
+// Combine `items` into one aliased request; on failure BISECT and retry each half,
+// bottoming out at an individual request. This degrades a too-big chunk toward WCL's
+// REAL complexity cap (halve until it fits) and isolates a single bad report (private/
+// partial-error) to its own request -- instead of dropping the whole chunk to
+// one-request-per-caller. So _BATCH_MAX can be set optimistically: overshoot self-corrects.
+async function _runCombinable(items) {
+  if (items.length === 0) return;
+  if (items.length === 1) { const { it } = items[0]; return _gqlRun(it.query, it.retries).then(it.resolve, it.reject); }
+  const combined = `query { ${items.map((x, j) => `_${j}: ${x.p.inner}`).join(" ")} }`;
+  const retries = Math.max(...items.map((x) => x.it.retries));
   try {
     const data = await _gqlRun(combined, retries);
-    combinable.forEach((x, j) => x.it.resolve({ [x.p.field]: data[`_${j}`] }));
+    items.forEach((x, j) => x.it.resolve({ [x.p.field]: data[`_${j}`] }));
   } catch (e) {
     // Combined failed (a private report, complexity cap, or partial errors _gqlRun
-    // throws on) -> re-run each individually so each gets its own result/error.
-    for (const { it } of combinable) _gqlRun(it.query, it.retries).then(it.resolve, it.reject);
+    // throws on) -> bisect so a too-big batch shrinks to the real cap and one bad
+    // report doesn't force ALL its batch-mates back to individual requests.
+    const mid = items.length >> 1;
+    await Promise.all([_runCombinable(items.slice(0, mid)), _runCombinable(items.slice(mid))]);
   }
+}
+
+// --- billing probe: settles flat-per-request vs complexity-scaled --------------
+// The whole batcher rests on "WCL bills ~flat PER REQUEST". If instead points scale
+// with query COMPLEXITY, a combined N-report query costs ~N x a single one and
+// batching saves requests/latency but NOT the hourly points budget. This measures it
+// directly: run the SAME N report reads two ways -- N separate requests, then ONE
+// combined (aliased) request -- reading pointsSpentThisHour around each via WCL's own
+// rateLimitData. Identical data both ways, so only the PACKAGING differs:
+//   sepCost / combCost ~= N  => FLAT per request (batching is an ~N x points win)
+//   sepCost / combCost ~= 1  => COMPLEXITY-scaled (batching saves requests, not points)
+// Decisive because the two predictions differ by ~N x, well above the spent-counter's
+// few-point settle lag. Raw _gqlRun (bypasses cache) so both arms hit the network.
+// Node / connected-browser only (needs a direct WCL token to read rateLimitData).
+export async function probeBilling(queries) {
+  const items = queries.map((q) => ({ q, p: _splitQuery(q) })).filter((x) => x.p);
+  if (items.length < 2) throw new Error("probeBilling needs >=2 combinable queries");
+  const spent = async () => { const rl = await rateLimit(); return rl && !rl.limited ? rl.spent : null; };
+  const s0 = await spent();
+  for (const { q } of items) await _gqlRun(q, 1);                 // arm A: N separate requests
+  const s1 = await spent();
+  const combined = `query { ${items.map((x, j) => `_${j}: ${x.p.inner}`).join(" ")} }`;
+  await _gqlRun(combined, 1);                                     // arm B: 1 combined request
+  const s2 = await spent();
+  if (s0 == null || s1 == null || s2 == null) return { ok: false, reason: "could not read pointsSpentThisHour (no direct WCL token?)" };
+  const n = items.length;
+  const sepCost = s1 - s0, combCost = s2 - s1;
+  const ratio = combCost > 0 ? sepCost / combCost : null;        // ~N => flat; ~1 => complexity
+  const verdict = ratio == null ? "indeterminate (combined cost <= 0 -- counter lag; re-run)"
+    : ratio >= n * 0.6 ? `FLAT per request (ratio ${ratio.toFixed(1)} ~ N=${n}) -- batching IS a points win`
+    : ratio <= 1.6 ? `COMPLEXITY-scaled (ratio ${ratio.toFixed(1)} ~ 1) -- batching saves requests/latency, NOT points`
+    : `unclear (ratio ${ratio.toFixed(1)}, between 1 and N=${n}) -- re-run with larger N`;
+  return { ok: true, n, sepCost, combCost, perReqSeparate: sepCost / n, ratio, verdict };
 }
 
 export async function gql(query, retries = 6, { fresh = false } = {}) {
