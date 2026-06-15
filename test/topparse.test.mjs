@@ -6,7 +6,7 @@ import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
 const { raidCoverage, nonBossShare, potionCount, RAID_DAMAGE, topParseLevers } = await import("../docs/topparse.js");
-const { setRunMetric } = await import("../docs/core.js");
+const { setRunMetric, DIM } = await import("../docs/core.js");
 
 const aura = (pct, guid = 1) => ({ pct, guid });
 
@@ -102,6 +102,11 @@ test("topParseLevers: damage-ROUTING lever is suppressed for healers (HPS run)",
     setRunMetric("dps");
     const dps = topParseLevers(tp);
     assert.ok(dps.some((r) => /^ROUTING/.test(r.text)), "ROUTING should fire for DPS");
+    // It's YOURS to fix (target choice you control), NOT a raid-comp gap -> must land
+    // in the "do these to your character" list, not the "not yours to change" comp box.
+    const routing = dps.find((r) => /^ROUTING/.test(r.text));
+    assert.equal(routing.dim, DIM.ROTATION, "routing is a player target-priority lever, not DIM.COMP");
+    assert.notEqual(routing.dim, DIM.COMP);
     setRunMetric("hps");
     const hps = topParseLevers(tp);
     assert.ok(!hps.some((r) => /^ROUTING/.test(r.text)), "ROUTING must NOT fire for a healer");

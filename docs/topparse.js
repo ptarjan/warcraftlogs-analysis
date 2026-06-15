@@ -199,16 +199,20 @@ export function topParseLevers(tp, compDeltas = null) {
         `Missing ${link} (${e.effect}) — bring ${e.who}. (unsized — this field gave no with/without split to measure it).`, "measured"));
     }
   }
-  // Damage routing: measured extra cleave/funnel the top parses get. This is a
-  // DPS-only lever -- it compares where you put your DAMAGE. For a healer it would
-  // tell a Mistweaver to "cleave/funnel instead of tunneling the boss" to raise
-  // their HPS, which is nonsense (their throughput is healing, not target choice).
-  // Suppress entirely for healers, regardless of the broader healer-analysis design.
+  // Damage routing: measured extra cleave/funnel the top parses get. This is YOURS
+  // to fix -- WHICH targets you put your damage on is a priority decision you make,
+  // not a roster gap (so it's DIM.ROTATION, in the "do these to your character" list,
+  // NOT DIM.COMP -- a "raid comp, not yours to change" label would flatly contradict
+  // the advice "cleave the add instead of tunneling"). Caveat: how MUCH add-damage is
+  // available is fight/comp-dependent, so we hedge the amount, not the action. It's a
+  // DPS-only lever (it compares where you put DAMAGE) -- for a healer it would tell a
+  // Mistweaver to "cleave the add to raise HPS", which is nonsense; suppress for healers.
   const route = tp.routing ? tp.routing.top - tp.routing.you : 0;
   if (!runIsHealer() && tp.routing && route >= 5 && tp.routing.addNames.length) {
-    out.push(finding(DIM.COMP, DPS(Math.round(route)),
+    out.push(finding(DIM.ROTATION, DPS(Math.round(route)),
       `ROUTING: top parses put ${f(tp.routing.top, 0)}% of damage on ${tp.routing.addNames.join(", ")} ` +
-      `(you ${f(tp.routing.you, 0)}%). Cleave/funnel those instead of tunneling the boss.`, "measured"));
+      `(you ${f(tp.routing.you, 0)}%). Cleave/funnel those instead of tunneling the boss when they're up ` +
+      `(how much is available depends on the fight, but the target choice is yours).`, "measured"));
   }
   // Potions: pre-pot + a second combat potion (a setup fix you apply yourself).
   if (tp.potions && tp.potions.top > tp.potions.you) {
