@@ -97,17 +97,14 @@ async function fieldGearConsumables(name, server, region, encounter, difficulty,
         t.count++; trinkets.set(g.id, t);
       }
     }
+    const byField = { flasks, foods, potions, augRunes, oils };
     for (const [nm, b] of Object.entries(bf)) {
       const lc = nm.toLowerCase();
-      if (b.pct > 50 && lc.includes("flask")) { flasks.set(nm, (flasks.get(nm) || 0) + 1); guids.set(nm, b.guid); }
-      if (b.pct > 50 && lc.includes("well fed")) { foods.set(nm, (foods.get(nm) || 0) + 1); guids.set(nm, b.guid); }
-      // Combat potions are brief (a few uses), so any uptime counts; exclude heals.
-      if (b.pct > 0 && lc.includes("potion") && !lc.includes("healing")) { potions.set(nm, (potions.get(nm) || 0) + 1); guids.set(nm, b.guid); }
-      // Augment rune: a persistent +primary-stat consumable (a free flat gain).
-      if (b.pct > 50 && lc.includes("augment rune")) { augRunes.set(nm, (augRunes.get(nm) || 0) + 1); guids.set(nm, b.guid); }
-      // Weapon oil / sharpening stone: a TEMPORARY weapon buff you re-apply, like
-      // a flask -- NOT the permanent weapon enchant (that's the ENCHANTS check).
-      if (b.pct > 50 && /\boil\b|sharpening|whetstone|weightstone/.test(lc)) { oils.set(nm, (oils.get(nm) || 0) + 1); guids.set(nm, b.guid); }
+      for (const c of CONSUMABLES) {
+        if (!consumableHit(c, lc, b)) continue;
+        const tally = byField[c.field];
+        tally.set(nm, (tally.get(nm) || 0) + 1); guids.set(nm, b.guid);
+      }
     }
     if (s) {
       const sec = ["crit", "haste", "mastery", "vers"].reduce((acc, k) => acc + s[k], 0) || 1;
@@ -119,13 +116,8 @@ async function fieldGearConsumables(name, server, region, encounter, difficulty,
   // counterfactual (e.g. everyone flasks) -> the lever keeps its estimate.
   const dps = peers.map((p) => p.m.dps);
   const mask = (test) => peers.map((p) => Object.entries(p.bf || {}).some(([nm, b]) => test(nm.toLowerCase(), b)));
-  const deltas = {
-    flasks: fieldDelta(dps, mask((lc, b) => b.pct > 50 && lc.includes("flask"))),
-    foods: fieldDelta(dps, mask((lc, b) => b.pct > 50 && lc.includes("well fed"))),
-    potions: fieldDelta(dps, mask((lc, b) => b.pct > 0 && lc.includes("potion") && !lc.includes("healing"))),
-    augRunes: fieldDelta(dps, mask((lc, b) => b.pct > 50 && lc.includes("augment rune"))),
-    oils: fieldDelta(dps, mask((lc, b) => b.pct > 50 && /\boil\b|sharpening|whetstone|weightstone/.test(lc))),
-  };
+  const deltas = {};
+  for (const c of CONSUMABLES) deltas[c.field] = fieldDelta(dps, mask((lc, b) => consumableHit(c, lc, b)));
   // The value of the SPECIFIC field-favored item, for a SWAP (you ran a different
   // one -- e.g. a defensive flask vs the field's DPS flask). deltas above measure
   // having ANY (null when everyone flasks); these measure peers on the FIELD'S TOP
@@ -221,14 +213,11 @@ async function bossDebuffDeltas(name, server, region, encounter, difficulty, cla
 
 async function mySetup(code, fight, sourceId, gear, priority = "crit", className = "Monk") {
   const bf = await buffUptimes(code, fight, sourceId);
-  const flask = Object.entries(bf).find(([n, b]) => n.toLowerCase().includes("flask") && b.pct > 50);
-  const food = Object.entries(bf).find(([n, b]) => n.toLowerCase().includes("well fed") && b.pct > 50);
-  const potion = Object.entries(bf).find(([n, b]) => {
-    const lc = n.toLowerCase();
-    return lc.includes("potion") && !lc.includes("healing") && b.pct > 0;
-  });
-  const augrune = Object.entries(bf).find(([n, b]) => n.toLowerCase().includes("augment rune") && b.pct > 50);
-  const oil = Object.entries(bf).find(([n, b]) => /\boil\b|sharpening|whetstone|weightstone/.test(n.toLowerCase()) && b.pct > 50);
+  // Which consumable buff you ran, keyed by its `mine` name (flask/food/potion/...),
+  // via the shared CONSUMABLES matchers -- same detection as the field tally.
+  const mine = {};
+  for (const c of CONSUMABLES) mine[c.mine] = Object.entries(bf).find(([n, b]) => consumableHit(c, n.toLowerCase(), b));
+  const { flask, food, potion, augrune, oil } = mine;
   const stats = await secondaryStats(code, fight, sourceId, className);
   const statPct = stats
     ? 100 * stats[priority] / (["crit", "haste", "mastery", "vers"].reduce((a, k) => a + stats[k], 0) || 1)
@@ -283,24 +272,33 @@ async function aggregateExecution(name, server, region, difficulty, className, s
   };
 }
 
-// Consumables you apply yourself -- one row per consumable, same logic for all:
-// you ran none -> recommend the field's most common; you ran a different one ->
-// swap to it. (Replaces five near-identical hand-written blocks.)
+// Consumables you apply yourself -- ONE source of truth: how to detect each from a
+// buff-uptime table (`match` on the lowercased name + `minPct` uptime floor -- potions
+// are brief, so any uptime counts) AND how to render its lever (label/verb/sizes). This
+// table drove the lever rows; it now also drives detection, replacing three copied
+// matcher blocks (field tally, fieldDelta mask, mySetup). `field` keys the peer tallies.
 const CONSUMABLES = [
   { field: "flasks", mine: "flask", label: "FLASK", peerVerb: "run", note: "",
+    match: (lc) => lc.includes("flask"), minPct: 50,
     none: DPS(2), missText: "you ran none", tail: "Free parse with equal gear.", swap: DPS(2) },
   { field: "foods", mine: "food", label: "FOOD", peerVerb: "run", note: "",
+    match: (lc) => lc.includes("well fed"), minPct: 50,
     none: DPS(1, 2), missText: "you ate none", tail: "Free parse.", swap: DPS(1) },
   { field: "potions", mine: "potion", label: "COMBAT POTION", peerVerb: "pop",
     note: " (pre-pull + again on cooldown/burst = 2 per fight)",
+    match: (lc) => lc.includes("potion") && !lc.includes("healing"), minPct: 0,
     none: DPS(1, 3), missText: "you used none", tail: "Free parse with equal gear.", swap: DPS(1) },
   { field: "augRunes", mine: "augrune", label: "AUGMENT RUNE", peerVerb: "use",
     note: " (a flat primary-stat gain)",
+    match: (lc) => lc.includes("augment rune"), minPct: 50,
     none: DPS(1, 2), missText: "you ran none", tail: "Free parse.", swap: DPS(1) },
   { field: "oils", mine: "oil", label: "WEAPON OIL", peerVerb: "apply",
     note: " (a temporary weapon buff, re-applied like a flask)",
+    match: (lc) => /\boil\b|sharpening|whetstone|weightstone/.test(lc), minPct: 50,
     none: DPS(1, 2), missText: "you ran none", tail: "Free parse.", swap: DPS(1) },
 ];
+// Did this consumable's buff land? (Uptime strictly above its floor + name matches.)
+const consumableHit = (c, lc, b) => b.pct > c.minPct && c.match(lc);
 
 // --- cross-cutting levers prescribe builds from its OWN peer aggregates ------
 // (gear/rotation/comp levers live in their domain modules; these need data only
