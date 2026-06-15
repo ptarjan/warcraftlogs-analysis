@@ -84,6 +84,7 @@ async function fetchPeerField(name, server, region, encounter, difficulty, class
 // the self-applied consumables (via the shared CONSUMABLES matchers), and each peer's
 // priority-stat %. Pure over the fetched peers.
 function tallyPeerField(peers, priority) {
+  /** @type {Record<string, Map<string, number>>} */
   const enchBySlot = {};   // slot -> Map(name -> count)
   const trinkets = new Map(), flasks = new Map(), foods = new Map(), potions = new Map(), augRunes = new Map(), oils = new Map();
   const guids = new Map(); // consumable name -> spell guid (for Wowhead links)
@@ -126,6 +127,7 @@ function tallyPeerField(peers, priority) {
 function computeFieldDeltas(peers, dps, priority, tally) {
   const { flasks, foods, potions, augRunes, oils } = tally;
   const mask = (test) => peers.map((p) => Object.entries(p.bf || {}).some(([nm, b]) => test(nm.toLowerCase(), b)));
+  /** @type {Record<string, FieldDelta>} */
   const deltas = {};
   for (const c of CONSUMABLES) deltas[c.field] = fieldDelta(dps, mask((lc, b) => consumableHit(c, lc, b)));
   const topMaskDelta = (counter, thr) => {
@@ -161,6 +163,7 @@ function computeFieldDeltas(peers, dps, priority, tally) {
     const topGem = topEntry(gemTally)[0];
     gemDelta = fieldDelta(dps, peers.map((p) => (p.m.gear || []).some((g) => (g.gems || []).some((gm) => gm.id === topGem))));
   }
+  /** @type {Record<string, FieldDelta>} */
   const compDeltas = {};
   for (const e of RAID_DAMAGE) {
     if (e.on !== "self") continue;
