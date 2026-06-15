@@ -5,7 +5,11 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, rotationLevers } = await import("../docs/rotation.js");
+const { setRunMetric } = await import("../docs/core.js");
+
+// Run a body with the run metric forced, always restoring "dps" so it never leaks.
+const asHealer = (fn) => { try { setRunMetric("hps"); return fn(); } finally { setRunMetric("dps"); } };
 
 test("selfBuffMatch: the CAUSAL gate -- a buff that auras YOU passes, a taunt does not", () => {
   // The player's self-buffs this kill (core.buffUptimes shape: name -> { pct, guid }).
@@ -302,6 +306,27 @@ test("classifyUnderUse: only fires when you NEVER press it (not a mild gap)", ()
 test("classifyUnderUse: no talent data -> never claim a talent fix", () => {
   const top = { name: "Rupture", you: 0, field: 2.1 };
   assert.equal(classifyUnderUse(top, null), null);
+});
+
+test("usageLevers: a healer never gets a DAMAGE-cast respec/press-more lever (the whole analysis is a misframe)", () => {
+  // A healer's damage casts diverge from the HPS-ranked field's; u.under[0] is a damage
+  // ability classified as a skipped talent -> the TALENTS/BUILD branch would have said
+  // "respec to the field's build (the one with Rupture)". That's a damage respec aimed at
+  // a healer -- exactly what the press-more suppression exists to prevent. Must be silent.
+  const rot = {
+    usage: { under: [{ name: "Rupture", you: 0, field: 2.1 }], over: [] },
+    talent: { taken: new Set(["Garrote"]), universe: new Set(["Garrote", "Rupture"]) },
+    heroMatched: true,
+    abilityIds: {},
+  };
+  // DPS run: the lever fires (sanity that the fixture reaches the TALENTS/BUILD branch).
+  const dps = rotationLevers(rot);
+  assert.ok(dps.some((l) => /TALENTS\/BUILD/.test(l.text)), "DPS run -> the damage respec lever DOES fire");
+  // Healer run: suppressed entirely -- no rotation lever from the damage-cast analysis.
+  asHealer(() => {
+    const heal = rotationLevers(rot);
+    assert.equal(heal.length, 0, "healer run -> no damage-cast rotation lever at all");
+  });
 });
 
 test("castable: a skipped talent (peers' hero tree) is NOT castable -> don't say press it more", () => {

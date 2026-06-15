@@ -824,6 +824,14 @@ export async function run(log, name, server, region, className = "Monk",
 // (flat estimate); under-pressed damage abilities are sized from real damage.
 function usageLevers(rot, link) {
   const out = [];
+  // HEALERS: usageLevers is built ENTIRELY from DAMAGE-cast divergence -- every branch
+  // ("press this damage ability more", "respec for this damage talent", "wasted damage
+  // talent") is a misframe for a healer (healing is reactive; casting into less damage
+  // just overheals). A healer's rotation lever is overhealing (healing.js); their build
+  // is talentLevers (HPS-ranked). Suppress the whole analysis -- not just the measured
+  // press-more branch, but the TALENTS/BUILD branch too (it read u.under directly and
+  // leaked a damage respec onto healers).
+  if (runIsHealer()) return out;
   const u = rot && rot.usage;
   // Over-press findings, minus hero-tree/build differences (see realOveruse): a
   // button the field replaced isn't something you're pressing "too much".
@@ -862,11 +870,9 @@ function usageLevers(rot, link) {
     // used to hide in the "playstyle" residual -- pressing a core ability far less than
     // the field is lost damage we can now name AND size, not a flat 3-6% guess.
     // Only abilities you can actually cast (peer pool can skew hero tree); the
-    // never-pressed talent above is excluded. HEALERS: suppress -- "press more heals"
-    // is a misframe (healing is reactive; casting into less damage just overheals).
-    const underAbilities = runIsHealer()
-      ? []
-      : u.under.filter((a) => a.name !== consumed && castable(a.name, rot && rot.talent));
+    // never-pressed talent above is excluded. (Healers never reach here -- the whole
+    // function early-returns for them.)
+    const underAbilities = u.under.filter((a) => a.name !== consumed && castable(a.name, rot && rot.talent));
     const measured = underAbilities.filter((a) => (a.dmgPct || 0) >= 1).sort((a, b) => b.dmgPct - a.dmgPct);
     measured.slice(0, 3).forEach((a, i) => {
       // Name the wrong-button swap once, on the biggest, when you over-press a filler.
