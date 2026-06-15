@@ -46,7 +46,7 @@ function shape(q) {
   return {};
 }
 
-test("prescribe.run emits a complete prescription (no error) end-to-end", async () => {
+function installMock() {
   globalThis.localStorage = (() => { const s = {}; return { getItem: (k) => (k in s ? s[k] : null), setItem: (k, v) => { s[k] = String(v); }, removeItem: (k) => { delete s[k]; } }; })();
   globalThis.fetch = async (url, opts) => {
     const u = String(url);
@@ -56,22 +56,41 @@ test("prescribe.run emits a complete prescription (no error) end-to-end", async 
     // skips gracefully -- talent rendering is covered by levers.test.mjs).
     return resp({ name: "I", quality: 3, tooltip: "", itemLevel: IL });
   };
+}
 
-  const core = await import("../docs/core.js");
-  const prescribe = await import("../docs/prescribe.js");
-  const lines = [];
-  const log = (s = "") => lines.push(s);
+// Run prescribe.run() the way the app/CLI does for an archetype (the caller sets the
+// metric/support flag from the spec), capture the lines, and assert the universal
+// invariants: a real prescription, never a crash/[error]. metricRx checks the unit
+// switched (DPS vs HPS) -- the healer/support paths have their own residual prose.
+async function runArchetype(core, prescribe, { cls, spec, metric, support }) {
+  installMock();
+  core.setRunMetric(metric);
+  core.setRunSupport(!!support);
+  try {
+    const lines = [];
+    const pr = await core.detectPriority(cls, spec, 5, 1);
+    await prescribe.run((s = "") => lines.push(s), NAME, "s", "US", cls, spec, 5, pr);
+    return lines;
+  } finally { core.setRunMetric("dps"); core.setRunSupport(false); }
+}
 
-  const ctx = await core.detectContext(NAME, "s", "US");
-  const pr = await core.detectPriority(ctx.className, ctx.specName, ctx.difficulty, ctx.killed[0].encounter.id);
-  // run() must not throw on a complete, well-formed dataset.
-  await prescribe.run(log, NAME, "s", "US", ctx.className, ctx.specName, ctx.difficulty, pr);
+const ARCHETYPES = [
+  { name: "DPS", cls: "Monk", spec: "Brewmaster", metric: "dps", unit: /% DPS/ },
+  { name: "healer", cls: "Druid", spec: "Restoration", metric: "hps", unit: /% HPS|HEALING/ },
+  { name: "support", cls: "Evoker", spec: "Augmentation", metric: "dps", support: true, unit: /% DPS/ },
+];
 
-  const out = lines.join("\n");
-  // (The "# PRESCRIPTION" banner is CLI/section chrome, not run()'s own output, which
-  // opens with the percentile line.)
-  assert.match(out, /You parse \d+th percentile/, "emits the percentile line");
-  assert.match(out, /Do these to your character now/, "emits the change-list header");
-  // The whole point of fail-soft is a partial list, never a crash -- no [error] line.
-  assert.ok(!lines.some((l) => /^\[error\]/.test(l)), `no [error] line; got:\n${lines.filter((l) => /error/i.test(l)).join("\n")}`);
-});
+for (const a of ARCHETYPES) {
+  test(`prescribe.run emits a complete prescription (no error) -- ${a.name}`, async () => {
+    const core = await import("../docs/core.js");
+    const prescribe = await import("../docs/prescribe.js");
+    const lines = await runArchetype(core, prescribe, a);
+    const out = lines.join("\n");
+    // (The "# PRESCRIPTION" banner is CLI/section chrome; run()'s own output opens with
+    // the percentile line.)
+    assert.match(out, /You parse \d+th percentile/, "emits the percentile line");
+    assert.match(out, a.unit, `output uses the ${a.name} metric unit`);
+    // Fail-soft means a partial list, never a crash -- no [error] line.
+    assert.ok(!lines.some((l) => /^\[error\]/.test(l)), `no [error] line; got:\n${lines.filter((l) => /error/i.test(l)).join("\n")}`);
+  });
+}
