@@ -752,8 +752,14 @@ test("residualText (playstyle): empowered-share wording reflects ahead / even / 
   assert.match(residualText("playstyle", 28, {}, rot(0.40, 0.20), []), /lands empowered more often than the field \(you 40% vs 20%\)/);
   // roughly equal (22% vs 20%): about as often as
   assert.match(residualText("playstyle", 28, {}, rot(0.22, 0.20), []), /about as often as the field/);
-  // a bit behind but within the no-lever band (12% vs 20%): nearly as often as
-  assert.match(residualText("playstyle", 28, {}, rot(0.12, 0.20), []), /nearly as often as the field/);
+  // genuinely behind (12% vs 20%, 8pp -- under the 12pp lever bar): must NOT claim
+  // "NOT timing". Say "less often than" + flag timing as the likely sub-threshold lever.
+  const behind = residualText("playstyle", 28, {}, rot(0.12, 0.20), []);
+  assert.match(behind, /lands empowered less often than the field \(you 12% vs 20%\)/);
+  assert.match(behind, /part of this likely IS timing/);
+  assert.doesNotMatch(behind, /it's NOT timing/, "don't dismiss timing when you empower well below the field");
+  // within 5pp (16% vs 20%): still 'about as often as' + NOT timing (genuinely matched).
+  assert.match(residualText("playstyle", 28, {}, rot(0.16, 0.20), []), /about as often as the field.*so it's NOT timing/s);
 });
 
 test("residualText (playstyle): a BIG remainder gets actionable execution framing, not a 'confounded per-cast' punt", () => {

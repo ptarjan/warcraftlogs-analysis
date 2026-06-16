@@ -770,14 +770,21 @@ export function residualText(kind, r, d, rot, rx) {
     // remainder is genuinely just stat variance.
     const big = r >= 25;
     const frontier = ` A gap this size isn't just stat variance -- it's execution we can't itemize from one log: lining your cooldowns up with Bloodlust and your burst windows, ability sequencing, and holding uptime/DoTs/buffs through movement (plus some you don't fully control -- comp re-attribution, fight-amp windows). The fastest read is to pull up a rank-1 parse of this exact fight and diff its timeline against yours.`;
+    const perCastTail = ` The gap is per-cast ${throughputWord()} (crit/stat scaling, plus comp re-attribution and fight amp windows you don't fully control).`;
+    // Empowered-share band -- only reached when the EMPOWERMENT lever DIDN'T fire (gap
+    // < 12pp). Ahead or within 5pp => timing ISN'T the culprit. But 5-12pp BEHIND (e.g.
+    // a Feral at 11% vs 21% -- half the field's rate) means timing/snapshotting likely
+    // IS part of it, just under the lever's bar: NEVER tell that player "you land it
+    // nearly as often, so it's NOT timing" -- that dismisses the most likely lever.
+    const empBehind = hasEmp && pr.youEmp < pr.fieldEmp - 0.05;
+    const empWord = !hasEmp ? "" : pr.youEmp - pr.fieldEmp >= 0.05 ? "more often than"
+      : pr.youEmp >= pr.fieldEmp - 0.05 ? "about as often as" : "less often than";
     const cite = hasEmp && pr.fieldEmp - pr.youEmp >= 0.12
       ? ` We can see the biggest piece: only ${ep(pr.youEmp)} of your ${pr.name} casts land empowered vs the field's ${ep(pr.fieldEmp)}${hasEmpItem ? " (see the EMPOWERMENT item)" : ""} -- the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps).`
+      : hasEmp && !empBehind
+      ? ` We checked the obvious culprit: your ${pr.name} lands empowered ${empWord} the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}), so it's NOT timing.${big ? frontier : perCastTail}`
       : hasEmp
-      ? ` We checked the obvious culprit: your ${pr.name} lands empowered ${
-          pr.youEmp - pr.fieldEmp >= 0.05 ? "more often than"
-          : pr.youEmp >= pr.fieldEmp - 0.05 ? "about as often as"
-          : "nearly as often as"
-        } the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}), so it's NOT timing.${big ? frontier : ` The gap is per-cast ${throughputWord()} (crit/stat scaling, plus comp re-attribution and fight amp windows you don't fully control).`}`
+      ? ` We checked the obvious culprit: your ${pr.name} lands empowered ${empWord} the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}) -- so part of this likely IS timing (just under the bar where we'd name it a lever): land your hardest hit in its high-damage window more often.${big ? frontier : ""}`
       : under.length
       ? ` We can see part of it: you press ${under.slice(0, 2).map((a) => `${a.name} ${f(a.you, 1)}/min vs ${f(a.field, 1)}`).join(", ")}.${big ? frontier : ""}`
       : big
