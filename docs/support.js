@@ -50,7 +50,10 @@ export async function run(log, name, server, region, className, specName, diffic
     .filter(([, p]) => p >= SHOW_MIN && p <= SHOW_MAX)
     .sort((a, b) => b[1] - a[1]);
   if (rows.length) {
-    log("=== AMPS / AURAS YOU MAINTAINED (uptime on YOU this kill) ===");
+    // Honest header: this is buffs ON you (the Buffs-by-you table can't tell who CAST
+    // each aura), so it lists your own amps' self-uptime mixed with raid buffs/HoTs
+    // allies put on you. Don't claim "you maintained" a Druid HoT / Paladin aura.
+    log("=== BUFFS ON YOU THIS KILL (your amps' self-uptime + raid buffs/HoTs others gave you) ===");
     for (const [n, p] of rows) log(`  ${String(n).padEnd(28)} ${f(p, 0).padStart(4)}%`);
     log("");
     log("  NOTE: this is buffs ON you (your own amps' self-uptime, plus HoTs/raid buffs others");
