@@ -21,6 +21,26 @@ const SUPPORT_SPECS = new Set(["Augmentation"]);
 /** @param {string} specName @returns {boolean} */
 export const isSupport = (specName) => SUPPORT_SPECS.has(specName);
 
+// ATONEMENT-STYLE healers heal THROUGH damage: Discipline Priest's Atonement converts its
+// damage into healing; a FISTWEAVING Mistweaver's damage heals via its mastery. For them
+// the DAMAGE rotation IS a healing lever (pressing the damage buttons more = more healing),
+// unlike a pure healer where "cast more damage" just means less healing. So these specs DO
+// get damage-rotation analysis. Discipline ALWAYS qualifies (all its healing is Atonement);
+// Mistweaver only when it's actually dealing damage (fistweaving), which the caller confirms
+// from the kill's damage share -- a non-fistweaving Mistweaver shouldn't be told to "press
+// your damage rotation". Spec->style is stable game metadata, like HEALER_SPECS. The minimum
+// fraction of (damage / (damage+healing)) output for a Mistweaver to count as fistweaving.
+const ALWAYS_ATONEMENT_SPECS = new Set(["Discipline"]);
+const ATONEMENT_IF_DAMAGING_SPECS = new Set(["Mistweaver"]);
+export const FISTWEAVE_DAMAGE_SHARE = 0.2;
+/** @param {string} specName @returns {boolean} */
+export const alwaysAtonement = (specName) => ALWAYS_ATONEMENT_SPECS.has(specName);
+/** @param {string} specName @returns {boolean} */
+export const atonementIfDamaging = (specName) => ATONEMENT_IF_DAMAGING_SPECS.has(specName);
+/** Is this an atonement-style healer GIVEN the kill's damage share? @param {string} specName @param {number} [dmgShare] @returns {boolean} */
+export const isAtonement = (specName, dmgShare = 0) =>
+  alwaysAtonement(specName) || (atonementIfDamaging(specName) && dmgShare >= FISTWEAVE_DAMAGE_SHARE);
+
 // --------------------------------------------------------------------- //
 // Throughput metric: DPS for damage/tank specs, HPS for healers. The whole
 // analysis is throughput-generic ("output/sec vs peers", which abilities do the

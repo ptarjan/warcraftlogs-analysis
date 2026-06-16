@@ -187,6 +187,19 @@ export async function playerAbilities(code, fight, sourceId) {
     .sort((a, b) => b.total - a.total);
 }
 
+// FORCE the sourceID-filtered DamageDone table regardless of run metric. For an
+// ATONEMENT-style healer (Discipline / fistweaving Mistweaver) whose DAMAGE rotation
+// drives their healing, metric-aware playerAbilities returns the Healing table (Atonement
+// OUTPUT), but the damage BUTTONS they actually press live in DamageDone. One extra fetch,
+// requested ONLY for atonement specs. Same shape as playerAbilities (entries by total).
+export async function damageAbilitiesForced(code, fight, sourceId) {
+  const q = `query { reportData { report(code:"${code}") {
+    table(fightIDs:${fight}, dataType:DamageDone, sourceID:${sourceId}) } } }`;
+  const t = (await gql(q)).reportData.report.table.data;
+  return (t.entries || []).filter((a) => a.guid != null && a.total > 0)
+    .sort((a, b) => b.total - a.total);
+}
+
 // Per-ability OVERHEAL for a healer, keyed by ability name. The UNFILTERED reportCore
 // Healing table gives entry-level overheal but its per-ability objects DON'T carry it;
 // the sourceID-FILTERED Healing table's entries ARE the abilities, each with `total`

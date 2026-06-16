@@ -10,6 +10,7 @@
 import {
   playerMetrics, ilvlPeers, mapLimit, median, bestKill,
   playerAbilities, dotUptimes, petDamage, fightWindow, fightEvents, paginateEvents, buffUptimes, f, DPS, finding, KIND, DIM, eventTable, runIsHealer, throughputWord,
+  damageAbilitiesForced, alwaysAtonement, atonementIfDamaging, isAtonement,
 } from "./core.js";
 import { talentedAbilities, heroTreeOf } from "./talents.js";
 import { wowheadSpell } from "./links.js";
@@ -178,8 +179,36 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
   const dotUp = dots.length ? await dotUptimes(code, fight, m.sourceID, dots.map((d) => d.guid), e - s) : {};
   const petDmg = await petDamage(code, fight, m.sourceID);
   const petShare = (m.total + petDmg) > 0 ? petDmg / (m.total + petDmg) : 0;
-  return { opener: openerSequence(casts), hits, dur, castRate, allCastRate, dmgTotals, total: m.total,
-           sourceID: m.sourceID, name2id, dots, dotUp, petShare, castTimesById, dmgTimeline };
+
+  // ATONEMENT healers (Discipline always; fistweaving Mistweaver) heal THROUGH damage, so
+  // their DAMAGE buttons -- not the Healing table everything above read (Atonement OUTPUT) --
+  // are the rotation lever. Fetch the DamageDone table ONCE and RE-POINT the rotation inputs
+  // (castRate / dmgTotals / total) to the damage view, naming the damage cast rate by filtering
+  // the all-casts rate (by id, already computed) to the damage abilities. The healing-efficiency
+  // levers use a SEPARATE object (prescribe's `you`), so this only re-aims the rotation analysis.
+  // Sizing by damage % is valid as % of HPS: atonement healing scales ~linearly with damage, so
+  // a missed/total DAMAGE ratio equals the missed/total HEALING ratio. dmgId2Name lets the caller
+  // build the FIELD's damage rate from peers' (already-fetched) all-casts rates -- no peer fetch.
+  let rotCastRate = castRate, rotDmgTotals = dmgTotals, rotTotal = m.total, atonement = false, dmgId2Name = null;
+  if (runIsHealer() && (alwaysAtonement(specName) || atonementIfDamaging(specName))) {
+    const dmgAbils = await damageAbilitiesForced(code, fight, m.sourceID);
+    const dmgSum = dmgAbils.reduce((sm, a) => sm + (a.total || 0), 0);
+    const dmgShare = (dmgSum + (m.total || 0)) > 0 ? dmgSum / (dmgSum + (m.total || 0)) : 0;
+    if (dmgAbils.length && isAtonement(specName, dmgShare)) {
+      atonement = true;
+      dmgId2Name = {};
+      const dmgRate = {};
+      for (const a of dmgAbils) {
+        dmgId2Name[a.guid] = a.name;
+        if (allCastRate[a.guid]) dmgRate[a.name] = allCastRate[a.guid];
+      }
+      rotCastRate = dmgRate;
+      rotDmgTotals = Object.fromEntries(dmgAbils.map((a) => [a.name, a.total]));
+      rotTotal = dmgSum;
+    }
+  }
+  return { opener: openerSequence(casts), hits, dur, castRate: rotCastRate, allCastRate, dmgTotals: rotDmgTotals, total: rotTotal,
+           sourceID: m.sourceID, name2id, dots, dotUp, petShare, castTimesById, dmgTimeline, atonement, dmgId2Name };
 }
 
 // Median casts/min per ability across the field's kills (absent in a kill = 0),
@@ -647,7 +676,19 @@ export async function rotationFindings(name, server, region, className, specName
   const fieldEmp = (isReal && empShares.length >= 3) ? median(empShares) : null;
   const youEmp = biggest ? biggest.empShare : null;
   const fieldOpener = peers.length ? peers[0].opener : null;
-  const fieldRate = fieldCastRates(peers.map((p) => p.castRate || {}));
+  // For an ATONEMENT healer the rotation IS the damage rotation, so the field rate must be
+  // the peers' DAMAGE cast rate -- built by filtering each peer's already-fetched all-casts
+  // rate (by id) to YOUR damage abilities (dmgId2Name). No extra peer fetch. Otherwise the
+  // normal metric-aware cast-rate field. Both you.castRate and the field are now the SAME
+  // (damage) view for atonement, so usageDivergence compares like with like.
+  const dmgId2Name = you.atonement ? (you.dmgId2Name || {}) : null;
+  const fieldRate = dmgId2Name
+    ? fieldCastRates(peers.map((p) => {
+        const r = {};
+        for (const [id, nm] of Object.entries(dmgId2Name)) if (p.allCastRate && p.allCastRate[id]) r[String(nm)] = p.allCastRate[id];
+        return r;
+      }))
+    : fieldCastRates(peers.map((p) => p.castRate || {}));
   const usage = usageDivergence(you.castRate || {}, fieldRate);
   // Size each under-pressed damage ability by MEASURED damage (not a flat guess), so a
   // core ability you press far less than the field lands as a concrete %, not residual.
@@ -776,7 +817,7 @@ export async function rotationFindings(name, server, region, className, specName
   const fieldPetShare = petShares.length >= 3 ? median(petShares) : null;
   const petGap = (you.petShare != null && fieldPetShare != null) ? petShareGap(you.petShare, fieldPetShare) : null;
   return {
-    boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener,
+    boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener, atonement: !!you.atonement,
     usage, cooldowns, cdUsage, buffCds, perCast, dotGaps, dotCount: (you.dots || []).length, petGap, castGap, fieldPeers: peers.length, talent, abilityIds,
     heroMatched: yourHero && peers.length ? (peers.every((p) => p.hero === yourHero) ? yourHero : null) : null,
     proc: { name: biggest ? biggest.name : null, isReal, youPerMin: biggest ? biggest.procPerMin : 0, fieldPerMin: fieldProc, youEmp, fieldEmp },
@@ -862,14 +903,14 @@ export async function run(log, name, server, region, className = "Monk",
 // (flat estimate); under-pressed damage abilities are sized from real damage.
 function usageLevers(rot, link) {
   const out = [];
-  // HEALERS: usageLevers is built ENTIRELY from DAMAGE-cast divergence -- every branch
-  // ("press this damage ability more", "respec for this damage talent", "wasted damage
-  // talent") is a misframe for a healer (healing is reactive; casting into less damage
-  // just overheals). A healer's rotation lever is overhealing (healing.js); their build
-  // is talentLevers (HPS-ranked). Suppress the whole analysis -- not just the measured
-  // press-more branch, but the TALENTS/BUILD branch too (it read u.under directly and
-  // leaked a damage respec onto healers).
-  if (runIsHealer()) return out;
+  // HEALERS: usageLevers is built ENTIRELY from DAMAGE-cast divergence -- for a PURE healer
+  // that's a misframe ("press this damage ability more" / "respec for this damage talent" --
+  // healing is reactive; casting into less damage just overheals). EXCEPTION: ATONEMENT-style
+  // healers (Discipline, fistweaving Mistweaver) heal THROUGH damage, so their damage rotation
+  // IS the healing lever -- for them rotationFindings re-pointed castRate/dmgTotals to the
+  // DAMAGE table (you.atonement), so the under-press analysis is valid HPS advice and we keep
+  // it. A pure healer's rotation lever stays overhealing (healing.js); their build, talentLevers.
+  if (runIsHealer() && !(rot && rot.atonement)) return out;
   const u = rot && rot.usage;
   // Over-press findings, minus hero-tree/build differences (see realOveruse): a
   // button the field replaced isn't something you're pressing "too much".

@@ -8,7 +8,7 @@ import { installLocalStorage, mockFetch } from "./helpers.mjs";
 process.env.WCL_CLIENT_ID = "x";
 process.env.WCL_CLIENT_SECRET = "y";
 installLocalStorage();
-const { bestRank, isHealer, metricForSpec, setRunMetric, runMetric, metricUnit, runIsHealer, eventTable, DPS, collectUpTo, detectContext } = await import("../docs/core.js");
+const { bestRank, isHealer, metricForSpec, setRunMetric, runMetric, metricUnit, runIsHealer, eventTable, DPS, collectUpTo, detectContext, isAtonement, alwaysAtonement, atonementIfDamaging, FISTWEAVE_DAMAGE_SHARE } = await import("../docs/core.js");
 
 test("collectUpTo: stops once n succeed; only fetches the buffer to backfill failures", async () => {
   // 13 candidates, all succeed -> reach n=10 in two waves of 5; the 3-candidate
@@ -32,6 +32,22 @@ test("isHealer flags every healing spec, by spec name across classes", () => {
   // DPS/tank specs are not healers (incl. specs that share a class with a healer)
   for (const s of ["Shadow", "Retribution", "Balance", "Frost", "Brewmaster", "Guardian", "Protection", "Devastation"])
     assert.equal(isHealer(s), false, `${s} is not a healer`);
+});
+
+test("isAtonement: Discipline always heals through damage; Mistweaver only when fistweaving", () => {
+  // Discipline (Atonement) -- ALL its healing is damage-driven, so always atonement,
+  // regardless of damage share.
+  assert.equal(alwaysAtonement("Discipline"), true);
+  assert.equal(isAtonement("Discipline", 0), true);
+  assert.equal(isAtonement("Discipline", 0.5), true);
+  // Mistweaver -- atonement ONLY when actually dealing damage (fistweaving). A pure
+  // caster Mistweaver (trivial damage) must NOT be told to press a damage rotation.
+  assert.equal(atonementIfDamaging("Mistweaver"), true);
+  assert.equal(isAtonement("Mistweaver", FISTWEAVE_DAMAGE_SHARE + 0.05), true, "fistweaving -> atonement");
+  assert.equal(isAtonement("Mistweaver", 0.05), false, "barely any damage -> not fistweaving");
+  // Pure healers and non-healers never qualify (their damage isn't a healing lever).
+  for (const s of ["Holy", "Restoration", "Preservation", "Shadow", "Frost", "Brewmaster"])
+    assert.equal(isAtonement(s, 0.9), false, `${s} is not atonement-style`);
 });
 
 test("metricForSpec: healer specs -> hps, everyone else -> dps", () => {
