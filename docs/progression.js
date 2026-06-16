@@ -349,23 +349,3 @@ export async function run(log, ref, { encounterId = null, fresh = false } = {}) 
   }
   return r;
 }
-
-// Multi-night trend: best boss-% reached per report, newest last. A lightweight
-// backtest across the tier so the group can see whether nights are converging.
-// `reports` = [{ code, startTime }]; fetches one reportFights each (cheap).
-export async function nightlyTrend(reports, encounterId, { limit = 8 } = {}) {
-  const recent = [...reports].sort((a, b) => (a.startTime || 0) - (b.startTime || 0)).slice(-limit);
-  const rows = await mapLimit(recent, 4, async (rep) => {
-    try {
-      const fights = await reportFights(rep.code);
-      const enc = pickEncounter(fights, encounterId);
-      if (!enc) return null;
-      const wipes = enc.pulls.filter((p) => !p.kill);
-      const killed = enc.pulls.some((p) => p.kill);
-      const rem = (p) => (p.fightPercentage != null ? p.fightPercentage : (p.bossPercentage != null ? p.bossPercentage : 100));
-      const best = wipes.length ? Math.min(...wipes.map(rem)) : 0;
-      return { code: rep.code, startTime: rep.startTime, pulls: enc.pulls.length, best: killed ? 0 : best, killed };
-    } catch { return null; }
-  });
-  return rows.filter(Boolean);
-}

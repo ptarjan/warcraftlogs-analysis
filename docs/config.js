@@ -30,7 +30,6 @@ const fromQuery = hasLoc ? new URLSearchParams(location.search).get("worker") : 
 const fromStore = hasLS ? localStorage.getItem("workerUrl") : null;
 export const WORKER_URL = (fromQuery || fromStore || FALLBACK).replace(/\/$/, "");
 if (fromQuery && hasLS) localStorage.setItem("workerUrl", WORKER_URL);
-export const WORKER_CONFIGURED = !!WORKER_URL && !WORKER_URL.includes("example.workers.dev");
 
 // True under Node (the CLI): credentials from env/.env, queries to /api/v2/client.
 export const IS_NODE = typeof process !== "undefined" && !!(process.versions && process.versions.node);

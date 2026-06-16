@@ -390,27 +390,6 @@ export async function encounterKillTimes(encounterId, difficulty) {
   return ranks.map((r) => r.duration).filter((d) => d > 0);
 }
 
-// Report codes where this character pulled a given boss, NEWEST first -- for the
-// "whole progression" (multi-night) view. Kill-rankings only list nights the boss
-// DIED, so we also walk recentReports to catch wipe-only progression nights (the
-// caller filters those to reports that actually contain the encounter).
-export async function reportsForBoss(name, server, region, encounterId, difficulty, { maxReports = 20 } = {}) {
-  const seen = new Set(), out = [];
-  const er = await characterEncounter(name, server, region, encounterId, difficulty);
-  for (const rk of ((er && er.ranks) || [])) {
-    const code = rk.report && rk.report.code;
-    if (code && !seen.has(code)) { seen.add(code); out.push({ code, startTime: rk.startTime || 0, killed: true }); }
-  }
-  try {
-    const q = `query { characterData { character(
-      name:"${cName(name)}", serverSlug:"${slug(clean(server))}", serverRegion:"${cRegion(region)}") {
-      recentReports(limit:${maxReports}) { data { code startTime } } } } }`;
-    const rr = ((((await gql(q)).characterData.character || {}).recentReports) || {}).data || [];
-    for (const r of rr) if (r.code && !seen.has(r.code)) { seen.add(r.code); out.push({ code: r.code, startTime: r.startTime || 0, killed: false }); }
-  } catch { /* best effort -- kill reports alone still work */ }
-  return out.sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
-}
-
 // A character's recent reports (raid nights), newest first -- for the progression
 // flow's "pick a recent raid" quick-picks. Best-effort; [] on any hiccup.
 export async function recentReportsFor(name, server, region, limit = 12) {
