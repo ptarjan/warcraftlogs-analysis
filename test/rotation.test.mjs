@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, rotationLevers } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, rotationLevers, medianCastRates } = await import("../docs/rotation.js");
 const { setRunMetric } = await import("../docs/core.js");
 
 // Run a body with the run metric forced, always restoring "dps" so it never leaks.
@@ -372,6 +372,27 @@ test("usageDivergence ignores small/rare differences (floor + ratio)", () => {
   const { under, over } = usageDivergence(you, field);
   assert.equal(under.length, 0);
   assert.equal(over.length, 0);
+});
+
+test("medianCastRates: medians per ability across kills so one pull's noise can't drive the lever", () => {
+  // One bad pull where you spammed the wrong button (Whirlwind 8, Raging Blow 2) shouldn't
+  // define the lever when your other kills are clean (Raging Blow ~7). Median per ability.
+  const kills = [
+    { "Raging Blow": 7, "Whirlwind": 3 },
+    { "Raging Blow": 2, "Whirlwind": 8 },   // the noisy pull
+    { "Raging Blow": 7, "Whirlwind": 3 },
+  ];
+  const m = medianCastRates(kills);
+  assert.equal(m["Raging Blow"], 7);   // the typical rate, not the bad-pull 2
+  assert.equal(m["Whirlwind"], 3);
+  // An ability cast on only some kills counts as 0 on the kills you skipped it (union).
+  const sparse = medianCastRates([{ X: 6 }, { X: 6, Y: 4 }, { X: 6 }]);
+  assert.equal(sparse["X"], 6);
+  assert.equal(sparse["Y"], 0, "Y cast on 1 of 3 kills -> median 0 (you usually skip it)");
+  // One kill (or none) -> unchanged passthrough, no aggregation artifacts.
+  assert.deepEqual(medianCastRates([{ A: 5 }]), { A: 5 });
+  assert.deepEqual(medianCastRates([]), {});
+  assert.deepEqual(medianCastRates([null, { A: 5 }]), { A: 5 }, "drops failed-kill nulls");
 });
 
 test("empoweredCount finds the high cluster of outsized hits", () => {

@@ -120,6 +120,11 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
   for (const c of casts) castRate[c.name] = (castRate[c.name] || 0) + 1;
   for (const k of Object.keys(castRate)) castRate[k] *= cpm;
 
+  // castRateOnly: the cross-kill aggregation (medianCastRates) needs ONLY castRate, so
+  // return before the per-hit / pet / dot fetches the full + onlyAbility paths do. Keeps
+  // each EXTRA recent kill to the minimum reads already issued above (no petDamage etc.).
+  if (opts.castRateOnly) return { castRate, allCastRate, dur, sourceID: m.sourceID };
+
   if (opts.onlyAbility) {
     const id = name2id[opts.onlyAbility];
     let procPerMin = 0, empShare = null;
@@ -184,6 +189,23 @@ export function fieldCastRates(peerRates) {
   const names = new Set(peerRates.flatMap((r) => Object.keys(r)));
   const out = {};
   for (const n of names) out[n] = median(peerRates.map((r) => r[n] || 0));
+  return out;
+}
+
+// Per-ability MEDIAN cast rate across several of YOUR recent kills of the boss, so the
+// under-press / press-faster comparison reflects how you TYPICALLY play it -- not one
+// pull's noise (a kill where you happened to spam the wrong button). Union of every
+// ability seen; a kill that didn't cast one counts it as 0 (you genuinely skipped it
+// that pull), and damageAbilities is the FULL sourceID-filtered table (not the truncated
+// top-5), so an ability you pressed shows up for every kill you pressed it. One kill (or
+// none) -> just that kill's rates, unchanged. Pure -> testable.
+export function medianCastRates(rates) {
+  const live = (rates || []).filter(Boolean);
+  if (live.length <= 1) return live[0] || {};
+  const names = new Set();
+  for (const r of live) for (const k of Object.keys(r)) names.add(k);
+  const out = {};
+  for (const n of names) out[n] = median(live.map((r) => r[n] || 0));
   return out;
 }
 
@@ -568,8 +590,8 @@ async function fetchRotationPeers(name, server, region, boss, difficulty, classN
 // empowerment proc (outsized NON-crit hits) you under-use vs the field -- an
 // actionable list item. If big hits are merely crits, proc.isReal is false and
 // NOTHING is recommended (a "big hit" is usually a crit, not a missed button).
-/** @param {{code:any,fight:any,encounter:any}|null} [killOverride] */
-export async function rotationFindings(name, server, region, className, specName, difficulty, killOverride = null) {
+/** @param {{code:any,fight:any,encounter:any}|null} [killOverride] @param {{code:any,fight:any}[]} [extraKills] */
+export async function rotationFindings(name, server, region, className, specName, difficulty, killOverride = null, extraKills = []) {
   // Which kill we analyze. The rotation CARD analyzes your most-recent current-gear
   // kill (bestKill -- shared with gear/talents/topparse, so the fetch is cached).
   // PRESCRIBE passes its benchmark (median-parse) kill via killOverride, so the
@@ -587,6 +609,22 @@ export async function rotationFindings(name, server, region, className, specName
   // a BONUS; the usage/cooldown/DoT/pet/castGap levers don't need it. Bailing here
   // killed ALL rotation levers for Demo Lock. Make empowerment optional instead.
   if (!you) return null;
+
+  // AGGREGATE the cast rate across your recent kills of this boss so the under-press /
+  // press-faster / cooldown comparison reflects how you TYPICALLY play it, not one pull's
+  // noise. We re-analyze only the EXTRA kills (the lightweight onlyAbility path -- castRate,
+  // no per-hit detail) and median per ability with the benchmark's. Everything else (per-cast
+  // damage sizing, empowerment, dur, allCastRate, peers) stays on the representative benchmark
+  // kill. Concurrent so gql() auto-batches the fetches. Degrades to benchmark-only if none load.
+  if (extraKills && extraKills.length) {
+    const extra = (await mapLimit(extraKills, 3, async (ek) => {
+      try {
+        const a = await analyzeKill(name, ek.code, ek.fight, specName, className, { castRateOnly: true });
+        return a ? a.castRate : null;
+      } catch (e) { return null; }
+    })).filter(Boolean);
+    if (extra.length) you.castRate = medianCastRates([you.castRate, ...extra]);
+  }
 
   // The empowerment candidate is your HARDEST hitter (biggest per-cast) -- the hit
   // whose strength matters most, and the one a missed buff/combo window most hurts.

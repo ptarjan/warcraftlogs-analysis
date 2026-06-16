@@ -1124,7 +1124,26 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // residual. (Validated: a Feral read 12% castGap + no under-use on his best kill, but
   // 33% castGap + Ferocious Bite 3.2 vs 10.1/min on the benchmark kill.)
   const benchKill = (code && fight) ? { code, fight, encounter: gearBoss && gearBoss.encounter } : null;
-  try { rot = await rotationFindings(name, server, region, className, specName, difficulty, benchKill); }
+  // Up to 2 OTHER recent current-gear kills of the benchmark boss, so rotationFindings can
+  // MEDIAN the cast rate across kills -- the under-press / press-faster lever then reflects
+  // how you typically play it, not one pull's button-spam noise. FREE list: characterEncounter
+  // for this boss is already cached (bestIlvlKill fetched it); only re-analyzing the extra
+  // kills costs (a few report reads), and it degrades to benchmark-only if they don't load.
+  let recentKills = [];
+  try {
+    const be = gearBoss && await characterEncounter(name, server, region, gearBoss.encounter.id, difficulty);
+    const rk = (be && be.ranks) || [];
+    if (rk.length > 1) {
+      const maxIl = Math.max(...rk.map((r) => r.bracketData || 0));
+      recentKills = rk
+        .filter((r) => r.report && (r.report.code !== code || r.report.fightID !== fight))   // not the benchmark kill
+        .filter((r) => (r.bracketData || 0) >= maxIl - 1)                                     // current-gear band
+        .sort((a, b) => (b.startTime || 0) - (a.startTime || 0))                              // most recent first
+        .slice(0, 2)
+        .map((r) => ({ code: r.report.code, fight: r.report.fightID }));
+    }
+  } catch (e) { /* aggregation is a bonus -- benchmark-only on any failure */ }
+  try { rot = await rotationFindings(name, server, region, className, specName, difficulty, benchKill, recentKills); }
   catch (e) { skipped.push("rotation"); }
   try { tp = await topParseFindings(name, server, region, difficulty, className, specName); }
   catch (e) { skipped.push("top-parse comparison"); }
