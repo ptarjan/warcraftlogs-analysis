@@ -193,13 +193,32 @@ setRunContext(cls, spec);
 const p = { name, server, region, cls, spec, difficulty, priority };
 
 log(`=== ${p.name}-${p.server} (${p.region}) | ${p.spec} ${p.cls} | ${DIFFICULTY[p.difficulty] || p.difficulty} ===`);
-for (const spec of SECTION_SPECS) {
-  if (only && !only.has(spec.key)) continue;
-  log("\n" + "#".repeat(70) + `\n# ${spec.title}\n` + "#".repeat(70));
+// Run the SUPPORTING sections CONCURRENTLY (mirrors the browser app.js, which fires
+// them all at once -- the analysis modules are built for it). Each buffers its own
+// output and we print the buffers in SECTION_SPECS order on completion, so the
+// transcript is byte-identical to the old serial run -- only the wall-clock drops
+// (overlapping fetches coalesce via gql()'s inflight/batcher). prescribe runs LAST
+// (cache now warm) and streams live, since it's the payoff. Each section catches its
+// own errors into its buffer, so one failure never sinks the others.
+const selected = SECTION_SPECS.filter((s) => !only || only.has(s.key));
+const supporting = selected.filter((s) => s.key !== "prescribe");
+const header = (title) => "\n" + "#".repeat(70) + `\n# ${title}\n` + "#".repeat(70);
+const buffers = await Promise.all(supporting.map(async (spec) => {
+  const buf = [];
   try {
     const mod = await loadSectionModule(spec);
-    await mod[spec.method](log, ...spec.args(p));
-  } catch (e) { log(`[error] ${spec.title}: ${e.message || e}`); }
+    await mod[spec.method]((line = "") => buf.push(line), ...spec.args(p));
+  } catch (e) { buf.push(`[error] ${spec.title}: ${e.message || e}`); }
+  return buf;
+}));
+supporting.forEach((spec, i) => { log(header(spec.title)); for (const line of buffers[i]) log(line); });
+const prescribeSpec = selected.find((s) => s.key === "prescribe");
+if (prescribeSpec) {
+  log(header(prescribeSpec.title));
+  try {
+    const mod = await loadSectionModule(prescribeSpec);
+    await mod[prescribeSpec.method](log, ...prescribeSpec.args(p));
+  } catch (e) { log(`[error] ${prescribeSpec.title}: ${e.message || e}`); }
 }
 
 // Billing diagnostics: attribute this run's point spend to its requests/units and
