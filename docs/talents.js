@@ -359,7 +359,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   }
   if (dpsMiss.length) {
     log("");
-    log(`${throughputWord().toUpperCase()} talents you're MISSING (peers take them here, you don't):`);
+    log(`Talents you're MISSING (peers take them here, you don't):`);
     for (const t of dpsMiss.slice(0, 8)) log(`  - ${wowheadSpell(t.spellId, t.name)} — ${f(100 * t.adopt, 0)}% of peers`);
   }
   // Utility/defensive talents are listed only as context -- they aren't DPS, so
@@ -371,11 +371,11 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const offDps = fnd.offMeta.filter((t) => t.dps);
   if (offDps.length) {
     log("");
-    log(`Off-meta ${throughputWord().toUpperCase()} picks (few peers run these here — worth re-checking):`);
+    log(`Off-meta picks (few peers run these here — worth re-checking):`);
     for (const t of offDps.slice(0, 6)) log(`  - ${wowheadSpell(t.spellId, t.name)} — only ${f(100 * t.adopt, 0)}% of peers`);
   }
   if (!dpsMiss.length && !offDps.length) {
     log("");
-    log(`Your ${throughputWord()} talents line up with your peers on this boss — no obvious ${metricUnit()} swaps.`);
+    log(`Your talents line up with your peers on this boss — no obvious ${metricUnit()} swaps.`);
   }
 }
