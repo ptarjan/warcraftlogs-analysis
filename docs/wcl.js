@@ -349,7 +349,7 @@ async function initDisk() {
     // Cheaply detect whether a one-time MIGRATION is owed -- a legacy monolith file, or
     // any plain .json shard -- WITHOUT decompressing anything (just stat + a filename
     // scan). Steady state (all shards already .json.gz, no monolith) skips the bulk load
-    // ENTIRELY: each shard then loads LAZILY via _ensureShardLoaded on the first query
+    // ENTIRELY: each shard then loads LAZILY via _ensureLoaded on the first query
     // that needs it. initDisk used to gunzip ALL ~256 shards here, which was ~the entire
     // CLI startup latency (~26s on a warm cache) -- paid before any analysis ran.
     let legacyShards = false, haveMonolith = false;
