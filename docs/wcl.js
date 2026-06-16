@@ -232,25 +232,40 @@ let _diskZlib = null;
 let _diskTimer = null;
 let _loadedShards = new Set();   // which shard ids have been lazily read in this process
 
-// Lazily load ONE shard on demand (the cache is sharded by _shardId; a run touches
-// only a handful of shards). Replaces decompressing ALL ~256 gzipped shards at startup,
-// which was the dominant CLI latency (~26s on a warm cache). Idempotent; synchronous
-// (initDisk already imported fs/zlib). Reads the gzipped shard plus a legacy plain one
-// if present, applies TTL, and seeds _gqlCache + _diskStore. No-op in the browser
-// (_diskStore stays null) and during the eager one-time migration (which pre-marks
-// every shard loaded). MUST run before gql()'s _gqlCache.has() check or a warm entry
-// would look like a miss and refetch.
-function _ensureShardLoaded(id) {
-  if (!_diskStore || !_diskFs || _loadedShards.has(id)) return;
+// Lazily make a query's cached value available, decompressing only the shard(s) it
+// needs -- replaces gunzipping ALL shards at startup (~26s on a warm cache, the old
+// dominant CLI latency). Reads the 3-hex shard first; on a miss, falls back to the
+// legacy 2-hex shard and MIGRATES its entries into 3-hex shards (marks them dirty) so
+// the next run finds them in the small fast shard. No-op in the browser (_diskStore
+// null). MUST run before gql()'s _gqlCache.has() check or a warm entry refetches.
+function _ensureLoaded(query) {
+  if (!_diskStore || !_diskFs || _gqlCache.has(query)) return;
+  _loadShardInto(_shardId(query), false);          // primary: the new fine (3-hex) shard
+  if (_gqlCache.has(query)) return;
+  _loadShardInto(_oldShardId(query), true);         // fallback: legacy 2-hex shard, migrate-on-read
+}
+
+// Read one shard file (gzipped, plus a legacy plain one if present) into _gqlCache +
+// _diskStore, applying TTL. Idempotent per process via _loadedShards; synchronous
+// (initDisk already imported fs/zlib). `migrate`: this is a legacy 2-hex shard, so mark
+// every loaded entry dirty to rewrite it into its 3-hex shard (one-way, additive -- the
+// 2-hex shard is never deleted, so old code keeps reading it).
+function _loadShardInto(id, migrate) {
+  if (_loadedShards.has(id)) return;
   _loadedShards.add(id);           // mark first: a missing/corrupt shard isn't retried every call
   const now = Date.now();
+  let migrated = false;
   for (const file of [_shardFile(id), _legacyShardFile(id)]) {
     let buf; try { buf = _diskFs.readFileSync(file); } catch { continue; }   // shard not written yet
     try {
       for (const [q, e] of Object.entries(_decodeShard(buf)))
-        if (e && (now - e.t) < _ttlFor(q) && (!_diskStore[q] || _diskStore[q].t < e.t)) { _diskStore[q] = e; _gqlCache.set(q, e.d); }
+        if (e && (now - e.t) < _ttlFor(q) && (!_diskStore[q] || _diskStore[q].t < e.t)) {
+          _diskStore[q] = e; _gqlCache.set(q, e.d);
+          if (migrate) { _dirty.add(_shardId(q)); migrated = true; }
+        }
     } catch { /* a corrupt shard is skipped -- the next flush preserves it (never-clobber) */ }
   }
+  if (migrated) { clearTimeout(_diskTimer); _diskTimer = setTimeout(_flushDisk, 1000); }  // persist the 3-hex copies
 }
 
 // Decode a shard file's raw bytes to its JSON object. Shards are gzipped (WCL
@@ -274,12 +289,15 @@ const _dirty = new Set();        // shard ids with unpersisted puts (or pending 
 // instantly, can't hit V8's ~512MB string ceiling (so total capacity is effectively
 // unbounded), only the touched shards rewrite, and a failed read can never lose more
 // than one tiny shard -- which the never-clobber guard below also refuses to do.
-const SHARD_BITS = 256;
-export function _shardId(query) {                // low byte of the FNV-1a hash, 2 hex chars
-  let h = 0x811c9dc5;
-  for (let i = 0; i < query.length; i++) { h ^= query.charCodeAt(i); h = Math.imul(h, 0x01000193); }
-  return ((h >>> 0) & (SHARD_BITS - 1)).toString(16).padStart(2, "0");
-}
+// 4096 shards (3 hex), up from 256 (2 hex): a run touches only a handful of queries
+// per shard, so loading one shard parses ~3 entries instead of ~47. Whole-cache parse
+// is fine; parsing a 9MB shard to use 1-2 entries was the full-run latency. The 2-hex
+// scheme stays readable as a FALLBACK (_oldShardId) so the existing on-disk cache isn't
+// orphaned and OTHER worktrees still on 2-hex code keep working -- we never delete a
+// 2-hex shard; entries migrate into 3-hex shards lazily the first time they're read.
+const _fnv = (query) => { let h = 0x811c9dc5; for (let i = 0; i < query.length; i++) { h ^= query.charCodeAt(i); h = Math.imul(h, 0x01000193); } return h >>> 0; };
+export function _shardId(query) { return (_fnv(query) & 0xfff).toString(16).padStart(3, "0"); }     // 3 hex (new, canonical)
+export function _oldShardId(query) { return (_fnv(query) & 0xff).toString(16).padStart(2, "0"); }    // 2 hex (legacy read fallback)
 // New shards are gzipped with a distinct extension (.json.gz). The distinct name
 // is the migration aid: pre-compression code (readdir filter `.endsWith(".json")`)
 // simply IGNORES .json.gz instead of choking on gzip bytes, and new code reads both
@@ -640,7 +658,7 @@ export async function probeBilling(queries) {
 
 export async function gql(query, retries = 6, { fresh = false } = {}) {
   await initDisk();                 // sets up disk paths + runs any one-time migration (Node)
-  _ensureShardLoaded(_shardId(query));  // lazily decompress just THIS query's shard into _gqlCache
+  _ensureLoaded(query);             // lazily decompress just THIS query's shard into _gqlCache
   if (!fresh) {
     if (_gqlCache.has(query)) return _gqlCache.get(query);
     if (_gqlInflight.has(query)) return _gqlInflight.get(query);

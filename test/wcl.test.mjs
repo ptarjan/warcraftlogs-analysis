@@ -315,6 +315,39 @@ test("disk cache: migrates a legacy monolith into shards, then removes it", asyn
 
 // Shards are gzipped on disk (~7x smaller), and a legacy PLAIN .json shard is still
 // read and then rewritten compressed (the .endsWith(".json") sniff + dual-format read).
+// ADDITIVE RESHARD (2-hex -> 3-hex): the existing on-disk cache (and other worktrees
+// still on 2-hex code) must keep working. New code reads the 2-hex shard as a fallback,
+// migrates the entry into its 3-hex shard, and NEVER deletes the 2-hex shard.
+test("disk cache: reads a legacy 2-hex shard via fallback, migrates to 3-hex, keeps the old one", async () => {
+  const { gql, clearGqlCache, _flushGqlDisk, _resetGqlDisk, _shardId, _oldShardId } = await import("../docs/wcl.js");
+  const file = path.join(os.tmpdir(), `wcl-reshard-${process.pid}.json`);
+  const dir = `${file}.shards`;
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* none */ }
+  fs.mkdirSync(dir, { recursive: true });
+  process.env.WCL_GQL_CACHE = "1";
+  process.env.WCL_GQL_CACHE_FILE = file;
+  const q = "query{ reshard-me }";
+  try {
+    clearGqlCache(); _resetGqlDisk();
+    // Pre-seed ONLY the legacy 2-hex shard (plain JSON content -- _decodeShard sniffs the
+    // gzip magic, so uncompressed is read fine), as old code would have left it.
+    const oldPath = path.join(dir, `${_oldShardId(q)}.json.gz`);
+    assert.notEqual(_shardId(q), _oldShardId(q), "3-hex and 2-hex ids differ");
+    fs.writeFileSync(oldPath, JSON.stringify({ [q]: { t: Date.now(), d: { v: 42 } } }));
+    // New code SERVES it from the 2-hex fallback (no fetch)...
+    globalThis.fetch = () => { throw new Error("must read the legacy 2-hex shard, not fetch"); };
+    assert.deepEqual(await gql(q), { v: 42 }, "served from the 2-hex fallback shard");
+    // ...and migrates it into the 3-hex shard WITHOUT deleting the 2-hex one.
+    _flushGqlDisk();
+    assert.ok(fs.existsSync(path.join(dir, `${_shardId(q)}.json.gz`)), "migrated into a 3-hex shard");
+    assert.ok(fs.existsSync(oldPath), "legacy 2-hex shard NOT deleted (old worktrees still read it)");
+  } finally {
+    delete process.env.WCL_GQL_CACHE; delete process.env.WCL_GQL_CACHE_FILE; _resetGqlDisk();
+    try { fs.rmSync(file, { force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+});
+
 test("disk cache: shards are gzipped; legacy plain shards are read and recompressed", async () => {
   const { gql, clearGqlCache, _flushGqlDisk, _resetGqlDisk, _shardId } = await import("../docs/wcl.js");
   const file = path.join(os.tmpdir(), `wcl-gzip-${process.pid}.json`);
