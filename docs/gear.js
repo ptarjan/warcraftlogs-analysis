@@ -13,6 +13,14 @@ const trunc = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + "…" : s);
 
 // A unique-equipped item fills only ONE slot, but each ring/trinket slot picks its
 // best alternative independently -- so both rings can land on the same field-favored
+// NET priority-stat gain of swapping your current item (yoursPri rating of the stat)
+// for a candidate (candPri). The bug this prevents: the swap-finder GATED on net but
+// STORED gross (the candidate's full stat), so a swap onto an item you'd already
+// part-itemized read inflated (a 190-mastery ring -> 247-mastery one showed +247, not
+// +57) and over-summed the "+N total" + over-sized the lever. One helper at both the
+// gate and the store so they can never drift again.
+export const priorityGain = (candPri, yoursPri) => (candPri || 0) - (yoursPri || 0);
+
 // ring. You can't wear two; keep the bigger-gain slot and drop the duplicate, else
 // the list reads "replace Ring1 AND Ring2 with Omission of Light", which is impossible.
 // Non-unique items can legitimately fill two slots, so they're untouched.
@@ -257,10 +265,12 @@ export async function gearFindings(name, server, region, className, specName, di
         if (candId === g.id) continue;
         const cst = await itemStats(candId, bonusSample[candId]);
         if (cst.unique && myItemIds.has(candId)) continue;
-        // require real adoption (>=3 of the field) to skip off-meta noise
-        if ((cst[priority] || 0) - yoursPri >= 30 && cnt >= 3) {
-          if (!bestAlt || cst[priority] > bestAlt.gain) {
-            bestAlt = { name: cst.name, gain: cst[priority], count: cnt, source: cst.source, dropChance: cst.dropChance, id: candId, unique: cst.unique };
+        // NET gain over YOUR current item (see priorityGain) -- not the candidate's
+        // gross stat. Require real adoption (>=3 of the field) too.
+        const netGain = priorityGain(cst[priority], yoursPri);
+        if (netGain >= 30 && cnt >= 3) {
+          if (!bestAlt || netGain > bestAlt.gain) {
+            bestAlt = { name: cst.name, gain: netGain, count: cnt, source: cst.source, dropChance: cst.dropChance, id: candId, unique: cst.unique };
           }
         }
       }

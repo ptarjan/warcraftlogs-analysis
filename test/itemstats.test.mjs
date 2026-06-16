@@ -7,6 +7,18 @@ import { installLocalStorage, mockFetch, tooltip } from "./helpers.mjs";
 
 installLocalStorage();
 
+test("priorityGain: NET gain over your current item, not the candidate's gross stat", async () => {
+  const { priorityGain } = await import("../docs/gear.js");
+  // The real regression (Solex): a 190-mastery ring swapped for a 247-mastery one gains
+  // 57, NOT 247. Gross over-summed "+N total" (714 vs the honest 524) + over-sized it.
+  assert.equal(priorityGain(247, 190), 57);
+  // A swap onto a 0-priority (crit-itemized) item: net == gross (the common case).
+  assert.equal(priorityGain(260, 0), 260);
+  // Defensive: missing values treated as 0.
+  assert.equal(priorityGain(126, undefined), 126);
+  assert.equal(priorityGain(undefined, 50), -50);
+});
+
 test("statValueScore: prices a swap from the field's measured per-rating value, not the sim constant", async () => {
   const { statValueScore } = await import("../docs/gear.js");
   // Field: peers who stack crit do 6% more, across a 3000-rating spread -> 0.002%/
