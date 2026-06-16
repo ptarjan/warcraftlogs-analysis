@@ -2,6 +2,10 @@
 // Shared constants, formatting helpers, and low-level WCL fetchers.
 // Ported from analyze.py's fetcher layer; imported by the analysis modules.
 import { gql } from "./wcl.js";
+import { slug, median } from "./format.js";
+// Pure formatters/aggregators now live in format.js; re-export so the many
+// `import { f, median, topN, ... } from "./core.js"` sites keep working unchanged.
+export * from "./format.js";
 
 export const DIFFICULTY = { 2: "LFR", 3: "Normal", 4: "Heroic", 5: "Mythic" };
 
@@ -71,49 +75,13 @@ export const ENCHANTABLE_SLOTS = {
   10: "Ring1", 11: "Ring2", 14: "Back", 15: "Weapon",
 };
 
-// ---- formatting helpers (approximate the Python f-string columns) ---- //
-export function f(x, d = 0) {
-  if (x === null || x === undefined || Number.isNaN(x)) return "nan";
-  return Number(x).toLocaleString("en-US", {
-    minimumFractionDigits: d, maximumFractionDigits: d,
-  });
-}
-export const padL = (s, n) => String(s).padStart(n);
-export const padR = (s, n) => String(s).padEnd(n);
-export const slug = (s) => s.toLowerCase().replaceAll(" ", "-");
+// WCL string sanitizers for query building: clean strips quotes; cName/cRegion normalize
+// to WoW's canonical casing so the query string -- and therefore every cache key (gql memo
+// + IndexedDB) -- is identical regardless of input case ("Hadryan" and "hadryan" share one
+// fetch instead of paying twice). Core-only (the fetchers); not part of the public helpers.
 const clean = (s) => String(s).replaceAll('"', "");
-// Character lookups are case-insensitive on WCL, so normalize to WoW's canonical
-// casing (first letter upper, rest lower -- a no-op for caseless scripts) and the
-// region to upper. This makes the query string -- and therefore every cache key
-// (gql memo + IndexedDB) -- identical regardless of the input's case, so "Hadryan"
-// and "hadryan" share one fetch instead of paying twice.
 const cName = (s) => { const c = clean(s).trim(); return c ? c[0].toUpperCase() + c.slice(1).toLowerCase() : c; };
 const cRegion = (s) => clean(s).trim().toUpperCase();
-
-// Top-n [key, count] entries of a Map counter, highest count first. The single
-// definition for the "most popular item/gem/trinket the field runs" pattern that was
-// re-inlined (`[...m.entries()].sort((a,b)=>b[1]-a[1]).slice(0,n)`) across modules.
-export const topN = (counter, n = Infinity) =>
-  counter ? [...counter.entries()].sort((a, b) => b[1] - a[1]).slice(0, n) : [];
-// Highest-count [key, count] entry of a Map counter, or null when empty.
-export const topEntry = (counter) => topN(counter, 1)[0] || null;
-
-export function median(arr) {
-  const a = arr.filter((x) => x !== null && x !== undefined && !Number.isNaN(x))
-    .slice().sort((x, y) => x - y);
-  if (!a.length) return NaN;
-  const m = Math.floor(a.length / 2);
-  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
-}
-
-// Round a ratio to an integer percent: pct(n, d) === Math.round(100*n/d). The single
-// definition for the ~30 inline `Math.round(100*x/y)` sites. Optional cap/floor clamp
-// the result; {round:false} keeps the float. d <= 0 -> 0 (no divide-by-zero / NaN).
-export function pct(n, d, { cap = Infinity, floor = -Infinity, round = true } = {}) {
-  if (!(d > 0)) return 0;
-  const v = Math.min(cap, Math.max(floor, (100 * n) / d));
-  return round ? Math.round(v) : v;
-}
 
 // --------------------------------------------------------------------- //
 // Finding: the shared currency every analysis hands to prescribe.js
