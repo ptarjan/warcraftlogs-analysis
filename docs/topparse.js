@@ -17,7 +17,7 @@
 // rule is actually about.
 import {
   playerMetrics, topRankings, buffUptimes, bossDebuffs, tankTarget, median, topN, f, mapLimit, bestKill,
-  DPS, COMP, INFO, finding, DIM, runIsHealer, metricUnit,
+  playerAbilities, DPS, COMP, INFO, finding, DIM, runIsHealer, metricUnit,
 } from "./core.js";
 import { wowheadSpell } from "./links.js";
 
@@ -87,6 +87,43 @@ export function nonBossShare(targets, bossName) {
   return { pct: total ? (100 * other) / total : 0, byAdd };
 }
 
+// Of a player's damage on the funnel adds, the fraction that came from abilities
+// that ALSO hit a MAIN (boss) target -- i.e. free CLEAVE you replicate by pressing
+// the same buttons, vs DEDICATED single-target the field aimed at the add (a swap
+// OFF the boss, which costs boss uptime and is only gainable if your assignment
+// lets you split time). This is the data test for "can other groups actually put
+// the boss and the add together?" -- high share = yes (cleave), low = no (they
+// retarget). Class-agnostic: reads WCL's per-ability `targets[]` + `type:"Boss"`,
+// never an ability name. `abilities` is a sourceID-filtered DamageDone table's
+// entries (each { name, targets:[{name,total,type}] }). Returns null when there's
+// no add damage to classify (can't read the field's filtered tables).
+export function funnelCleaveShare(abilities, addNames, bossName) {
+  const adds = addNames instanceof Set ? addNames : new Set(addNames || []);
+  const abs = abilities || [];
+  // The "main" targets = WCL Boss-type targets + the named encounter boss, with a
+  // fallback to the single biggest NON-add target (renamed/council bosses can type
+  // as NPC, which would otherwise read as "nothing is the boss" -> all dedicated).
+  const main = new Set();
+  if (bossName) main.add(bossName);
+  let biggest = null, biggestTot = -1;
+  for (const ab of abs) for (const t of (ab.targets || [])) {
+    if (t.type === "Boss") main.add(t.name);
+    if (!adds.has(t.name) && (t.total || 0) > biggestTot) { biggest = t.name; biggestTot = t.total || 0; }
+  }
+  if (!main.size && biggest) main.add(biggest);
+  let cleave = 0, dedicated = 0;
+  for (const ab of abs) {
+    const tgts = ab.targets || [];
+    const hitsMain = tgts.some((t) => main.has(t.name));
+    for (const t of tgts) {
+      if (!adds.has(t.name)) continue;
+      if (hitsMain) cleave += t.total || 0; else dedicated += t.total || 0;
+    }
+  }
+  const tot = cleave + dedicated;
+  return tot > 0 ? cleave / tot : null;
+}
+
 // Total potions used in a kill, from the casts counter ({ abilityName: count }).
 export function potionCount(casts) {
   let n = 0;
@@ -136,7 +173,7 @@ export async function topParseFindings(name, server, region, difficulty, classNa
     // player-only check had: it called Crown-of-the-Cosmos "assignment" when the top
     // Brewmasters tanked the same Alleria and still out-funneled).
     const route = median(topRoutes.map((r) => r.pct)) - youRoute.pct;
-    let tank = null, fieldTank = null;
+    let tank = null, fieldTank = null, cleaveShare = null;
     if (!runIsHealer() && route >= 5 && addNames.length) {
       try { tank = await tankTarget(mine.code, mine.fight, you.sourceID); } catch (e) { /* no read -> stays a choice lever */ }
       try {
@@ -149,8 +186,21 @@ export async function topParseFindings(name, server, region, difficulty, classNa
           fieldTank = { name: winner[0], n: winner[1], of: fts.length };
         }
       } catch (e) { /* no field read -> treat as no assignment difference */ }
+      // VERIFY the funnel is achievable: read the field's per-ability targets and
+      // measure how much of their add damage is free CLEAVE (also hit the boss) vs
+      // DEDICATED single-target (a swap off the boss). A low share means the field
+      // isn't "putting them together" -- so we must NOT headline it as a free button.
+      try {
+        const addSet = new Set(addNames);
+        const shares = (await mapLimit(tops.slice(0, 3), 3,
+          (t) => playerAbilities(t.code, t.fight, t.m.sourceID).catch(() => null)))
+          .filter(Boolean)
+          .map((abs) => funnelCleaveShare(abs, addSet, mine.encounter.name))
+          .filter((x) => x != null);
+        if (shares.length) cleaveShare = median(shares);
+      } catch (e) { /* no read -> cleaveShare stays null -> current behavior */ }
     }
-    routing = { you: youRoute.pct, top: median(topRoutes.map((r) => r.pct)), addNames, tank, fieldTank };
+    routing = { you: youRoute.pct, top: median(topRoutes.map((r) => r.pct)), addNames, tank, fieldTank, cleaveShare };
     potions = { you: potionCount(you.casts), top: Math.round(median(tops.map((t) => potionCount(t.m.casts)))) };
   }
 
@@ -237,6 +287,19 @@ export function topParseLevers(tp, compDeltas = null) {
     const adds = tp.routing.addNames.join(", ");
     const top = f(tp.routing.top, 0), youPct = f(tp.routing.you, 0);
     const tank = tp.routing.tank, fieldTank = tp.routing.fieldTank;
+    // VERIFY the funnel is achievable before headlining it as a free button: cleaveShare
+    // is the field's fraction of add damage that came from abilities they ALSO land on
+    // the boss (same-kit cleave) vs DEDICATED add-only tooling. Low -> they're NOT just
+    // cleaving with their normal rotation, so the gap isn't a "press your buttons at the
+    // adds" lever -> don't size it as free yours-DPS (the comp/conditional bucket). Null
+    // (no field read, e.g. cache-only) -> keep prior behavior. NOTE: per-ABILITY, not
+    // per-hit, so it tells same-kit-cleave from dedicated-tooling, not literal simultaneity.
+    const cs = tp.routing.cleaveShare;
+    const dedicated = cs != null && cs < 0.6;
+    const confirmed = cs != null && cs >= 0.6;
+    const cleaveNote = confirmed
+      ? ` (confirmed: the field deals this with abilities they also land on the boss -- same-kit cleave you can replicate, not separate add tooling).`
+      : "";
     if (tank && tank.name && fieldTank && fieldTank.name && tank.name !== fieldTank.name) {
       // ASSIGNMENT difference: you held a DIFFERENT target than the field's consensus.
       // Real DPS but raid-dependent -> the comp bucket (sized), not a "yours" lever.
@@ -244,18 +307,26 @@ export function topParseLevers(tp, compDeltas = null) {
         `ROUTING: top parses put ${top}% of damage on ${adds} (you ${youPct}%) -- but you were TANKING ${tank.name} while ` +
         `the top parses tanked ${fieldTank.name} (${fieldTank.n}/${fieldTank.of}). That's a tank ASSIGNMENT difference -- who holds what is a raid ` +
         `call, not a target you freely swap. To shift it, sort funnel/tank duties with your team.`, "measured"));
+    } else if (dedicated) {
+      // The field's funnel is mostly DEDICATED add-only tooling, not same-kit cleave --
+      // so it's NOT a free "cleave with your normal buttons" gain. Don't headline it as
+      // yours-DPS; size it as conditional (comp/tooling/assignment-dependent).
+      out.push(finding(DIM.COMP, COMP(Math.round(route)),
+        `ROUTING: top parses put ${top}% of damage on ${adds} (you ${youPct}%) -- but they get most of it from abilities they DON'T use on the boss ` +
+        `(dedicated add tooling / a target swap), not cleave off their normal rotation. So it isn't a free "press your buttons at the adds" gain: ` +
+        `it costs boss uptime and is only worth it if those adds are a priority kill on your assignment.`, "measured"));
     } else if (tank && fieldTank && tank.name === fieldTank.name) {
       // SAME assignment, field funnels MORE -> achievable on your duty, so it IS yours
       // (positioning/cleave while tanking the same target) -- NOT an assignment excuse.
       out.push(finding(DIM.ROTATION, DPS(Math.round(route)),
         `ROUTING: the top parses tank ${tank.name} just like you, yet put ${top}% of their damage on ${adds} vs your ${youPct}% -- ` +
-        `so funneling the adds WHILE tanking ${tank.name} is doable on your assignment (cleave/AoE/positioning), it isn't a target swap. ` +
+        `so funneling the adds WHILE tanking ${tank.name} is doable on your assignment (cleave/AoE/positioning), it isn't a target swap.${cleaveNote} ` +
         `If the adds never come into your range, that part is your group's positioning, not your buttons.`, "measured"));
     } else {
       // No tank read -> generic funnel lever. "ALONGSIDE", not "instead": funneling adds
       // is usually cleaving them WITH the boss, not abandoning it.
       out.push(finding(DIM.ROTATION, DPS(Math.round(route)),
-        `ROUTING: top parses put ${top}% of damage on ${adds} (you ${youPct}%). Cleave/funnel those ALONGSIDE the boss when they're up ` +
+        `ROUTING: top parses put ${top}% of damage on ${adds} (you ${youPct}%). Cleave/funnel those ALONGSIDE the boss when they're up.${cleaveNote} ` +
         `(how much is available depends on the fight, but the target choice is yours).`, "measured"));
     }
   }

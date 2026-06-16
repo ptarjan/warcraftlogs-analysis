@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { raidCoverage, nonBossShare, potionCount, RAID_DAMAGE, topParseLevers } = await import("../docs/topparse.js");
+const { raidCoverage, nonBossShare, potionCount, RAID_DAMAGE, topParseLevers, funnelCleaveShare } = await import("../docs/topparse.js");
 const { setRunMetric, DIM } = await import("../docs/core.js");
 
 const aura = (pct, guid = 1) => ({ pct, guid });
@@ -139,4 +139,60 @@ test("topParseLevers: routing is ASSIGNMENT (comp) only when you tanked a DIFFER
   assert.equal(r3.dim, DIM.ROTATION);
   assert.match(r3.text, /ALONGSIDE/);
   assert.doesNotMatch(r3.text, /instead of tunneling/);
+});
+
+test("funnelCleaveShare: add damage from boss-hitting abilities is cleave; add-only abilities are dedicated", () => {
+  const adds = new Set(["Add A", "Add B"]);
+  // Spinning Crane Kick hits the boss AND both adds -> all its add damage is cleave.
+  // A dedicated nuke that only ever hit Add A -> that damage is NOT cleave.
+  const abilities = [
+    { name: "Spinning Crane Kick", targets: [
+      { name: "Big Boss", total: 1000, type: "Boss" },
+      { name: "Add A", total: 300 }, { name: "Add B", total: 200 }] },
+    { name: "Summon Nuke", targets: [{ name: "Add A", total: 500 }] }, // add-only -> dedicated
+  ];
+  // cleave = 300+200 = 500; dedicated = 500 -> share = 0.5
+  assert.equal(funnelCleaveShare(abilities, adds, "Big Boss"), 0.5);
+  // All add damage from boss-hitting abilities -> share 1 (the Hadryan/Crown case).
+  const allCleave = [{ name: "SCK", targets: [
+    { name: "Big Boss", total: 1000, type: "Boss" }, { name: "Add A", total: 400 }] }];
+  assert.equal(funnelCleaveShare(allCleave, adds, "Big Boss"), 1);
+  // No add damage to classify -> null (not 0).
+  assert.equal(funnelCleaveShare([{ name: "X", targets: [{ name: "Big Boss", total: 9, type: "Boss" }] }], adds, "Big Boss"), null);
+});
+
+test("funnelCleaveShare: boss identified by biggest non-add target when no Boss-type/name is present", () => {
+  const adds = new Set(["Add A"]);
+  // Renamed boss types as NPC; it's the biggest non-add target -> still 'main'.
+  const abilities = [
+    { name: "Cleave", targets: [{ name: "Council Member", total: 9000, type: "NPC" }, { name: "Add A", total: 300 }] },
+    { name: "AddNuke", targets: [{ name: "Add A", total: 700 }] },
+  ];
+  assert.equal(funnelCleaveShare(abilities, adds, null), 0.3); // 300 cleave / 1000 total
+});
+
+test("topParseLevers: a DEDICATED-tooling funnel (low cleaveShare) is downgraded out of the yours-DPS headline", () => {
+  // Same tank target as the field, but the field's add damage is mostly add-only tooling
+  // (cleaveShare 0.2) -> NOT free cleave on your buttons -> comp/conditional, not DIM.ROTATION.
+  const ded = { comp: { missing: [] },
+    routing: { top: 75, you: 60, addNames: ["Add A", "Add B"],
+      tank: { name: "Alleria", share: 61 }, fieldTank: { name: "Alleria", n: 3, of: 3 }, cleaveShare: 0.2 } };
+  const r = topParseLevers(ded).find((x) => /^ROUTING/.test(x.text));
+  assert.equal(r.dim, DIM.COMP, "dedicated add tooling -> not a free yours-DPS button");
+  assert.match(r.text, /don't use on the boss/i);
+  assert.doesNotMatch(r.text, /just like you/); // not the same-assignment yours-lever text
+  // High cleaveShare on the SAME case -> stays yours (DIM.ROTATION) with a confirmation note.
+  const conf = { comp: { missing: [] },
+    routing: { top: 75, you: 60, addNames: ["Add A", "Add B"],
+      tank: { name: "Alleria", share: 61 }, fieldTank: { name: "Alleria", n: 3, of: 3 }, cleaveShare: 1 } };
+  const rc = topParseLevers(conf).find((x) => /^ROUTING/.test(x.text));
+  assert.equal(rc.dim, DIM.ROTATION, "confirmed same-kit cleave stays a yours lever");
+  assert.match(rc.text, /confirmed/i);
+  // null cleaveShare (cache-only / no field read) -> unchanged prior behavior.
+  const noRead = { comp: { missing: [] },
+    routing: { top: 75, you: 60, addNames: ["Add A"],
+      tank: { name: "Alleria", share: 61 }, fieldTank: { name: "Alleria", n: 3, of: 3 }, cleaveShare: null } };
+  const rn = topParseLevers(noRead).find((x) => /^ROUTING/.test(x.text));
+  assert.equal(rn.dim, DIM.ROTATION);
+  assert.doesNotMatch(rn.text, /confirmed/i);
 });

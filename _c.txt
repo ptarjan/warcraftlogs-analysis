@@ -1,0 +1,30 @@
+Detecting class, spec, and difficulty…
+Detected: Discipline Priest · Mythic · gear priority haste · optimizing HPS
+=== Cheoeqar-area52 (US) | Discipline Priest | Mythic ===
+
+######################################################################
+# PRESCRIPTION
+######################################################################
+You parse 46th percentile on Mythic (median of the 7 current-tier Mythic bosses you've killed; best 87th on [Imperator Averzian](https://www.warcraftlogs.com/reports/gC613J7wjHcXnYKq#fight=8)).
+NOTE: your most recent Mythic kill is ~7 days old (ilvl 289). The enchant/gem/gear/consumable findings reflect THAT kill -- if you've enchanted/re-gemmed/upgraded since, some are already done. Re-run after a fresh kill for an accurate setup check.
+Measured on [Crown of the Cosmos](https://www.warcraftlogs.com/reports/xd2tXm4F9YHjQTWD#fight=9): you (ilvl ~289) do 173.0k HPS -- 32% behind the ilvl-matched field (228.0k) -- but HPS is capped by the damage your raid takes and your healing assignment, so most of that gap is the encounter and healer comp, not HPS you can simply add. The fixes below are the concrete part you control.
+Consistency: across your 6 Imperator Averzian kills you've parsed 9-87%ile and trending DOWN -- recent kills (~47th) sit below your earlier ones (~84th); worth a look at what changed.
+VERDICT: your biggest character lever is EXECUTION (cutting avoidable movement -- staying in range to cast) -- then 2 gear/setup fixes below. The gap is HOW you play, not a setup overhaul (comp aside).
+(Field = top-ranked players at your item level; top parses = the rank-1 kills.)
+
+Your 32% gap breaks down as: ~27pp you can fix (the list below) · ~2pp raid comp · ~3pp not yet explained.
+
+--- Do these to your character now -- each % is that fix's share of your measured 32% gap. [measured] = computed from your log; [est.] = a category/effect estimate a sim would price exactly ---
+  1. [ ~16% HPS]  MOVEMENT uptime on specific fights: you lose ~9.3s/min of casting to moving / being out of range more than peers (intermissions excluded). Worst on: Chimaerus, the Undreamt God (3 kills), Vorasius (3 kills), Vaelgor & Ezzorak (2 kills). Pre-position and cut avoidable movement so your GCD keeps rolling through mechanics.  [measured]
+  2. [  ~9% HPS]  HASTE: re-itemize 4 slots toward haste (+674 haste total -- sim to confirm) -- Neck [Masterwork Sin'dorei Amulet](https://www.wowhead.com/item=240950)→[Eternal Voidsong Chain](https://www.wowhead.com/item=249368), Feet [Dream-Scorched Striders](https://www.wowhead.com/item=249373)→[Ice-Steeped Sandals](https://www.wowhead.com/item=49805), Ring1 [Occlusion of Void](https://www.wowhead.com/item=251217)→[Eye of Midnight](https://www.wowhead.com/item=249920), Back [Fluxweave Cloak](https://www.wowhead.com/item=251206)→[Draconic Nullcape](https://www.wowhead.com/item=249370).  [est.]
+  3. [  ~2% HPS]  TRINKETS: the field favors [Vaelgor's Final Stare](https://www.wowhead.com/item=249346) (7/10 peers) -- dropped in The Voidspire -- you run Gaze of the Alnseer + Heart of Wind. Trinkets are effect-based (proc/on-use), not a stat swap -- SIM it (Droptimizer) before committing, but a trinket most of your peers run and you don't is a common hidden upgrade.  [est.]
+  4. [  ~3% HPS]  THE REMAINDER (~3%): small and unattributed -- sim-only tuning (exact trinket/stat effect sizes) and kill-to-kill variance. No single button.  [measured]
+
+--- Raid comp (real HPS, but a roster/buff gap — NOT something you change on your character) ---
+  1. [ ~2% comp]  Missing [Augmentation Ebon Might / Prescience](https://www.wowhead.com/spell=395152) (re-attributed throughput) — bring an Augmentation Evoker. (measured: peers with it do 2% more HPS, n=4/6).  [measured]
+  2. [     info]  Missing [Battle Shout](https://www.wowhead.com/spell=6673) (+attack power) — bring a Warrior. (unsized — this field gave no with/without split to measure it).  [measured]
+
+--- What you're doing well (keep it) ---
+  ✓ UPTIME: ~100% active -- near-perfect GCD uptime, you're barely idling.
+  ✓ EFFICIENCY: your 31% overheal is in line with the field's 29% -- not spilling more than your peers.
+
