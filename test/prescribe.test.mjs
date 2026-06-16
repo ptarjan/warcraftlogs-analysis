@@ -53,7 +53,7 @@ test("fieldDelta measures an attribute's value from the field (have vs not)", ()
   // Too few on one side -> null.
   assert.equal(fieldDelta([110, 100, 100, 100, 100], [true, false, false, false, false]), null);
 });
-const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, verdictBlindSpots, overhaulDisclaimer, strengths, killHistory, consumableLevers, residualText } = await import("../docs/prescribe.js");
+const { executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, verdictBlindSpots, overhaulDisclaimer, strengths, killHistory, consumableLevers, residualText } = await import("../docs/prescribe.js");
 
 test("killHistory: parse spread (consistency) + recent-vs-old trend (improvement), time-ordered", () => {
   const k = (p, t) => ({ rankPercent: p, startTime: t });
@@ -479,24 +479,6 @@ test("trinketLevers: fires on a real consensus, sized by it; silent on a split f
   assert.equal((await trinketLevers(tiny, { trinketIds: new Set(), trinkets: [] })).length, 0);
 });
 
-test("pickCurrentKill: most recent within the ilvl band, not the stale peak", () => {
-  // The classic stale-snapshot bug: a peak-ilvl kill from weeks ago must NOT be
-  // read as 'current gear' when a near-peak kill from last night exists -- else
-  // enchant/gem fixes made since are hidden.
-  const recentNearPeak = pickCurrentKill([
-    { ilvl: 290, startTime: 100, boss: "old-peak" },
-    { ilvl: 289, startTime: 900, boss: "last-night" },
-  ]);
-  assert.equal(recentNearPeak.boss, "last-night");
-  // But a recent kill from much LOWER gear (outside the band) isn't 'current'.
-  const ignoresAltGear = pickCurrentKill([
-    { ilvl: 290, startTime: 100, boss: "main" },
-    { ilvl: 283, startTime: 900, boss: "alt-or-old-tier" },
-  ]);
-  assert.equal(ignoresAltGear.boss, "main");
-  assert.equal(pickCurrentKill([]), null);
-});
-
 test("reconcileImpacts: concrete fixes + residual always sum to the target (the gap)", () => {
   const sum = (a) => a.reduce((s, v) => s + v, 0);
   // over-claim: our sims exceed the headroom -> scale DOWN so they can't claim
@@ -663,12 +645,6 @@ test("DPS/COMP/INFO build impact and label together (no drift)", () => {
   assert.deepEqual(DPS(2, 4), { impact: 3, label: "~2-4% DPS" });
   assert.deepEqual(COMP(5), { impact: 5, label: "~5% comp" });
   assert.deepEqual(INFO, { impact: 0, label: "info" });
-});
-
-test("rxHeadline keeps the keyword + first clause, trimming the detail", () => {
-  assert.equal(rxHeadline("ROTATION: press Ravage (peers 5.5/min vs your 0.0) more; you over-press Thrash"),
-    "ROTATION: press Ravage");
-  assert.equal(rxHeadline("PRESS FASTER (every boss): you idle ~4.8s/min MORE"), "PRESS FASTER");
 });
 
 test("sorting by impact is biggest-DPS-first and the labels follow", () => {

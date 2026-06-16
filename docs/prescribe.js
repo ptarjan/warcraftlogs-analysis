@@ -20,13 +20,6 @@ import { healingLevers } from "./healing.js";
 
 const SLOT_NAME = ENCHANTABLE_SLOTS;
 
-// A short headline for a finding (its keyword + first action clause), for naming
-// the #1 lever in the synthesis without dumping the whole sentence.
-export function rxHeadline(text) {
-  const head = String(text).split(/ -- |;|\(/)[0].trim();
-  return head.length > 72 ? head.slice(0, 69) + "…" : head;
-}
-
 async function bestIlvlKill(name, server, region, encounterId, difficulty, specName) {
   const er = await characterEncounter(name, server, region, encounterId, difficulty);
   const best = bestRank(er && er.ranks, specName);
@@ -47,17 +40,6 @@ export function pickBenchmarkKill(kills, band = 1) {
   if (!inBand.length) return null;
   const sorted = [...inBand].sort((a, b) => (a.rankPercent || 0) - (b.rankPercent || 0));
   return sorted[Math.floor((sorted.length - 1) / 2)];
-}
-
-// "Current gear" = the most RECENT kill within `band` ilvls of your top, NOT the
-// single highest-ilvl one. A peak-ilvl kill from weeks ago hides the enchant/gem/
-// gear fixes you've made since (the classic stale-snapshot bug -- e.g. "my missing
-// enchants were from weeks ago"). Mirrors core.bestRank, applied across every boss.
-export function pickCurrentKill(kills, band = 1) {
-  if (!kills || !kills.length) return null;
-  const maxIl = Math.max(...kills.map((k) => k.ilvl || 0));
-  return kills.filter((k) => (k.ilvl || 0) >= maxIl - band)
-    .reduce((a, b) => ((b.startTime || 0) > (a.startTime || 0) ? b : a));
 }
 
 // Your parse HISTORY on the benchmark boss -- read from the per-kill ranks the
