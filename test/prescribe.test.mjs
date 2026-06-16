@@ -755,3 +755,21 @@ test("residualText (playstyle): empowered-share wording reflects ahead / even / 
   // a bit behind but within the no-lever band (12% vs 20%): nearly as often as
   assert.match(residualText("playstyle", 28, {}, rot(0.12, 0.20), []), /nearly as often as the field/);
 });
+
+test("residualText (playstyle): a BIG remainder gets actionable execution framing, not a 'confounded per-cast' punt", () => {
+  // The smell this guards: a 40-60pp remainder labelled "per-cast stats/comp we can't
+  // pin" is the exact "go sim it" cop-out CLAUDE.md forbids. Big -> name the executable
+  // directions + the concrete next step (diff a rank-1 parse). Small -> variance is fine.
+  const rotEmpEven = { proc: { name: "Starsurge", youEmp: 0.28, fieldEmp: 0.25 }, usage: { under: [] } };
+  const bigEmp = residualText("playstyle", 43, {}, rotEmpEven, []);
+  assert.match(bigEmp, /rank-1 parse of this exact fight/, "big: gives the concrete diff-a-top-parse step");
+  assert.match(bigEmp, /isn't just stat variance/, "big: explicitly rejects the stat-variance punt");
+  // Generic path (no empowerment data, no under-press) also gets the frontier when big.
+  const bigGeneric = residualText("playstyle", 40, {}, { proc: null, usage: { under: [] } }, []);
+  assert.match(bigGeneric, /rank-1 parse of this exact fight/);
+  assert.doesNotMatch(bigGeneric, /we can't pin to one ability/, "big generic: no punt");
+  // SMALL remainder keeps the lightweight variance wording (no preachy frontier).
+  const smallGeneric = residualText("playstyle", 8, {}, { proc: null, usage: { under: [] } }, []);
+  assert.match(smallGeneric, /we can't pin to one ability/);
+  assert.doesNotMatch(smallGeneric, /rank-1 parse/);
+});
