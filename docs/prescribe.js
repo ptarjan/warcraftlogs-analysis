@@ -806,17 +806,13 @@ export function residualText(kind, r, d, rot, rx) {
   return `THE REMAINDER (~${r}%): small and unattributed -- sim-only tuning (exact trinket/stat effect sizes) and kill-to-kill variance. No single button.`;
 }
 
-function renderPrescription(log, d) {
-  const { rx, you, field, tp, execd, rot } = d;
-  const isComp = (r) => r.dim === DIM.COMP;               // raid-dependent, not yours to press
-  const yours = rx.filter((r) => r.impact > 0 && !isComp(r));
-  const k = (n) => `${f((n || 0) / 1000, 1)}k`;
-  const peerGap = (you && you.dps && field && field.dpsMed) ? Math.round(((field.dpsMed - you.dps) / you.dps) * 100) : null;
-  const topGap = (tp && tp.dpsGapPct) ? Math.round(tp.dpsGapPct) : null;
-  // You out-cast the field, so the "GCD uptime lost" heuristic is contradicted --
-  // the REMAINDER below uses this to frame the gap as damage-per-cast, not activity.
-  const outpaces = rot && rot.castGap && rot.castGap.field > 0 && rot.castGap.you >= rot.castGap.field;
+// --- renderPrescription, split into its three sections. Each takes the assembled
+//     prescription data `d` and logs; pure presentation -- the analysis already happened. ---
 
+// Header: where you parse, partial/staleness NOTEs, the measured gap vs the field, and the
+// kill-to-kill consistency/trend line.
+function renderHeader(log, d, you, field, peerGap, topGap) {
+  const k = (n) => `${f((n || 0) / 1000, 1)}k`;
   // No title line here -- the report hero (name · realm · region + spec/difficulty
   // pills) and the card's own "What to change" header already say who this is.
   // Quoted kills link straight to your Warcraft Logs report+fight.
@@ -832,48 +828,50 @@ function renderPrescription(log, d) {
   if (d.gearAgeDays != null && d.gearAgeDays >= 7) {
     log(`NOTE: your most recent ${d.difficultyName} kill is ~${d.gearAgeDays} days old (ilvl ${d.curIlvl}). The enchant/gem/gear/consumable findings reflect THAT kill -- if you've enchanted/re-gemmed/upgraded since, some are already done. Re-run after a fresh kill for an accurate setup check.`);
   }
-  if (peerGap != null) {
-    const ahead = peerGap <= 0;
-    const vsField = ahead ? `${Math.abs(peerGap)}% ahead of` : `${peerGap}% behind`;
-    // Spell out what the gap means: same-gear players already do it, so it's
-    // gainable, and the list below is sized to sum to it.
-    const tail = ahead
-      ? ". You're already ahead of your item-level bracket -- the top parses are the target."
-      : isEliteParse(d.medP)
-      ? ` -- but the field here is the TOP parses at your item level, and at your ${d.medP}th percentile most of that gap is raid comp + execution on optimal pulls, not a setup you're getting wrong. The fixes below are the concrete part you control.`
-      : runIsHealer()
-      ? ` -- but ${metricUnit()} is capped by the damage your raid takes and your healing assignment, so most of that gap is the encounter and healer comp, not ${metricUnit()} you can simply add. The fixes below are the concrete part you control.`
-      : runIsSupport()
-      ? ` -- but as a support most of your value is the amps you keep on allies (credited to THEIR parses, not your personal DPS), so this personal-DPS gap mostly measures buff value, not DPS you can simply add. Your real lever is buff uptime (see the Support buffs card); the fixes below are the rest you control.`
-      : ` -- and they have your exact item level, so that ${peerGap}% is ${metricUnit()} you could realistically gain. The fixes below are sized to add up to it.`;
-    log(`Measured on ${gearBossLink}: you (ilvl ~${d.curIlvl}) do ${k(you.dps)} ${metricUnit()} -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
-        (topGap != null ? `, ${topGap}% behind the top parses` : "") + tail);
-    // CONSISTENCY + IMPROVEMENT, from your most-farmed boss's parse history (FREE --
-    // cached ranks): are you steady or all over the place kill-to-kill, and are your
-    // recent kills better than your older ones? The single-kill deep-dive can't see
-    // either. Same boss across time, so it's a clean signal (parse %ile is normalized).
-    const h = d.hist;
-    if (h) {
-      // Make the spread + trend ONE coherent story: a wide range under a rising trend
-      // is the CLIMB (improvement), not kill-to-kill inconsistency -- only a wide spread
-      // with NO trend is genuine variance. Don't say "you vary a lot" AND "you're improving".
-      let msg = `Consistency: across your ${h.n} ${d.histBoss} kills you've parsed ${h.lo}-${h.hi}%ile`;
-      if (h.trend === "up")
-        msg += ` and you're trending UP -- recent kills (~${h.newP}th) beat your earlier ones (~${h.oldP}th). The range is mostly that climb; whatever you changed, keep it.`;
-      else if (h.trend === "down")
-        msg += ` and trending DOWN -- recent kills (~${h.newP}th) sit below your earlier ones (~${h.oldP}th); worth a look at what changed.`;
-      else if (h.consistent)
-        msg += ` -- a tight band, so you play it about the same every time (the deep-dive above is typical).`;
-      else if (h.varies)
-        msg += ` at a steady average -- a wide spread with no clear trend means your play varies kill to kill, so a single kill isn't your ceiling.`;
-      else msg += ` -- a normal spread.`;
-      log(msg);
-    }
+  if (peerGap == null) return;
+  const ahead = peerGap <= 0;
+  const vsField = ahead ? `${Math.abs(peerGap)}% ahead of` : `${peerGap}% behind`;
+  // Spell out what the gap means: same-gear players already do it, so it's
+  // gainable, and the list below is sized to sum to it.
+  const tail = ahead
+    ? ". You're already ahead of your item-level bracket -- the top parses are the target."
+    : isEliteParse(d.medP)
+    ? ` -- but the field here is the TOP parses at your item level, and at your ${d.medP}th percentile most of that gap is raid comp + execution on optimal pulls, not a setup you're getting wrong. The fixes below are the concrete part you control.`
+    : runIsHealer()
+    ? ` -- but ${metricUnit()} is capped by the damage your raid takes and your healing assignment, so most of that gap is the encounter and healer comp, not ${metricUnit()} you can simply add. The fixes below are the concrete part you control.`
+    : runIsSupport()
+    ? ` -- but as a support most of your value is the amps you keep on allies (credited to THEIR parses, not your personal DPS), so this personal-DPS gap mostly measures buff value, not DPS you can simply add. Your real lever is buff uptime (see the Support buffs card); the fixes below are the rest you control.`
+    : ` -- and they have your exact item level, so that ${peerGap}% is ${metricUnit()} you could realistically gain. The fixes below are sized to add up to it.`;
+  log(`Measured on ${gearBossLink}: you (ilvl ~${d.curIlvl}) do ${k(you.dps)} ${metricUnit()} -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
+      (topGap != null ? `, ${topGap}% behind the top parses` : "") + tail);
+  // CONSISTENCY + IMPROVEMENT, from your most-farmed boss's parse history (FREE --
+  // cached ranks): are you steady or all over the place kill-to-kill, and are your
+  // recent kills better than your older ones? The single-kill deep-dive can't see
+  // either. Same boss across time, so it's a clean signal (parse %ile is normalized).
+  const h = d.hist;
+  if (h) {
+    // Make the spread + trend ONE coherent story: a wide range under a rising trend
+    // is the CLIMB (improvement), not kill-to-kill inconsistency -- only a wide spread
+    // with NO trend is genuine variance. Don't say "you vary a lot" AND "you're improving".
+    let msg = `Consistency: across your ${h.n} ${d.histBoss} kills you've parsed ${h.lo}-${h.hi}%ile`;
+    if (h.trend === "up")
+      msg += ` and you're trending UP -- recent kills (~${h.newP}th) beat your earlier ones (~${h.oldP}th). The range is mostly that climb; whatever you changed, keep it.`;
+    else if (h.trend === "down")
+      msg += ` and trending DOWN -- recent kills (~${h.newP}th) sit below your earlier ones (~${h.oldP}th); worth a look at what changed.`;
+    else if (h.consistent)
+      msg += ` -- a tight band, so you play it about the same every time (the deep-dive above is typical).`;
+    else if (h.varies)
+      msg += ` at a steady average -- a wide spread with no clear trend means your play varies kill to kill, so a single kill isn't your ceiling.`;
+    else msg += ` -- a normal spread.`;
+    log(msg);
   }
-  // A blunt, character-specific VERDICT: name the situation so the report never
-  // reads like a template -- and always points at an action (respec / the few
-  // setup fixes / "tighten your play, there's no shortcut").
-  const compList0 = rx.filter(isComp);
+}
+
+// A blunt, character-specific VERDICT: name the situation so the report never reads like a
+// template -- and always points at an action (respec / the few setup fixes / "tighten your
+// play, there's no shortcut"). `yours` is the actionable findings, sorted biggest-first.
+function renderVerdict(log, d, yours) {
+  const compList0 = d.rx.filter((r) => r.dim === DIM.COMP);
   const setupFixes = yours.filter((r) => r.dim === DIM.GEAR || r.dim === DIM.SETUP);
   // Any talent/build change -- whether a never-pressed talented ability or a meta
   // talent the field runs and you don't. Both carry KIND.TALENTS (a build swap, same
@@ -936,12 +934,13 @@ function renderPrescription(log, d) {
       log(`VERDICT: build, gear, enchants, and rotation all match the field -- there's NO setup or talent fix to make. Your gap is ${compList0.length ? "comp + " : ""}execution (press faster / uptime). Tighten your play; there's no gear/talent shortcut.`);
     }
   }
-  // (No "biggest fix" / "what the gap is made of" summary here -- the VERDICT
-  // above names the situation and the numbered list below IS the breakdown,
-  // sorted biggest-first with each lever's measured detail. Restating it read as
-  // duplication.)
-  log(`(Field = top-ranked players at your item level; top parses = the rank-1 kills.)`);
+}
 
+// The change-list: reconcile the levers to the measured gap, split yours / raid-comp /
+// info, render each line, then close on the strengths (what you're doing well).
+function renderChangeList(log, d, peerGap, outpaces) {
+  const { rx, execd, rot } = d;
+  const isComp = (r) => r.dim === DIM.COMP;
   // Split the list by what's YOURS to do vs raid comp. The whole point is "what
   // do I do to my character right now" -- a roster gap (bring an Aug Evoker) is
   // real but isn't a change you make to your character, so it never competes for
@@ -1027,6 +1026,24 @@ function renderPrescription(log, d) {
     for (const w of wins) log(`  ✓ ${w}`);
   }
   log("");
+}
+
+// THE synthesis, rendered: one answer anchored on the MEASURED gap. Computes the few
+// cross-section locals, then delegates to the three section renderers. Pure presentation.
+function renderPrescription(log, d) {
+  const { rx, you, field, tp, rot } = d;
+  const peerGap = (you && you.dps && field && field.dpsMed) ? Math.round(((field.dpsMed - you.dps) / you.dps) * 100) : null;
+  const topGap = (tp && tp.dpsGapPct) ? Math.round(tp.dpsGapPct) : null;
+  // You out-cast the field -> the "GCD uptime lost" heuristic is contradicted; the
+  // residual framing (renderChangeList) uses this to call the gap damage-per-cast.
+  const outpaces = rot && rot.castGap && rot.castGap.field > 0 && rot.castGap.you >= rot.castGap.field;
+  const yours = rx.filter((r) => r.impact > 0 && r.dim !== DIM.COMP);  // actionable, sorted biggest-first
+  renderHeader(log, d, you, field, peerGap, topGap);
+  renderVerdict(log, d, yours);
+  // (No "what the gap is made of" summary -- the verdict names the situation and the
+  // numbered list below IS the breakdown, sorted biggest-first. Restating it read as dup.)
+  log(`(Field = top-ranked players at your item level; top parses = the rank-1 kills.)`);
+  renderChangeList(log, d, peerGap, outpaces);
 }
 
 /** @param {string|null} [knownPriority] */
