@@ -100,8 +100,14 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
   }
 
   const g = gearSummary(you.gear);
-  const miss = [...g.missing].sort();
-  log(`    enchants missing: ${miss.length ? "[" + miss.map((x) => `'${x}'`).join(", ") + "]" : "none of the meta slots"}`);
+  // Field-aware, like the prescription's enchant lever: only list a missing enchant the
+  // peer FIELD reliably runs (>= half). The raw ENCHANTABLE_SLOTS list flags slots the
+  // field doesn't bother with (a Shadow Priest's Back/Wrist) as if an elite skipped
+  // something meta -- which then contradicts the prescription (no enchant lever there).
+  const fieldEnch = new Map();
+  for (const p of peers) for (const s of gearSummary(p.gear).enchanted) fieldEnch.set(s, (fieldEnch.get(s) || 0) + 1);
+  const miss = [...g.missing].filter((s) => (fieldEnch.get(s) || 0) >= peers.length / 2).sort();
+  log(`    enchants missing (the field runs): ${miss.length ? "[" + miss.map((x) => `'${x}'`).join(", ") + "]" : "none -- you run every enchant the field does"}`);
   log(`    trinkets: [${g.trinkets.map((t) => `'${t}'`).join(", ")}]`);
   const peerTrinkets = new Map();
   for (const p of peers) for (const t of gearSummary(p.gear).trinkets) peerTrinkets.set(t, (peerTrinkets.get(t) || 0) + 1);
