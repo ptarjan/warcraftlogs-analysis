@@ -746,6 +746,22 @@ test("consumableLevers: don't recommend a swap the field MEASURED at ~0% (pointl
   assert.equal(consumableLevers(base(3), my).filter((f) => /FOOD/.test(f.text)).length, 1);
 });
 
+test("consumableLevers: the NONE path also drops a consumable the field MEASURED at ~0% (no self-contradicting '~0% DPS, free parse')", () => {
+  // Rezaa's real case: used NO combat potion, but the field's with/without split
+  // measured 0% -> don't list "[~0% DPS] use a potion (peers gain 0%) free parse".
+  const base = (potPct) => ({
+    foods: new Map(), flasks: new Map(), augRunes: new Map(), oils: new Map(),
+    potions: new Map([["Potion of Recklessness", 6]]),
+    guids: new Map([["Potion of Recklessness", 555]]),
+    deltas: { potions: potPct == null ? null : { pct: potPct, nHave: 6, nNot: 4 } }, topDeltas: {}, n: 10,
+  });
+  const my = { potion: null, potionGuid: null };                // you used NONE
+  assert.equal(consumableLevers(base(0), my).filter((f) => /POTION/.test(f.text)).length, 0, "measured 0% -> suppressed");
+  assert.equal(consumableLevers(base(2), my).filter((f) => /POTION/.test(f.text)).length, 1, "measured 2% -> shown");
+  // No field counterfactual at all -> est estimate still surfaces the gap.
+  assert.equal(consumableLevers(base(null), my).filter((f) => /POTION/.test(f.text)).length, 1, "unmeasured -> est shows");
+});
+
 test("residualText (playstyle): empowered-share wording reflects ahead / even / behind, not always 'as often'", () => {
   const rot = (you, field) => ({ proc: { name: "Tiger Palm", youEmp: you, fieldEmp: field }, usage: { under: [] } });
   // genuinely AHEAD (40% vs 20%, Hadryan): say MORE often, don't tell them they're "the same"

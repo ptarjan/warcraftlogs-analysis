@@ -468,6 +468,11 @@ export function consumableLevers(field, my) {
     const basis = fd ? "measured" : "est";
     const cite = fd ? ` (measured: peers with it do ${Math.round(fd.pct)}% more, n=${fd.nHave}/${fd.nNot})` : "";
     if (!mineName) {
+      // Same rule as the swap path below: don't list a consumable the field MEASURED
+      // at ~0% benefit. "[~0% DPS] use a potion (peers gain 0%) -- free parse" is
+      // self-contradicting noise (and reconcileImpacts gives a 0% item nothing). An
+      // UNMEASURED (est) gap -- no field counterfactual -- still surfaces normally.
+      if (fd && Math.round(fd.pct) === 0) continue;
       out.push(finding(DIM.SETUP, noneScore, `${cn.label}: ${cn.missText} -- ${counter.get(top)}/${field.n} peers ` +
         `${cn.peerVerb} ${wowheadSpell(field.guids.get(top), top)}${cn.note}.${cite} ${cn.tail}`, basis));
     } else if (mineName !== top) {
