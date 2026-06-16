@@ -53,7 +53,7 @@ test("fieldDelta measures an attribute's value from the field (have vs not)", ()
   // Too few on one side -> null.
   assert.equal(fieldDelta([110, 100, 100, 100, 100], [true, false, false, false, false]), null);
 });
-const { executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, verdictBlindSpots, overhaulDisclaimer, strengths, killHistory, consumableLevers, residualText } = await import("../docs/prescribe.js");
+const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, verdictBlindSpots, overhaulDisclaimer, strengths, killHistory, consumableLevers, residualText, residualSummary } = await import("../docs/prescribe.js");
 
 test("killHistory: parse spread (consistency) + recent-vs-old trend (improvement), time-ordered", () => {
   const k = (p, t) => ({ rankPercent: p, startTime: t });
@@ -533,6 +533,23 @@ test("remainderKind: a big remainder for an ELITE player is the gap to top parse
   assert.equal(remainderKind(4, { support: true, underPress: true }), "small");
   // A DAMAGE player with the same small remainder + cast deficit still gets "underpress".
   assert.equal(remainderKind(4, { healer: false, support: false, underPress: true }), "underpress");
+});
+
+test("residualSummary: the one-line breakdown NAMES the residual, matching the detailed item", () => {
+  // The bug this guards: a 62nd-%ile healer told "~142pp not yet explained" while the
+  // detail right below says HEALING IS DAMAGE-BOUND -- the summary contradicted the
+  // report and read as the tool giving up. Each kind's summary must echo its detail.
+  assert.equal(residualSummary("healer"), "damage-bound (capped by the damage your raid took)");
+  assert.equal(residualSummary("elite"), "the gap to the top parses");
+  assert.equal(residualSummary("support"), "buff value off your sheet (credited to allies)");
+  assert.match(residualSummary("playstyle"), /playstyle/);
+  assert.match(residualSummary("underpress"), /uptime|execution/);
+  assert.match(residualSummary("small"), /variance/);
+  // None of the characterized kinds should still read "not yet explained".
+  for (const k of ["healer", "elite", "support", "playstyle", "underpress", "small"])
+    assert.doesNotMatch(residualSummary(k), /not yet explained/, `${k} must be named, not punted`);
+  // Only a genuinely-unknown kind falls back to the honest "not yet explained".
+  assert.equal(residualSummary(null), "not yet explained");
 });
 
 test("verdictLever: headlines the ACTUAL biggest lever, not a fixed category precedence", () => {

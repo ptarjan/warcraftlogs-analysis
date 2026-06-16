@@ -795,6 +795,24 @@ export function residualText(kind, r, d, rot, rx) {
   return `THE REMAINDER (~${r}%): small and unattributed -- sim-only tuning (exact trinket/stat effect sizes) and kill-to-kill variance. No single button.`;
 }
 
+// The ONE-LINE "your gap breaks down as ..." summary must NAME the residual the same
+// way the detailed item below does -- not call it "not yet explained" when the report
+// then explains it (a healer's gap is damage-bound, an elite's is the distance to the
+// top parses). "Not yet explained" reads as the tool giving up / blaming the player,
+// and for a 62nd-pct healer told they're "171% behind" it directly contradicts the
+// detail. Only the genuinely-uncharacterized DPS remainder stays "not yet explained".
+export function residualSummary(kind) {
+  switch (kind) {
+    case "elite": return "the gap to the top parses";
+    case "healer": return "damage-bound (capped by the damage your raid took)";
+    case "support": return "buff value off your sheet (credited to allies)";
+    case "playstyle": return "playstyle (how you play the same gear -- see below)";
+    case "underpress": return "GCD uptime / execution";
+    case "small": return "sim tuning + kill-to-kill variance";
+    default: return "not yet explained";
+  }
+}
+
 // --- renderPrescription, split into its three sections. Each takes the assembled
 //     prescription data `d` and logs; pure presentation -- the analysis already happened. ---
 
@@ -966,6 +984,7 @@ function renderChangeList(log, d, peerGap, outpaces) {
   // "variance". So frame it by size + signal: under-pressing -> execution; a LARGE
   // unexplained chunk -> flag the list as incomplete; only a SMALL one is plausibly
   // sim/variance.
+  let residualKind = null;
   if (gap > 0 && residual >= 1) {
     const r = Math.round(residual);
     // PRECEDENCE BY SIZE FIRST. A big remainder is the analysis admitting it can't
@@ -974,8 +993,8 @@ function renderChangeList(log, d, peerGap, outpaces) {
     // with a real cast deficit is credibly "press a bit faster".
     const underPress = (rot && rot.castGap && rot.castGap.field > rot.castGap.you)
       || (execd && execd.pressExcess >= 1 && !outpaces);
-    const kind = remainderKind(residual, { elite: isEliteParse(d.medP), healer: runIsHealer(), support: runIsSupport(), underPress });
-    const rtext = residualText(kind, r, d, rot, rx);
+    residualKind = remainderKind(residual, { elite: isEliteParse(d.medP), healer: runIsHealer(), support: runIsSupport(), underPress });
+    const rtext = residualText(residualKind, r, d, rot, rx);
     renderYou.push({ dim: DIM.EXECUTION, impact: residual, label: pctLabel(residual), text: rtext, basis: "measured" });
   }
   const youOut = renderYou.concat(infoList);
@@ -989,7 +1008,7 @@ function renderChangeList(log, d, peerGap, outpaces) {
     log("");
     log(`Your ${gap}% gap breaks down as: ~${Math.round(fixableTotal)}pp you can fix (the list below)` +
         (compShare > 0 ? ` · ~${compShare}pp raid comp` : "") +
-        (residual >= 1 ? ` · ~${Math.round(residual)}pp not yet explained` : "") + ".");
+        (residual >= 1 ? ` · ~${Math.round(residual)}pp ${residualSummary(residualKind)}` : "") + ".");
   }
 
   log("");
