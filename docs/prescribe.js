@@ -350,6 +350,12 @@ const consumableHit = (c, lc, b) => b.pct > c.minPct && c.match(lc);
 // isn't one. Only call it out when it's materially beyond that.
 const LATENCY_MS = 100;
 
+// How many percentage points of priority-stat SHARE you must beat the field by before
+// we treat you as "already over-stacked" on it (suppress over-stacking recrafts + let
+// the "well itemized" strength stand). A small margin would fire on noise; 5pp is a
+// clear "you run meaningfully more of this stat than the field does" signal.
+const ABOVE_FIELD_MARGIN = 5;
+
 // Input/queue latency: a high GCD overshoot vs peers means a delay after EVERY
 // global before your next cast fires -- world latency, no spell-queue window, or
 // reaction time. Tiny per-GCD but it's every GCD, so it compounds over a fight.
@@ -679,8 +685,14 @@ export function strengths(d) {
   if (!heal && tp && tp.routing && (tp.routing.addNames || []).length && (tp.routing.top - tp.routing.you) < 5) {
     out.push(`TARGETING: you put about as much damage on the adds as the top parses (${P(tp.routing.you)} vs ${P(tp.routing.top)}) -- good target priority.`);
   }
-  // Itemization: your priority stat is at or above the field's.
-  if (my && my.statPct != null && field && field.statPct != null && my.statPct >= field.statPct) {
+  // Itemization: your priority stat is at or above the field's -- but only call it "well
+  // itemized" when there's no SURVIVING priority-stat gear lever (a swap, or a recraft we
+  // didn't suppress). "You can't be doing-well at a thing you still have a lever for" --
+  // the same gate PRIORITY/DOTS use. A recraft suppressed because you out-stack the field
+  // (aboveField) is NOT a lever, so it doesn't block the win (Rammrod: above the field on
+  // haste, over-stacking recrafts dropped -> this honestly reads "well itemized").
+  const priorityGearLever = d.gf && (((d.gf.swaps || []).length) || ((d.gf.restats || []).length && !d.aboveField));
+  if (my && my.statPct != null && field && field.statPct != null && my.statPct >= field.statPct && !priorityGearLever) {
     out.push(`GEAR: your ${d.priority} is at or above the field's (${P(my.statPct)} vs ${P(field.statPct)}) -- well itemized.`);
   }
   // Healer efficiency: overheal at or below the field's (not spilling).
@@ -1142,13 +1154,20 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // Trinkets are effect-based, so they get their own (async, Wowhead-resolved)
   // lever instead of a stat swap -- compute it before the sync concat below.
   const trinketRx = (field && my) ? await trinketLevers(field, my) : [];
+  // Do you ALREADY run more of the priority stat than the field (good players at your
+  // ilvl)? If your aggregate share beats theirs by a clear margin, you're past the point
+  // where "stack more" is a lever -- suppress the over-stacking recrafts (gearLevers) and
+  // let the "well itemized" strength stand instead of contradicting it. (Rammrod/Fury:
+  // 54% haste vs the field's 37% -- recrafting for +177 more haste was the wrong advice.)
+  const aboveField = (my && my.statPct != null && field && field.statPct != null)
+    && my.statPct >= field.statPct + ABOVE_FIELD_MARGIN;
   /** @type {Finding[]} */
   const rx = [
     ...executionLevers(execd, rot, peerGapPct, (execd && execd.activePct != null) ? execd.activePct : (you && you.activePct)),
     ...(field && my ? consumableLevers(field, my) : []),
     ...(field && my ? enchantLevers(field, my) : []),
     ...trinketRx,
-    ...gearLevers(gf, priority, field && field.statValue, field && field.gemDelta),
+    ...gearLevers(gf, priority, field && field.statValue, field && field.gemDelta, aboveField),
     ...(my ? statGapLever(gf, my, field, priority) : []),
     // Healer-specific efficiency levers (overhealing, mana) -- self-silent for a
     // damage run (runIsHealer false, overheal 0). Measured from your benchmark kill.
@@ -1166,6 +1185,6 @@ export async function run(log, name, server, region, className = "Monk", specNam
     topReport: topKill ? { code: topKill.code, fight: topKill.fight } : null,
     difficultyName: DIFFICULTY[difficulty] || `difficulty ${difficulty}`,
     medP, bestP, topParse, nBosses: ranks.length, gearAgeDays, hist, histBoss,
-    you, field, execd, rot, tp, gf, my, priority, rx, skipped,
+    you, field, execd, rot, tp, gf, my, priority, rx, skipped, aboveField,
   });
 }

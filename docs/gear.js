@@ -505,8 +505,13 @@ export function statValueScore(gain, statValue) {
 }
 
 // All gear levers as findings: priority-stat drop swaps, re-stats, embellishment.
-/** @param {any} gf @param {string} priority @param {StatValue|null} [statValue] @param {FieldDelta|null} [gemDelta] */
-export function gearLevers(gf, priority, statValue = null, gemDelta = null) {
+// `aboveField` = your AGGREGATE priority-stat share already exceeds the field's by a
+// margin (computed by the caller from secondaryStats). When true we suppress the
+// pure stat-reallocation RECRAFTS (restats) -- the field (good players at your ilvl)
+// runs LESS of the stat than you do, so "stack even more" isn't a real lever (stats
+// soft-cap / have breakpoints). Genuine ilvl SWAPS still show; only the recrafts drop.
+/** @param {any} gf @param {string} priority @param {StatValue|null} [statValue] @param {FieldDelta|null} [gemDelta] @param {boolean} [aboveField] */
+export function gearLevers(gf, priority, statValue = null, gemDelta = null, aboveField = false) {
   if (!gf) return [];
   const PRI = priority.toUpperCase();
   const out = [];
@@ -550,7 +555,9 @@ export function gearLevers(gf, priority, statValue = null, gemDelta = null) {
         mv ? "measured" : "est"));
     }
   }
-  for (const rs of gf.restats) {
+  // Suppress recrafts toward MORE priority stat when you already out-stack the field
+  // (aboveField): they'd push you further past what good players at your ilvl run.
+  if (!aboveField) for (const rs of gf.restats) {
     const gain = (rs.achievable || 0) - (rs.current || 0);
     const mv = statValueScore(gain, statValue);
     out.push(finding(DIM.GEAR, mv || statScore(gain),

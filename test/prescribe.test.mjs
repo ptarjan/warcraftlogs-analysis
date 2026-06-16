@@ -123,6 +123,19 @@ test("strengths: surfaces the checks you PASSED (silent levers), gated + metric-
   } finally { setRunMetric("dps"); }
 });
 
+test("strengths GEAR: 'well itemized' gates off when a priority gear lever still exists", () => {
+  const base = { priority: "haste", rot: {}, execd: {}, tp: {}, my: { statPct: 60 }, field: { statPct: 50 }, you: {} };
+  // At/above the field AND no gear lever -> the win fires.
+  assert.match(strengths({ ...base, gf: { swaps: [], restats: [] } }).join(" | "), /GEAR:.*well itemized/);
+  // A surviving priority SWAP means there's a lever -> don't claim "well itemized".
+  assert.doesNotMatch(strengths({ ...base, gf: { swaps: [{ slot: "Neck" }], restats: [] } }).join(" | "), /GEAR/);
+  // A recraft lever that was NOT suppressed (you're not over-stacked) -> also gates off.
+  assert.doesNotMatch(strengths({ ...base, gf: { swaps: [], restats: [{ slot: "Wrist" }] }, aboveField: false }).join(" | "), /GEAR/);
+  // SAME recraft, but suppressed because you out-stack the field (aboveField) -> NOT a
+  // lever, so "well itemized" honestly stands (the Rammrod/Fury case).
+  assert.match(strengths({ ...base, gf: { swaps: [], restats: [{ slot: "Wrist" }] }, aboveField: true }).join(" | "), /GEAR:.*well itemized/);
+});
+
 test("residualText: playstyle cite points at 'the EMPOWERMENT item' only when that lever fired", () => {
   // You trail on empowerment enough to cite (gap >= 12pp, fieldEmp >= 5%) BUT the
   // EMPOWERMENT lever's stricter gate (fieldEmp >= 20%, per-cast >= 1%) didn't fire --
@@ -190,6 +203,22 @@ test("gearLevers: a MEASURED-zero priority stat suppresses the re-itemize advice
   // A measurable benefit (pct rounds to >=1%) still produces the re-itemize line.
   const real = gearLevers({ swaps, restats: [] }, "haste", { perRating: 0.02, pct: 2, nHave: 5, nNot: 5 });
   assert.ok(real.some((x) => /re-itemize/.test(x.text)), "measured 2% -> re-itemize fires");
+});
+
+test("gearLevers: aboveField suppresses over-stacking RECRAFTS but keeps genuine swaps", () => {
+  // Rammrod/Fury: 54% haste vs the field's 37% -- already past the good players at his
+  // ilvl. Recrafting individual items for EVEN MORE haste is the wrong advice (haste
+  // soft-caps; the field stacks less). A real item SWAP still shows; only recrafts drop.
+  const sw = (slot, gain) => ({ slot, gain, fromId: 1, fromName: `${slot}-old`, toId: 2, toName: `${slot}-new` });
+  const rs = (slot, cur, ach) => ({ slot, itemId: 9, itemName: `${slot}-item`, current: cur, achievable: ach });
+  const gf = { swaps: [sw("Neck", 150)], restats: [rs("Wrist", 100, 277), rs("Belt", 200, 225)] };
+  // Not above the field -> recrafts DO show (the normal case is unchanged).
+  const normal = gearLevers(gf, "haste", null, null, false);
+  assert.ok(normal.some((x) => /recraft to 277/.test(x.text)), "normal: recraft advice fires");
+  // Above the field -> recrafts suppressed, but the genuine swap survives.
+  const above = gearLevers(gf, "haste", null, null, true);
+  assert.ok(!above.some((x) => /recraft/.test(x.text)), "aboveField: no over-stacking recraft advice");
+  assert.ok(above.some((x) => /via Neck|replace/.test(x.text)), "aboveField: a genuine item swap still shows");
 });
 
 test("dedupeUniqueSwaps: a unique ring can't be recommended for both ring slots", () => {
