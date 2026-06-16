@@ -8,7 +8,27 @@ import { installLocalStorage, mockFetch } from "./helpers.mjs";
 process.env.WCL_CLIENT_ID = "x";
 process.env.WCL_CLIENT_SECRET = "y";
 installLocalStorage();
-const { bestRank, isHealer, metricForSpec, setRunMetric, runMetric, metricUnit, runIsHealer, eventTable, DPS, collectUpTo, detectContext, isAtonement, alwaysAtonement, atonementIfDamaging, FISTWEAVE_DAMAGE_SHARE } = await import("../docs/core.js");
+const { bestRank, isHealer, metricForSpec, setRunMetric, runMetric, metricUnit, runIsHealer, eventTable, DPS, collectUpTo, detectContext, isAtonement, alwaysAtonement, atonementIfDamaging, FISTWEAVE_DAMAGE_SHARE, ordinal } = await import("../docs/core.js");
+
+test("ordinal: correct English suffix (no more '62th'/'91th' percentile)", () => {
+  // The bug this guards: prescribe printed `${p}th` blindly -> "62th percentile".
+  assert.equal(ordinal(1), "1st");
+  assert.equal(ordinal(2), "2nd");
+  assert.equal(ordinal(3), "3rd");
+  assert.equal(ordinal(4), "4th");
+  assert.equal(ordinal(22), "22nd");
+  assert.equal(ordinal(33), "33rd");
+  assert.equal(ordinal(62), "62nd");
+  assert.equal(ordinal(91), "91st");
+  assert.equal(ordinal(92), "92nd");
+  assert.equal(ordinal(100), "100th");
+  // 11/12/13 are the irregular ones that stay "th".
+  assert.equal(ordinal(11), "11th");
+  assert.equal(ordinal(12), "12th");
+  assert.equal(ordinal(13), "13th");
+  assert.equal(ordinal(111), "111th");
+  assert.equal(ordinal(13.4), "13th", "rounds before suffixing");
+});
 
 test("collectUpTo: stops once n succeed; only fetches the buffer to backfill failures", async () => {
   // 13 candidates, all succeed -> reach n=10 in two waves of 5; the 3-candidate

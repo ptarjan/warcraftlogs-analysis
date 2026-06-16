@@ -15,6 +15,19 @@ export const padL = (s, n) => String(s).padStart(n);
 export const padR = (s, n) => String(s).padEnd(n);
 export const slug = (s) => s.toLowerCase().replaceAll(" ", "-");
 
+// English ordinal suffix for a whole number: 1->"1st", 2->"2nd", 3->"3rd",
+// 62->"62nd", 91->"91st", but 11/12/13 -> "th". The single definition for the
+// "${p}th percentile" sites that blindly appended "th" (printing "62th",
+// "91th", "33th"). Use `ordinal(p)` instead of `${p}th`.
+export function ordinal(n) {
+  const v = Math.round(Number(n));
+  if (!Number.isFinite(v)) return String(n);
+  const a = Math.abs(v) % 100;
+  const suffix = (a >= 11 && a <= 13) ? "th"
+    : ["th", "st", "nd", "rd"][Math.abs(v) % 10] || "th";
+  return `${v}${suffix}`;
+}
+
 // Top-n [key, count] entries of a Map counter, highest count first. The single
 // definition for the "most popular item/gem/trinket the field runs" pattern that was
 // re-inlined (`[...m.entries()].sort((a,b)=>b[1]-a[1]).slice(0,n)`) across modules.

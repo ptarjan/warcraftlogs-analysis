@@ -150,6 +150,20 @@ test("residualText: playstyle cite points at 'the EMPOWERMENT item' only when th
   assert.match(withItem, /see the EMPOWERMENT item/);
 });
 
+test("residualText: playstyle doesn't say 'NOT press faster' when a PRESS FASTER lever is in the list", () => {
+  // Possumz: item #1 was "PRESS FASTER" yet the remainder flatly said 'NOT "press
+  // faster"' -- a self-contradiction in the same list. With a PRESS_FASTER finding
+  // present, soften to "beyond the idle gap above", not a flat denial.
+  const d = { medP: 60 };
+  const rot = { proc: null, usage: { under: [] }, talent: null };
+  const withPress = residualText("playstyle", 43, d, rot, [{ kind: KIND.PRESS_FASTER, text: "PRESS FASTER ..." }]);
+  assert.doesNotMatch(withPress, /NOT "press faster"/, "no flat contradiction of the #1 PRESS FASTER item");
+  assert.match(withPress, /beyond the idle gap/);
+  // No press-faster lever in the list -> keep the original blunt wording.
+  const noPress = residualText("playstyle", 43, d, rot, []);
+  assert.match(noPress, /NOT "press faster"/);
+});
+
 test("isOffMetaBuild: true only when a HERO TREE mismatch lever is present", () => {
   // The field runs a hero tree you don't -> the rotation can't be compared, so the
   // playstyle remainder must own up to the off-meta build (Rezaa: Colossus vs Slayer).

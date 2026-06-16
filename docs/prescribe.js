@@ -7,7 +7,7 @@
 // need its own peer aggregates, then sorts + splits + renders.
 import {
   ENCHANTABLE_SLOTS, DIFFICULTY, characterZone, characterEncounter, playerMetrics,
-  ilvlPeers, PEER_SAMPLE, BOSS_FANOUT, secondaryStats, buffUptimes, bossDebuffs, median, f, detectPriority, mapLimit, collectUpTo, topEntry, bestRank, bestKill,
+  ilvlPeers, PEER_SAMPLE, BOSS_FANOUT, secondaryStats, buffUptimes, bossDebuffs, median, f, ordinal, detectPriority, mapLimit, collectUpTo, topEntry, bestRank, bestKill,
   DPS, INFO, finding, KIND, DIM, fieldDelta, metricUnit, throughputWord, runIsHealer, runIsSupport, healingBreakdown, manaStats,
 } from "./core.js";
 import { timelineFindings } from "./timeline.js";
@@ -751,7 +751,7 @@ export function residualText(kind, r, d, rot, rx) {
   if (kind === "elite") {
     // Already top-decile: the remainder is the distance to the BEST parses at your ilvl,
     // not a setup/rotation you're getting wrong. Don't manufacture a "playstyle" problem.
-    return `GAP TO TOP PARSES (~${r}%): you already parse ${d.medP}th percentile -- the "field" here is the BEST players at your item level, and this is the distance to them. The concrete levers above are small because there isn't much on your character to fix; the rest is raid comp + executing on optimal pulls (lust/cooldown windows, perfect target swaps), not gear or a rotation you're getting wrong.`;
+    return `GAP TO TOP PARSES (~${r}%): you already parse ${ordinal(d.medP)} percentile -- the "field" here is the BEST players at your item level, and this is the distance to them. The concrete levers above are small because there isn't much on your character to fix; the rest is raid comp + executing on optimal pulls (lust/cooldown windows, perfect target swaps), not gear or a rotation you're getting wrong.`;
   }
   if (kind === "healer") {
     // HPS is bounded by the damage the raid TAKES + your assignment -- a big HPS remainder
@@ -796,9 +796,18 @@ export function residualText(kind, r, d, rot, rx) {
       : ` The cooldown/ability gaps we could measure are listed above; the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps) we can't pin to one ability.`;
     // Off-meta build: no same-hero peers to compare against, so a big part of the
     // remainder is the build itself (HERO TREE + TALENTS items), not "how you play".
+    // Don't say "NOT press faster" when a PRESS FASTER lever is ALREADY in the list
+    // above (the idle we COULD measure) -- the two collide and read as a contradiction.
+    // In that case the remainder is the part BEYOND that measured idle: still per-cast,
+    // not more idling. Phrase it so the two don't fight.
+    const hasPressItem = (rx || []).some((x) => x.kind === KIND.PRESS_FASTER);
+    const notGear = `it's NOT gear (a sim would value your gear swaps at a few %)`;
+    const playstyleBody = hasPressItem
+      ? `${notGear} and -- beyond the idle gap listed above -- NOT just pressing faster either; it's how you play the same gear the field plays`
+      : `${notGear} and NOT "press faster" -- it's how you play the same gear the field plays`;
     return isOffMetaBuild(rx)
       ? `OFF-META BUILD + PLAYSTYLE (~${r}%): the biggest chunk, and a large part is your BUILD -- you run a hero tree (and talents) the field doesn't (see the HERO TREE + TALENTS items), so we can't compare your rotation to theirs button-for-button and a sim would value the build swap well above the small estimate above. Switch to the meta build and re-run first.${cite}`
-      : `PLAYSTYLE (~${r}%): the biggest chunk, and it's NOT gear (a sim would value your gear swaps at a few %) and NOT "press faster" -- it's how you play the same gear the field plays.${cite}`;
+      : `PLAYSTYLE (~${r}%): the biggest chunk, and ${playstyleBody}.${cite}`;
   }
   if (kind === "underpress") {
     return `THE REMAINDER (~${r}%): not a setup item -- it's GCD uptime and hitting your priority on more pulls (see the measured cast/idle gaps above). That's where the rest of your gap lives.`;
@@ -819,7 +828,7 @@ function renderHeader(log, d, you, field, peerGap, topGap) {
   const bestBoss = d.topReport
     ? wclReport(d.topReport.code, d.topReport.fight, d.topParse.encounter.name) : d.topParse.encounter.name;
   const gearBossLink = wclReport(d.code, d.fight, d.gearBoss.encounter.name);
-  if (d.medP != null) log(`You parse ${d.medP}th percentile on ${d.difficultyName} (median of the ${d.nBosses} current-tier ${d.difficultyName} boss${d.nBosses === 1 ? "" : "es"} you've killed; best ${d.bestP}th on ${bestBoss}).`);
+  if (d.medP != null) log(`You parse ${ordinal(d.medP)} percentile on ${d.difficultyName} (median of the ${d.nBosses} current-tier ${d.difficultyName} boss${d.nBosses === 1 ? "" : "es"} you've killed; best ${ordinal(d.bestP)} on ${bestBoss}).`);
   if (d.skipped && d.skipped.length) {
     log(`NOTE: partial list -- couldn't load ${d.skipped.join(", ")} (likely the WCL rate limit). This isn't the full picture; re-run when the budget resets for the rest.`);
   }
@@ -836,7 +845,7 @@ function renderHeader(log, d, you, field, peerGap, topGap) {
   const tail = ahead
     ? ". You're already ahead of your item-level bracket -- the top parses are the target."
     : isEliteParse(d.medP)
-    ? ` -- but the field here is the TOP parses at your item level, and at your ${d.medP}th percentile most of that gap is raid comp + execution on optimal pulls, not a setup you're getting wrong. The fixes below are the concrete part you control.`
+    ? ` -- but the field here is the TOP parses at your item level, and at your ${ordinal(d.medP)} percentile most of that gap is raid comp + execution on optimal pulls, not a setup you're getting wrong. The fixes below are the concrete part you control.`
     : runIsHealer()
     ? ` -- but ${metricUnit()} is capped by the damage your raid takes and your healing assignment, so most of that gap is the encounter and healer comp, not ${metricUnit()} you can simply add. The fixes below are the concrete part you control.`
     : runIsSupport()
@@ -855,9 +864,9 @@ function renderHeader(log, d, you, field, peerGap, topGap) {
     // with NO trend is genuine variance. Don't say "you vary a lot" AND "you're improving".
     let msg = `Consistency: across your ${h.n} ${d.histBoss} kills you've parsed ${h.lo}-${h.hi}%ile`;
     if (h.trend === "up")
-      msg += ` and you're trending UP -- recent kills (~${h.newP}th) beat your earlier ones (~${h.oldP}th). The range is mostly that climb; whatever you changed, keep it.`;
+      msg += ` and you're trending UP -- recent kills (~${ordinal(h.newP)}) beat your earlier ones (~${ordinal(h.oldP)}). The range is mostly that climb; whatever you changed, keep it.`;
     else if (h.trend === "down")
-      msg += ` and trending DOWN -- recent kills (~${h.newP}th) sit below your earlier ones (~${h.oldP}th); worth a look at what changed.`;
+      msg += ` and trending DOWN -- recent kills (~${ordinal(h.newP)}) sit below your earlier ones (~${ordinal(h.oldP)}); worth a look at what changed.`;
     else if (h.consistent)
       msg += ` -- a tight band, so you play it about the same every time (the deep-dive above is typical).`;
     else if (h.varies)
