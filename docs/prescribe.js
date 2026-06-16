@@ -24,7 +24,7 @@ async function bestIlvlKill(name, server, region, encounterId, difficulty, specN
   const er = await characterEncounter(name, server, region, encounterId, difficulty);
   const best = bestRank(er && er.ranks, specName);
   if (!best) return null;
-  return [best.report.code, best.report.fightID, best.bracketData, best.startTime || 0, best.rankPercent];
+  return [best.report.code, best.report.fightID, best.bracketData, best.startTime || 0, best.rankPercent, best.duration || 0];
 }
 
 // The kill to MEASURE the DPS gap against the field: the player's MEDIAN-parse kill
@@ -38,7 +38,21 @@ export function pickBenchmarkKill(kills, band = 1) {
   const maxIl = Math.max(...kills.map((k) => k.ilvl || 0));
   const inBand = kills.filter((k) => (k.ilvl || 0) >= maxIl - band);
   if (!inBand.length) return null;
-  const sorted = [...inBand].sort((a, b) => (a.rankPercent || 0) - (b.rankPercent || 0));
+  // Drop anomalously-SHORT kills before picking the median-parse one. On a much-shorter
+  // -than-typical kill the field bursts disproportionately (all cooldowns up, no sustain),
+  // so the raw-DPS gap is inflated and DIVERGES from the parse %ile -- a median-parse kill
+  // that happens to be a 106s burst (vs your ~300s typical) reads "106% behind" while your
+  // representative gap is ~80%. Drop only TRULY anomalous kills (< 40% of your median in-
+  // band duration) so the blast radius is tiny; fall back to all in-band kills (no-op) if
+  // that leaves too few, or if durations are missing.
+  const durs = inBand.map((k) => k.dur || 0).filter((d) => d > 0);
+  let pool = inBand;
+  if (durs.length >= 3) {
+    const medDur = median(durs);
+    const normal = inBand.filter((k) => (k.dur || 0) >= medDur * 0.4);
+    if (normal.length >= Math.ceil(inBand.length / 2)) pool = normal;
+  }
+  const sorted = [...pool].sort((a, b) => (a.rankPercent || 0) - (b.rankPercent || 0));
   return sorted[Math.floor((sorted.length - 1) / 2)];
 }
 
@@ -1099,7 +1113,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const kills = [];
   for (const r of ranks) {
     const bk = await bestIlvlKill(name, server, region, r.encounter.id, difficulty, specName);
-    if (bk) kills.push({ ilvl: bk[2] || 0, boss: r, code: bk[0], fight: bk[1], startTime: bk[3] || 0, rankPercent: bk[4] });
+    if (bk) kills.push({ ilvl: bk[2] || 0, boss: r, code: bk[0], fight: bk[1], startTime: bk[3] || 0, rankPercent: bk[4], dur: bk[5] || 0 });
   }
   const { ilvl: curIlvl, boss: gearBoss, code, fight } = pickBenchmarkKill(kills);
   // Parse HISTORY for the consistency + improvement signals -- read from your MOST-

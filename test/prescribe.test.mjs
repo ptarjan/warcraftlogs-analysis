@@ -191,6 +191,30 @@ test("pickBenchmarkKill: median-parse kill, not an outlier survival kill", () =>
   assert.equal(banded.boss, "A");
   assert.equal(pickBenchmarkKill([]), null);
 });
+
+test("pickBenchmarkKill: skips an anomalously-SHORT median-parse kill (inflated raw gap)", () => {
+  // Nohpalli's real case: the median-parse kill is a 106s burst fight where the field
+  // bursts disproportionately, so its raw-DPS gap (106%) overstates the player's typical
+  // (~80%). Drop the short kill and pick a representative (longer) median-parse one.
+  const kills = [
+    { ilvl: 287, rankPercent: 85, dur: 300, boss: "A" },
+    { ilvl: 287, rankPercent: 70, dur: 320, boss: "B" },
+    { ilvl: 287, rankPercent: 53, dur: 100, boss: "ShortBurst" },  // median parse AND short
+    { ilvl: 287, rankPercent: 40, dur: 310, boss: "D" },
+    { ilvl: 287, rankPercent: 28, dur: 290, boss: "E" },
+  ];
+  const pick = pickBenchmarkKill(kills);
+  assert.notEqual(pick.boss, "ShortBurst", "the short-burst kill is excluded as the benchmark");
+  assert.equal(pick.boss, "D", "picks the median-parse kill among normal-duration kills");
+  // No-op guards: with <3 durations, OR when no kill is anomalously short, behavior is unchanged.
+  const noDur = [
+    { ilvl: 287, rankPercent: 70, boss: "X" }, { ilvl: 287, rankPercent: 50, boss: "Y" },
+    { ilvl: 287, rankPercent: 30, boss: "Z" },
+  ];
+  assert.equal(pickBenchmarkKill(noDur).boss, "Y", "no durations -> plain median-parse");
+  const evenDur = kills.map((k) => ({ ...k, dur: 300 }));   // all same duration -> nothing excluded
+  assert.equal(pickBenchmarkKill(evenDur).boss, "ShortBurst", "no short outlier -> median-parse unchanged");
+});
 const { embellishmentRx, gemLever, statScore, gearLevers, dedupeUniqueSwaps } = await import("../docs/gear.js");          // gear-domain lever
 
 test("gearLevers: many same-stat swaps collapse into ONE legible re-itemize line", () => {
