@@ -5,14 +5,18 @@ installLocalStorage();
 const { talentDiff, buildTalentIndex, talentLabel, looksLikeDpsTalent, heroSwitch, talentDamageShare, talentLevers } = await import("../docs/talents.js");
 const { setRunMetric } = await import("../docs/core.js");
 
-test("talentLevers: TALENTS lever uses the run-metric word (healing talent on a healer, not 'damage')", () => {
+test("talentLevers: TALENTS lever names the talent NEUTRALLY -- never miscalls a damage ability a 'healing talent'", () => {
+  // A recommended pick is whatever the field's meta build runs that you don't; it
+  // isn't necessarily a healing/damage ability (Hammer of Wrath is a DAMAGE spell a
+  // Holy Paladin takes). So neither metric pins a damage/healing classifier onto it.
   const tf = { boss: "Imperator", hero: null,
     missing: [{ name: "Empty the Cellar", spellId: 1, dps: true, adopt: 0.9, value: null }] };
-  assert.match(talentLevers(tf)[0].text, /take the damage talent/, "DPS run -> 'damage talent'");
+  assert.match(talentLevers(tf)[0].text, /take the talent /, "DPS run -> neutral 'the talent'");
+  assert.doesNotMatch(talentLevers(tf)[0].text, /healing talent/, "DPS run never says 'healing talent'");
   try {
     setRunMetric("hps");
-    assert.match(talentLevers(tf)[0].text, /take the healing talent/, "healer run -> 'healing talent', not 'damage'");
-    assert.doesNotMatch(talentLevers(tf)[0].text, /damage talent/);
+    assert.match(talentLevers(tf)[0].text, /take the talent /, "healer run -> neutral 'the talent'");
+    assert.doesNotMatch(talentLevers(tf)[0].text, /damage talent/, "healer run never says 'damage talent'");
   } finally { setRunMetric("dps"); }
 });
 

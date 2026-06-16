@@ -325,10 +325,15 @@ export function talentLevers(tf) {
     const allMeasured = measured.length === top.length;
     const pct = allMeasured ? Math.max(1, Math.round(measured.reduce((a, b) => a + b, 0))) : Math.min(2 + top.length, 6);
     const cite = allMeasured
-      ? ` (measured: ${top.map((t) => `${t.name} is ${f(t.value, 1)}% of the field's damage`).join(", ")})`
+      ? ` (measured: ${top.map((t) => `${t.name} is ${f(t.value, 1)}% of the field's ${throughputWord()}`).join(", ")})`
       : "";
+    // Just "the talent", NOT "the ${throughputWord()} talent": a recommended pick is
+    // whatever the field's META build runs that you don't -- it isn't necessarily a
+    // healing/damage ability. Calling Hammer of Wrath (a DAMAGE spell) "the healing
+    // talent" on a Holy Paladin reads as the tool not knowing the class. The metric is
+    // already clear from context, and "swap to the meta build" carries the why.
     out.push(finding(DIM.ROTATION, DPS(pct),
-      `TALENTS: peers on ${tf.boss} take the ${throughputWord()} talent${top.length > 1 ? "s" : ""} ${top.map((t) => `${wowheadSpell(t.spellId, t.name)} (${f(100 * t.adopt, 0)}%)`).join(", ")} ` +
+      `TALENTS: peers on ${tf.boss} take the talent${top.length > 1 ? "s" : ""} ${top.map((t) => `${wowheadSpell(t.spellId, t.name)} (${f(100 * t.adopt, 0)}%)`).join(", ")} ` +
       `that you don't -- swap to the meta build for this content (confirm in a sim/guide).${cite}`,
       allMeasured ? "measured" : "est", KIND.TALENTS));
   }
