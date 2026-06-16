@@ -15,13 +15,17 @@
 import { spellTooltip } from "./wcl.js";
 import {
   reportFights, reportDeaths, reportRoster, reportCore, encounterKillTimes,
-  median, f, finding, DIM, mapLimit, DIFFICULTY,
+  median, f, finding, DIM, mapLimit, DIFFICULTY, isHealer,
 } from "./core.js";
 import { wowheadSpell, wclReport } from "./links.js";
 
 // --- tunables (class/encounter-agnostic; no hard-coded names or enrage timers) -- //
 const ANALYZE_WIPES = 12;     // most-recent wipes to deep-analyze (current strat/roster)
 const DEATH_WINDOW_MS = 15000; // deaths within this of a pull's end = the cascade that wiped it
+// Tank specs (role classification, like core's HEALER_SPECS) -- none is also a DPS
+// spec, so a name match is unambiguous. Used to keep tanks/healers out of the DPS
+// laggard call-out (they do less damage BY ROLE, not by underperforming).
+const TANK_SPECS = new Set(["Blood", "Vengeance", "Guardian", "Brewmaster", "Protection"]);
 const RECUR_MIN = 2;          // never call out something seen in only ONE pull (noise)
 const MAX_FINDINGS = 5;       // a FEW actionable items, biggest blocker first
 const LAGGARD_FRAC = 0.6;     // a "low contributor" does < this fraction of the raid median
@@ -271,8 +275,16 @@ async function dpsCheck(result) {
   if (deficit < 5) return;
   if (result.hasEarlyCause) result.notes.push(
     `Damage is also ~${Math.round(deficit)}% light — but fix the early deaths first, then re-check the wall.`);
-  // Bottom contributors on the deepest pull, relative to the raid median (named).
-  const dpsList = entries.map((e) => ({ name: e.name, cls: e.type, dps: (e.total || 0) / durSec }))
+  // Bottom contributors on the deepest pull, vs the raid median -- but only among the
+  // DPS. A healer (a Preservation Evoker at 2,802 vs a DPS's 30M) and a tank (defensive
+  // GCDs, ~half a DPS's output) do less damage BY ROLE, so naming them "low DPS, check
+  // your rotation" is bad advice -- and they'd also deflate the median the DPS are
+  // judged against. Role from the damage row's icon ("Class-Spec"); class alone can't
+  // tell a Holy from a Ret Paladin. (Tank specs are unambiguous -- none is also a DPS.)
+  const specOf = (e) => String(e.icon || "").split("-")[1] || "";
+  const isNonDps = (e) => { const s = specOf(e); return isHealer(s) || TANK_SPECS.has(s); };
+  const dpsList = entries.filter((e) => !isNonDps(e))
+    .map((e) => ({ name: e.name, cls: e.type, dps: (e.total || 0) / durSec }))
     .filter((x) => x.dps > 0).sort((a, b) => a.dps - b.dps);
   const med = median(dpsList.map((x) => x.dps));
   const laggards = dpsList.filter((x) => x.dps < med * LAGGARD_FRAC).slice(0, 3)

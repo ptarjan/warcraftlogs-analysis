@@ -52,12 +52,16 @@ const ROSTER = [
   { id: 25, name: "NewGuy", type: "Player", subType: "Warrior" },
 ];
 
-// DamageDone table for the DPS check: 5 players, one clear laggard (LowDps).
+// DamageDone table for the DPS check: 5 DPS (one clear laggard, LowDps) + a HEALER
+// (Healy, a Pres Evoker) who does near-zero damage -- the laggard call-out must NOT
+// name the healer (their job is healing; low damage is correct play).
 const coreData = () => ({ reportData: { report: {
   dmg: { data: { totalTime: 300000, entries: [
     { name: "Bob", type: "Monk", total: 400e6 }, { name: "Sue", type: "Priest", total: 380e6 },
     { name: "Carl", type: "Mage", total: 360e6 }, { name: "Dot", type: "Druid", total: 350e6 },
     { name: "LowDps", type: "Warrior", total: 100e6 },
+    { name: "Healy", type: "Evoker", icon: "Evoker-Preservation", total: 2802 },
+    { name: "Tanky", type: "DemonHunter", icon: "DemonHunter-Vengeance", total: 120e6 },
   ] } },
   casts: { data: { totalTime: 300000, entries: [] } },
   combatant: { data: [] }, fightWin: [{ startTime: 0, endTime: 300000 }],
@@ -148,7 +152,8 @@ test("progressionFindings: surfaces a DPS check when the raid is damage-light an
   assert.ok(r.dps && r.dps.deficit > 5, "a real DPS deficit is computed from boss-HP est vs field kill time");
   const dpsFinding = r.findings.find((f) => f.dim === "DPSCheck");
   assert.ok(dpsFinding, "a DPSCheck finding is present");
-  assert.match(dpsFinding.text, /LowDps/, "names the lowest contributor");
+  assert.match(dpsFinding.text, /LowDps/, "names the lowest DPS contributor");
+  assert.doesNotMatch(dpsFinding.text, /Healy|Tanky/, "does NOT name the healer or tank as a low DPS contributor (they do less BY ROLE)");
 });
 
 test("progressionFindings: findings are sorted biggest-blocker-first and capped", async () => {
