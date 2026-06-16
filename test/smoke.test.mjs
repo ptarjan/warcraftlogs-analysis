@@ -38,17 +38,20 @@ test("modules import under Node and expose their entry points", async () => {
   assert.equal(typeof prescribe.run, "function");
 });
 
-test("overview.isUnrepresentativeKill: flags a death/ramp-killed pull so it isn't compared head-to-head", async () => {
+test("overview.isUnrepresentativeKill: flags the CONTRADICTION (decent %ile + tiny output), not just a low kill", async () => {
   const { isUnrepresentativeKill } = await import("../docs/overview.js");
-  // The real bug (Burlis): a 5,045-dps / 38%-active Crown kill shown as "52%ile vs
-  // 190k peers". Flag when active is far below peers OR DPS is <30% of theirs.
-  assert.equal(isUnrepresentativeKill({ dps: 5045, activePct: 38 }, 96, 190738), true, "death: low active");
-  assert.equal(isUnrepresentativeKill({ dps: 18013, activePct: 90 }, 99, 162513), true, "ramp-kill: <30% of peer dps");
-  // A genuinely-behind-but-real kill (Dysphoric ~46% of peers, ~99% active) is NOT flagged.
-  assert.equal(isUnrepresentativeKill({ dps: 53000, activePct: 99 }, 99, 114700), false, "real bad kill still shown");
+  // The real bug (Burlis): a 5,045-dps / 38%-active Crown kill WCL still scored 52%ile,
+  // and an 18k-dps 90%-active Imperator scored 94%ile -- contradictions vs 190k/162k peers.
+  assert.equal(isUnrepresentativeKill({ dps: 5045, activePct: 38 }, 96, 190738, 52), true, "death but 52%ile");
+  assert.equal(isUnrepresentativeKill({ dps: 18013, activePct: 90 }, 99, 162513, 94), true, "<30% of peers but 94%ile");
+  // FALSE-POSITIVE GUARD (Lisalisa): low output + LOW %ile is a consistent bad kill, SHOW it.
+  assert.equal(isUnrepresentativeKill({ dps: 58480, activePct: 66 }, 100, 200000, 6), false, "66% active but only 6%ile -> real bad kill");
+  assert.equal(isUnrepresentativeKill({ dps: 50274, activePct: 99 }, 100, 167000, 11), false, "damage-bound healer, 11%ile -> shown");
+  // A genuinely-behind-but-real kill (~46% of peers, 99% active, mid %ile) is NOT flagged.
+  assert.equal(isUnrepresentativeKill({ dps: 53000, activePct: 99 }, 99, 114700, 45), false, "real bad kill still shown");
   // A normal/good kill is not flagged.
-  assert.equal(isUnrepresentativeKill({ dps: 120000, activePct: 99 }, 99, 130000), false);
-  // Defensive: no peer data -> can't judge -> not flagged.
-  assert.equal(isUnrepresentativeKill({ dps: 5045, activePct: 38 }, null, 0), false);
-  assert.equal(isUnrepresentativeKill(null, 99, 100000), false);
+  assert.equal(isUnrepresentativeKill({ dps: 120000, activePct: 99 }, 99, 130000, 80), false);
+  // Defensive: no %ile / no peers -> can't judge -> not flagged.
+  assert.equal(isUnrepresentativeKill({ dps: 5045, activePct: 38 }, 96, 190738, null), false);
+  assert.equal(isUnrepresentativeKill(null, 99, 100000, 90), false);
 });

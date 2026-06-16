@@ -6,12 +6,14 @@ import {
   ilvlPeers, PEER_SAMPLE, metricUnit, recentKills, runIsHealer, mapLimit, BOSS_FANOUT,
 } from "./core.js";
 
-// A best-ilvl kill that does NOT represent the player: active far below peers, or a
-// tiny fraction (<30%) of their DPS -- a death / late-join / ramp-killed pull. A
-// head-to-head against full-kill peers then reads as a contradiction ("5k dps =
-// 52%ile vs 190k peers"), so the overview skips the comparison for such a kill.
-export const isUnrepresentativeKill = (you, pmedActive, pmedDps) =>
-  !!you && (
+// The bug is a CONTRADICTION, not just a low kill: WCL brackets the pull at a DECENT
+// %ile (so it survives kill-selection) yet your raw output is a tiny fraction of peers
+// / you were barely active -- a death/late-join/short pull WCL scored leniently ("5k
+// dps = 52%ile vs 190k peers"). A LOW-output + LOW-%ile kill is just a consistent bad
+// kill (a 6%ile healer at 58k hps, a 25%ile DPS) -- SHOW it. So gate on rankPercent
+// >= 40 (the kill claims you're OK) AND the output disagrees. Metric-agnostic.
+export const isUnrepresentativeKill = (you, pmedActive, pmedDps, rankPercent) =>
+  !!you && rankPercent != null && rankPercent >= 40 && (
     (pmedActive != null && you.activePct != null && you.activePct < pmedActive - 25)
     || (pmedDps > 0 && you.dps < pmedDps * 0.3));
 
@@ -66,7 +68,7 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
   // parse% in the summary above is your real standing. Gear/trinket info still shows
   // (it's read off your character, valid regardless of how that pull went).
   const pmedActive = pmed("activePct"), pmedDps = pmed("dps");
-  const outlier = peers.length && isUnrepresentativeKill(you, pmedActive, pmedDps);
+  const outlier = peers.length && isUnrepresentativeKill(you, pmedActive, pmedDps, best.rankPercent);
   log("");
   log(`--- ${encounter.name} | your best-ilvl kill: ilvl ${ilvl}, ${f(you.dur, 0)}s, ${f(you.dps, 0)} ${metricUnit().toLowerCase()}, ${f(best.rankPercent, 0)}%ile ---`);
   if (!peers.length) {
@@ -74,7 +76,7 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
     return;
   }
   if (outlier) {
-    log(`  NOTE: this current-ilvl kill isn't representative -- ${f(you.dps, 0)} ${metricUnit().toLowerCase()} at ${f(you.activePct, 0)}% active vs peers' ${f(pmedActive, 0)}% (a death / late-join / ramp-killed pull). Your real standing on this boss is the parse%ile in the summary above; skipping the head-to-head.`);
+    log(`  NOTE: this current-ilvl kill isn't representative -- ${f(you.dps, 0)} ${metricUnit().toLowerCase()} at ${f(you.activePct, 0)}% active vs peers' ${f(pmedActive, 0)}%, yet WCL scored it ${f(best.rankPercent, 0)}%ile (a death / late-join / short pull it bracketed leniently). Your real standing is the parse%ile in the summary above; skipping the head-to-head.`);
   } else {
     log(`  vs ${peers.length} ilvl-matched peers:`);
     log(`    ${padR(metricUnit() + ":", 13)} you ${padL(f(you.dps, 0), 9)}   peer med ${padL(f(pmed("dps"), 0), 9)}`);
