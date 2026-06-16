@@ -6,6 +6,15 @@ import {
   ilvlPeers, PEER_SAMPLE, metricUnit, recentKills, runIsHealer, mapLimit, BOSS_FANOUT,
 } from "./core.js";
 
+// A best-ilvl kill that does NOT represent the player: active far below peers, or a
+// tiny fraction (<30%) of their DPS -- a death / late-join / ramp-killed pull. A
+// head-to-head against full-kill peers then reads as a contradiction ("5k dps =
+// 52%ile vs 190k peers"), so the overview skips the comparison for such a kill.
+export const isUnrepresentativeKill = (you, pmedActive, pmedDps) =>
+  !!you && (
+    (pmedActive != null && you.activePct != null && you.activePct < pmedActive - 25)
+    || (pmedDps > 0 && you.dps < pmedDps * 0.3));
+
 export async function overview(log, name, server, region, difficulty) {
   const c = await characterZone(name, server, region, difficulty);
   const zr = c.zoneRankings;
@@ -45,27 +54,40 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
   const code = best.report.code, fight = best.report.fightID, ilvl = best.bracketData;
   const you = await playerMetrics(code, fight, name, specName, className);
   if (!you) return;
-  log("");
-  log(`--- ${encounter.name} | your best-ilvl kill: ilvl ${ilvl}, ${f(you.dur, 0)}s, ${f(you.dps, 0)} ${metricUnit().toLowerCase()}, ${f(best.rankPercent, 0)}%ile ---`);
 
   const peers = await ilvlPeerMetrics(name, server, region, encounter, difficulty, className, specName);
+  const pmed = (key) => median(peers.map((p) => p[key]).filter((v) => v !== null && v !== undefined));
+  // The best-ILVL kill is the most-recent at your top item level -- which can be a
+  // NON-REPRESENTATIVE pull: a death / late-join / ramp-killed fight where you did a
+  // tiny fraction of your real output (a Shadow Priest's "5,045 dps, 38% active" while
+  // peers do 190k). WCL still brackets it at a middling %ile, so a head-to-head reads
+  // as a flat contradiction ("5k dps = 52%ile vs 190k peers"). Detect it (active far
+  // below peers, or <30% of their DPS) and SKIP the misleading comparison -- the boss
+  // parse% in the summary above is your real standing. Gear/trinket info still shows
+  // (it's read off your character, valid regardless of how that pull went).
+  const pmedActive = pmed("activePct"), pmedDps = pmed("dps");
+  const outlier = peers.length && isUnrepresentativeKill(you, pmedActive, pmedDps);
+  log("");
+  log(`--- ${encounter.name} | your best-ilvl kill: ilvl ${ilvl}, ${f(you.dur, 0)}s, ${f(you.dps, 0)} ${metricUnit().toLowerCase()}, ${f(best.rankPercent, 0)}%ile ---`);
   if (!peers.length) {
     log("  (no item-level-matched peers found)");
     return;
   }
-  const pmed = (key) => median(peers.map((p) => p[key]).filter((v) => v !== null && v !== undefined));
+  if (outlier) {
+    log(`  NOTE: this current-ilvl kill isn't representative -- ${f(you.dps, 0)} ${metricUnit().toLowerCase()} at ${f(you.activePct, 0)}% active vs peers' ${f(pmedActive, 0)}% (a death / late-join / ramp-killed pull). Your real standing on this boss is the parse%ile in the summary above; skipping the head-to-head.`);
+  } else {
+    log(`  vs ${peers.length} ilvl-matched peers:`);
+    log(`    ${padR(metricUnit() + ":", 13)} you ${padL(f(you.dps, 0), 9)}   peer med ${padL(f(pmed("dps"), 0), 9)}`);
+    log(`    casts/min:    you ${padL(f(you.castsPerMin, 1), 9)}   peer med ${padL(f(pmed("castsPerMin"), 1), 9)}`);
+    log(`    active %:     you ${padL(f(you.activePct, 1), 9)}   peer med ${padL(f(pmed("activePct"), 1), 9)}`);
+    log(`    ${runIsHealer() ? "healed:      " : "targets hit:  "}you ${padL(you.targets, 9)}   peer med ${padL(f(pmed("targets"), 1), 9)}`);
 
-  log(`  vs ${peers.length} ilvl-matched peers:`);
-  log(`    ${padR(metricUnit() + ":", 13)} you ${padL(f(you.dps, 0), 9)}   peer med ${padL(f(pmed("dps"), 0), 9)}`);
-  log(`    casts/min:    you ${padL(f(you.castsPerMin, 1), 9)}   peer med ${padL(f(pmed("castsPerMin"), 1), 9)}`);
-  log(`    active %:     you ${padL(f(you.activePct, 1), 9)}   peer med ${padL(f(pmed("activePct"), 1), 9)}`);
-  log(`    ${runIsHealer() ? "healed:      " : "targets hit:  "}you ${padL(you.targets, 9)}   peer med ${padL(f(pmed("targets"), 1), 9)}`);
-
-  // Duration-controlled cut: peers whose kill time is within 40s of yours. Only
-  // worth showing with a few of them -- a "median" of 1-2 just repeats the headline.
-  const near = peers.filter((p) => Math.abs(p.dur - you.dur) <= 40).map((p) => p.dps);
-  if (near.length >= 3) {
-    log(`    ${metricUnit()} at your kill-time (+/-40s): you ${f(you.dps, 0)}  vs peer med ${f(median(near), 0)}  (n=${near.length})`);
+    // Duration-controlled cut: peers whose kill time is within 40s of yours. Only
+    // worth showing with a few of them -- a "median" of 1-2 just repeats the headline.
+    const near = peers.filter((p) => Math.abs(p.dur - you.dur) <= 40).map((p) => p.dps);
+    if (near.length >= 3) {
+      log(`    ${metricUnit()} at your kill-time (+/-40s): you ${f(you.dps, 0)}  vs peer med ${f(median(near), 0)}  (n=${near.length})`);
+    }
   }
 
   const youStats = await secondaryStats(code, fight, you.sourceID, className);

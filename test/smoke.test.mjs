@@ -37,3 +37,18 @@ test("modules import under Node and expose their entry points", async () => {
   const prescribe = await import("../docs/prescribe.js");
   assert.equal(typeof prescribe.run, "function");
 });
+
+test("overview.isUnrepresentativeKill: flags a death/ramp-killed pull so it isn't compared head-to-head", async () => {
+  const { isUnrepresentativeKill } = await import("../docs/overview.js");
+  // The real bug (Burlis): a 5,045-dps / 38%-active Crown kill shown as "52%ile vs
+  // 190k peers". Flag when active is far below peers OR DPS is <30% of theirs.
+  assert.equal(isUnrepresentativeKill({ dps: 5045, activePct: 38 }, 96, 190738), true, "death: low active");
+  assert.equal(isUnrepresentativeKill({ dps: 18013, activePct: 90 }, 99, 162513), true, "ramp-kill: <30% of peer dps");
+  // A genuinely-behind-but-real kill (Dysphoric ~46% of peers, ~99% active) is NOT flagged.
+  assert.equal(isUnrepresentativeKill({ dps: 53000, activePct: 99 }, 99, 114700), false, "real bad kill still shown");
+  // A normal/good kill is not flagged.
+  assert.equal(isUnrepresentativeKill({ dps: 120000, activePct: 99 }, 99, 130000), false);
+  // Defensive: no peer data -> can't judge -> not flagged.
+  assert.equal(isUnrepresentativeKill({ dps: 5045, activePct: 38 }, null, 0), false);
+  assert.equal(isUnrepresentativeKill(null, 99, 100000), false);
+});
