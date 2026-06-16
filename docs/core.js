@@ -3,71 +3,14 @@
 // Ported from analyze.py's fetcher layer; imported by the analysis modules.
 import { gql } from "./wcl.js";
 import { slug, median } from "./format.js";
-// Pure formatters/aggregators now live in format.js; re-export so the many
-// `import { f, median, topN, ... } from "./core.js"` sites keep working unchanged.
+import { isHealer, runMetric, eventTable, metricUnit } from "./runcontext.js";
+// The pure helpers and the run context now live in focused modules; re-export so the
+// many `import { f, median, metricUnit, runIsHealer, ... } from "./core.js"` sites keep
+// working unchanged. (core.js is now just the WCL data/fetch layer + these re-exports.)
 export * from "./format.js";
+export * from "./runcontext.js";
 
 export const DIFFICULTY = { 2: "LFR", 3: "Normal", 4: "Heroic", 5: "Mythic" };
-
-// The 5 healing spec NAMES cover all 7 healer specs (Holy = Priest+Paladin,
-// Restoration = Druid+Shaman). Spec->role is stable game metadata, not a stat
-// weight. A healer is measured on HEALING (HPS), everyone else on DAMAGE (DPS).
-const HEALER_SPECS = new Set(["Holy", "Discipline", "Restoration", "Mistweaver", "Preservation"]);
-/** @param {string} specName @returns {boolean} */
-export const isHealer = (specName) => HEALER_SPECS.has(specName);
-
-// SUPPORT specs: their throughput is mostly the buffs/amps they put on ALLIES
-// (Ebon Might / Prescience / Breath of Eons), which WCL credits to those allies'
-// parses, NOT to the support's personal DPS. So a personal-DPS comparison
-// understates their value the same way an HPS comparison mis-measures a healer's.
-// Spec->role is stable game metadata (Augmentation is the lone support spec this
-// expansion) -- the SAME kind of classification as HEALER_SPECS, not a hard-coded
-// ability/stat weight. Officially role=DPS, so this set is how we know otherwise.
-const SUPPORT_SPECS = new Set(["Augmentation"]);
-/** @param {string} specName @returns {boolean} */
-export const isSupport = (specName) => SUPPORT_SPECS.has(specName);
-
-// --------------------------------------------------------------------- //
-// Throughput metric: DPS for damage/tank specs, HPS for healers. The whole
-// analysis is throughput-generic ("output/sec vs peers", which abilities do the
-// most, casts/min) -- only the WCL table (DamageDone vs Healing), the ranking
-// metric, and the display label differ. We pick ONE metric per run from the
-// player's spec and stash it module-level (a run analyzes one character, in one
-// process, start to finish). Default 'dps' keeps every damage-spec query
-// BYTE-IDENTICAL to before (same query strings -> same caches, same tests).
-/** @param {string} className @param {string} specName @returns {"dps"|"hps"} */
-export const metricForSpec = (className, specName) => (isHealer(specName) ? "hps" : "dps");
-
-// THE run context: which throughput metric this run measures (DPS vs HPS), and whether
-// it's a SUPPORT spec (Augmentation -- frames by buff value, not personal DPS; orthogonal
-// to the metric, so it's a separate field). It's ONE module-scoped object on purpose: a
-// run analyzes one character in one process, and keeping it here lets the throughput-generic
-// constructors -- DPS(), metricUnit(), the WCL table selector -- stay PARAMETER-FREE at
-// their hundreds of call sites instead of threading a metric through every function.
-// Default 'dps' keeps every damage-spec query BYTE-IDENTICAL to before (same query strings
-// -> same caches, same tests). NOTE the asymmetric WCL enum: damage is "DamageDone" but
-// healing is just "Healing" (no -Done), in BOTH the TableDataType and EventDataType enums.
-const _run = { metric: /** @type {"dps"|"hps"} */ ("dps"), support: false };
-// Set the WHOLE context from the spec in ONE atomic call -- the production entry point
-// (app/CLI). Derives metric + support together so they can never disagree or be half-set
-// (the old two-setter API let a caller set the metric but forget the support flag).
-/** @param {string} className @param {string} specName */
-export function setRunContext(className, specName) {
-  _run.metric = metricForSpec(className, specName);
-  _run.support = isSupport(specName);
-}
-// Low-level knobs -- mainly tests, which force a metric without a real spec.
-/** @param {"dps"|"hps"} m */
-export function setRunMetric(m) { _run.metric = m === "hps" ? "hps" : "dps"; }
-/** @param {boolean} b */
-export function setRunSupport(b) { _run.support = !!b; }
-export function runMetric() { return _run.metric; }
-export const runIsHealer = () => _run.metric === "hps";
-export const runIsSupport = () => _run.support;
-export const metricUnit = () => (_run.metric === "hps" ? "HPS" : "DPS");
-export const throughputWord = () => (_run.metric === "hps" ? "healing" : "damage");
-const throughputTable = () => (_run.metric === "hps" ? "Healing" : "DamageDone");
-export const eventTable = throughputTable;
 
 // Slots the field actually enchants (verify each season). Display only.
 export const ENCHANTABLE_SLOTS = {
@@ -166,7 +109,7 @@ export async function characterZone(name, server, region, difficulty) {
 const _charHead = (name, server, region) =>
   `character(\n    name:"${cName(name)}", serverSlug:"${slug(clean(server))}", serverRegion:"${cRegion(region)}")`;
 const _encField = (encounterId, difficulty) =>
-  `encounterRankings(encounterID:${encounterId}, difficulty:${difficulty}, metric:${_run.metric})`;
+  `encounterRankings(encounterID:${encounterId}, difficulty:${difficulty}, metric:${runMetric()})`;
 export const _characterEncounterQuery = (name, server, region, encounterId, difficulty) =>
   `query { characterData { ${_charHead(name, server, region)} {\n    ${_encField(encounterId, difficulty)} } } }`;
 export async function characterEncounter(name, server, region, encounterId, difficulty) {
@@ -177,7 +120,7 @@ export async function characterEncounter(name, server, region, encounterId, diff
 
 export async function topRankings(encounterId, difficulty, className, specName, page = 1) {
   const q = `query { worldData { encounter(id:${encounterId}) { characterRankings(
-    difficulty:${difficulty}, className:"${clean(className)}", specName:"${clean(specName)}", metric:${_run.metric}, page:${page}) } } }`;
+    difficulty:${difficulty}, className:"${clean(className)}", specName:"${clean(specName)}", metric:${runMetric()}, page:${page}) } } }`;
   const cr = (await gql(q)).worldData.encounter.characterRankings;
   return cr && typeof cr === "object" ? (cr.rankings || []) : [];
 }
@@ -268,7 +211,7 @@ function metricsFromTables(dmg, casts, name, specName) {
 // reportCore reads. Factored out + frozen (loader test) so the query string is a
 // stable cache key the gql() auto-batcher can combine and split.
 const _reportCoreBody = (fight) => `
-    dmg: table(fightIDs:${fight}, dataType:${throughputTable()})
+    dmg: table(fightIDs:${fight}, dataType:${eventTable()})
     casts: table(fightIDs:${fight}, dataType:Casts)
     combatant: events(fightIDs:${fight}, dataType:CombatantInfo, limit:50) { data }
     fightWin: fights(fightIDs:${fight}) { startTime endTime }`;
@@ -303,7 +246,7 @@ export async function playerMetrics(code, fight, name, specName, className) {
 // test keys units by sourceID). Entries: { name, guid, total, uses, ... }, by total.
 export async function playerAbilities(code, fight, sourceId) {
   const q = `query { reportData { report(code:"${code}") {
-    table(fightIDs:${fight}, dataType:${throughputTable()}, sourceID:${sourceId}) } } }`;
+    table(fightIDs:${fight}, dataType:${eventTable()}, sourceID:${sourceId}) } } }`;
   const t = (await gql(q)).reportData.report.table.data;
   return (t.entries || []).filter((a) => a.guid != null && a.total > 0)
     .sort((a, b) => b.total - a.total);
@@ -489,7 +432,7 @@ export async function petDamage(code, fight, ownerSourceId) {
   const petIds = [...roster.values()].filter((a) => a.petOwner === ownerSourceId).map((a) => a.id);
   if (!petIds.length) return 0;
   const aliases = petIds.map((id, i) =>
-    `p${i}:table(fightIDs:${fight}, dataType:${throughputTable()}, sourceID:${id})`).join(" ");
+    `p${i}:table(fightIDs:${fight}, dataType:${eventTable()}, sourceID:${id})`).join(" ");
   const r = (await gql(`query { reportData { report(code:"${code}") { ${aliases} } } }`)).reportData.report;
   let total = 0;
   petIds.forEach((id, i) => {
@@ -504,7 +447,7 @@ export async function petDamage(code, fight, ownerSourceId) {
 // the run metric (kill time is the same regardless, but the query needs one).
 export async function encounterKillTimes(encounterId, difficulty) {
   const q = `query { worldData { encounter(id:${encounterId}) { characterRankings(
-    difficulty:${difficulty}, metric:${_run.metric}, page:1) } } }`;
+    difficulty:${difficulty}, metric:${runMetric()}, page:1) } } }`;
   const cr = (await gql(q)).worldData.encounter.characterRankings;
   const ranks = (cr && typeof cr === "object" ? (cr.rankings || []) : []);
   return ranks.map((r) => r.duration).filter((d) => d > 0);
