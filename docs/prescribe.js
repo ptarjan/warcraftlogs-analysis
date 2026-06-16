@@ -256,9 +256,7 @@ async function mySetup(code, fight, sourceId, gear, priority = "crit", className
   for (const c of CONSUMABLES) mine[c.mine] = Object.entries(bf).find(([n, b]) => consumableHit(c, n.toLowerCase(), b));
   const { flask, food, potion, augrune, oil } = mine;
   const stats = await secondaryStats(code, fight, sourceId, className);
-  const statPct = stats
-    ? 100 * stats[priority] / (["crit", "haste", "mastery", "vers"].reduce((a, k) => a + stats[k], 0) || 1)
-    : null;
+  const statPct = stats ? secPct(stats, priority) : null;
   const myTrinkets = gear.filter((g) => g.slot === 12 || g.slot === 13);
   const trinkets = myTrinkets.map((g) => g.name);
   const trinketIds = new Set(myTrinkets.map((g) => g.id).filter(Boolean));

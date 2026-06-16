@@ -334,14 +334,9 @@ async function initDisk() {
   _diskReady = (async () => {
     const fs = await import("node:fs");
     const path = await import("node:path");
-    const os = await import("node:os");
     const zlib = await import("node:zlib");
     _diskFs = fs; _diskPath = path; _diskZlib = zlib;
-    // Shared across git worktrees (which split one WCL point budget): a single
-    // cache location in the user's home dir, not one per worktree root. Override
-    // with WCL_GQL_CACHE_FILE (the tests do); shards live next to it.
-    _diskFile = process.env.WCL_GQL_CACHE_FILE ||
-      path.join(os.homedir(), ".cache", "warcraftlogs-analysis", "gql-cache.json");
+    _diskFile = await _defaultCacheFile();
     _diskDir = `${_diskFile}.shards`;
     try { fs.mkdirSync(_diskDir, { recursive: true }); } catch { /* ignore */ }
     _diskStore = {};
@@ -495,12 +490,19 @@ export async function rateLimit() {
 // cache; a dead or stale owner is stolen so a crashed run can't wedge it forever.
 const _pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return !!e && e.code === "EPERM"; } };
 
-async function _lockPath() {
+// The single cache-file path, shared across git worktrees (which split one WCL
+// point budget): a location in the user's home dir, not one per worktree root.
+// Override with WCL_GQL_CACHE_FILE (the tests do); shards + lock live next to it.
+async function _defaultCacheFile() {
   const path = await import("node:path");
   const os = await import("node:os");
-  const cacheFile = process.env.WCL_GQL_CACHE_FILE ||
+  return process.env.WCL_GQL_CACHE_FILE ||
     path.join(os.homedir(), ".cache", "warcraftlogs-analysis", "gql-cache.json");
-  return path.join(path.dirname(cacheFile), "fetch.lock");
+}
+
+async function _lockPath() {
+  const path = await import("node:path");
+  return path.join(path.dirname(await _defaultCacheFile()), "fetch.lock");
 }
 
 // Become the single fetcher. Returns a release() on success, or null if a live,
@@ -543,14 +545,6 @@ export async function acquireFetchGate({ reserve = 400 } = {}) {
   return { ok: true, release, remaining: rl ? rl.remaining : null };
 }
 
-// `fresh: true` bypasses every read cache (in-memory, inflight, persistent) and
-// does NOT persist the result -- for polling a LIVE report whose fight list is
-// still growing during a raid. The immutability heuristic (_isImmutable) keys off
-// the query TEXT and can't tell a live report from a finished one, so the
-// caller signals freshness instead. Only the report-wide fight-list / deaths
-// poll uses it; per-pull TABLES (an ended pull) stay permanently cached as before.
-// We still update _gqlCache with the latest result so same-tick non-fresh readers
-// downstream see the new fight list rather than a stale one.
 // --- automatic request batching (DataLoader-style) ---------------------------
 // What this DOES buy: latency + request-count headroom (WCL also throttles requests/
 // second), and the small ~1.2 pts/request fixed overhead. What it does NOT buy: the
@@ -656,6 +650,14 @@ export async function probeBilling(queries) {
   return { ok: true, n, sepCost, combCost, perReqSeparate: sepCost / n, ratio, verdict };
 }
 
+// `fresh: true` bypasses every read cache (in-memory, inflight, persistent) and
+// does NOT persist the result -- for polling a LIVE report whose fight list is
+// still growing during a raid. The immutability heuristic (_isImmutable) keys off
+// the query TEXT and can't tell a live report from a finished one, so the
+// caller signals freshness instead. Only the report-wide fight-list / deaths
+// poll uses it; per-pull TABLES (an ended pull) stay permanently cached as before.
+// We still update _gqlCache with the latest result so same-tick non-fresh readers
+// downstream see the new fight list rather than a stale one.
 export async function gql(query, retries = 6, { fresh = false } = {}) {
   await initDisk();                 // sets up disk paths + runs any one-time migration (Node)
   _ensureLoaded(query);             // lazily decompress just THIS query's shard into _gqlCache

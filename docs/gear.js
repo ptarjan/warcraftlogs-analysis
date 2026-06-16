@@ -172,7 +172,7 @@ async function fieldEmbellishments(className, specName, difficulty, encounters, 
   return { combos, items, perSlotItems, n: got };
 }
 
-// Gear from your highest-ilvl kill (= current).
+// Gear from your current kill (most recent within 1 ilvl of your best -- see bestKill).
 async function yourGear(name, server, region, difficulty, className) {
   const best = await bestKill(name, server, region, difficulty);
   if (!best) return null;
