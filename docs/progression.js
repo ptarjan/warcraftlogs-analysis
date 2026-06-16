@@ -10,8 +10,8 @@
 //
 // Budget discipline (a night = 30-60 pulls): we NEVER fetch tables per pull. ONE
 // reportFights (all metadata), ONE batched reportDeaths over the analyzed pulls,
-// ONE reportRoster, and reportCore on only the ~2 most informative pulls (deepest
-// + most recent) for the DPS check. ~6 report requests for a whole night.
+// ONE reportRoster, and reportCore on only the DEEPEST pull for the DPS check.
+// ~5 report requests for a whole night.
 import { spellTooltip } from "./wcl.js";
 import {
   reportFights, reportDeaths, reportRoster, reportCore, encounterKillTimes,
@@ -212,8 +212,8 @@ export async function progressionFindings(code, { encounterId = null, fresh = fa
       `Losing a player early snowballs the pull — a survival/positioning fix or assignment swap here beats any DPS gain.`));
   }
 
-  // ---- DPS / soft-enrage check (best-effort, only the deepest+recent pulls) ---- //
-  try { await dpsCheck(result, analyzed); } catch { /* leave it out */ }
+  // ---- DPS / soft-enrage check (best-effort, only the deepest pull) ------------ //
+  try { await dpsCheck(result); } catch { /* leave it out */ }
 
   // ---- Roster / "what changed" backtest --------------------------------------- //
   try { rosterDelta(result, pulls, roster); } catch { /* optional */ }
@@ -237,13 +237,15 @@ export async function progressionFindings(code, { encounterId = null, fresh = fa
 // boss's effective HP (damage dealt / fraction killed) and compare the raid DPS to
 // what the FIELD's kill time implies is needed. NO hard-coded enrage -- the field's
 // own kill duration is the reference. Names the lowest contributors on that pull.
-async function dpsCheck(result, analyzed) {
+async function dpsCheck(result) {
   const deepest = result.deepest;
   if (!deepest) return;
-  const recent = analyzed[analyzed.length - 1];
-  const fids = [...new Set([deepest.id, recent.id])];
-  const cores = await mapLimit(fids, 2, (fid) => reportCore(result.code, fid).catch(() => null));
-  const deep = cores[0]; if (!deep || !deep.dmg || !deep.dmg.data) return;
+  // Only the DEEPEST pull is needed -- it got the boss lowest, so it gives the best
+  // effective-HP estimate AND the raid DPS / laggards for the gate. (Previously also
+  // fetched the most-recent pull's core via a 2-id list but NEVER used cores[1] -- a
+  // wasted report read per check; the analysis is entirely off the deepest pull.)
+  const deep = await reportCore(result.code, deepest.id).catch(() => null);
+  if (!deep || !deep.dmg || !deep.dmg.data) return;
   const data = deep.dmg.data;
   // Players only: drop NPC/Boss rows, and Pets (separate entries here) so a pet is
   // never named as a "low contributor". Pet damage is small enough that omitting it

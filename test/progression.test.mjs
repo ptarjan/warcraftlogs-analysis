@@ -218,6 +218,8 @@ test("progressionFindings: when the whole raid dies AT the wipe, no player is bl
 test("progressionFindings: a whole night stays within a small request budget", async () => {
   const queries = install();
   await prog.progressionFindings("ABC123DEF4");
-  // 1 fights + 1 deaths + 1 masterData + 2 reportCore (deepest+recent) + 1 killTimes.
-  assert.ok(queries.length <= 7, `expected <=7 GraphQL requests for a 14-pull night, got ${queries.length}`);
+  // 1 fights + 1 deaths + 1 masterData + 1 reportCore (deepest only) + 1 killTimes (+
+  // spell-name lookups). Ceiling tightened after dropping the never-used recent-pull
+  // reportCore -- a wasted read per check.
+  assert.ok(queries.length <= 6, `expected <=6 GraphQL requests for a 14-pull night, got ${queries.length}`);
 });
