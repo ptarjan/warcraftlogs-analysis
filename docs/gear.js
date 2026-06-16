@@ -43,7 +43,7 @@ const SLOT = {
 // Tier-set token slots: you only need 4 of these 5 for the 4pc, so one is a
 // "flex" slot. Swapping a tier-eligible slot interacts with the set bonus.
 const TIER_SLOTS = new Set([0, 2, 4, 6, 9]); // Head, Shoulder, Chest, Legs, Hands
-export const SHORT = {
+const SHORT = {
   "Critical Strike": "crit", "Haste": "haste", "Mastery": "mastery", "Versatility": "vers",
 };
 

@@ -133,7 +133,7 @@ function rbTalents() {
 }
 
 const _indexCache = new Map(); // specID -> {byEntry, byNode, heroByEntry, heroNodes, heroChoice}
-export async function talentIndex(specID) {
+async function talentIndex(specID) {
   if (_indexCache.has(specID)) return _indexCache.get(specID);
   const ck = "talentidx2:" + specID; // "2" adds hero-subtree fields
   let idx = null;
