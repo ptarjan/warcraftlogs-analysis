@@ -3,7 +3,7 @@
 // the result as a web report -- the prioritized list of changes up top, with
 // the supporting analyses as collapsible cards below.
 import { detectContext, detectPriority, DIFFICULTY, raidTeammates, slug, metricForSpec, setRunContext, isSupport, metricUnit,
-  parseReportRef, reportFights, recentReportsFor, encountersIn, mapLimit } from "./core.js";
+  parseReportRef, reportFights, recentReportsFor, mapLimit } from "./core.js";
 import { isAuthed, beginLogin, handleRedirectCallback, logout } from "./auth.js";
 import { NeedsAuth, myCharacters, primeRateReset, fmtRateWait } from "./wcl.js";
 import { paramsFromSearch, shareSearch, encodeSnapshot, decodeSnapshot, snapshotFromHash } from "./share.js";
@@ -277,11 +277,11 @@ function runResume(c) {
 // Rendering: cards instead of a terminal. Modules still emit text via log();
 // here we turn that stream into headings, prose, data blocks, and action cards.
 // --------------------------------------------------------------------------- //
-// No-op: the old terminal-style "follow output to the bottom" is wrong now that
-// the payoff ("What to change") sits at the TOP and the supporting cards (mostly
-// collapsed) stream below -- it just dumped you at the bottom in empty space.
-// We land on the primary card when the run finishes instead (see runAnalysis).
-const scroll = () => {};
+// We deliberately do NOT follow output to the bottom as it streams: the old
+// terminal-style auto-scroll is wrong now that the payoff ("What to change") sits
+// at the TOP and the supporting cards (mostly collapsed) stream below -- it just
+// dumped you at the bottom in empty space. We land on the primary card when the
+// run finishes instead (see runAnalysis).
 let cur = null; // fallback card for the global log()/note() (errors, validation)
 
 // Every card has the SAME shape -- a header (title + a status indicator) and a
@@ -340,7 +340,7 @@ function setPreview(h, text) {
 
 // Rendering primitives, parameterized by the card handle `h` so sections running
 // concurrently never write into one another's card.
-function appendBlock(h, el) { h.body.appendChild(el); h.readout = null; scroll(); }
+function appendBlock(h, el) { h.body.appendChild(el); h.readout = null; }
 // The card's single monospace readout (created lazily). Nulled whenever a block
 // element (rx item / error) is appended, so the next data line starts a fresh
 // readout AFTER it -- preserving stream order.
@@ -442,7 +442,6 @@ function logTo(h, line) {
     return;
   }
   readoutOf(h).appendChild(readoutLine(line));
-  scroll();
 }
 
 // A logger bound to one card -- this is what each section streams into.
@@ -896,7 +895,7 @@ async function renderProgOnce(hero) {
   let fights = [];
   try { fights = await reportFights(code, { fresh: false }); } catch (e) { /* analysis will surface the error */ }
   progSig = fightsSignature(fights);
-  const encs = encountersIn(fights);
+  const encs = progression.encountersIn(fights);
   const chosen = encounterId || (encs[0] && encs[0].encounterID) || null;
   buildEncBar(hero, encs, chosen, progLiveOn);
   const card = makeCard("What to change to kill it", { primary: true, prose: false });

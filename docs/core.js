@@ -330,17 +330,6 @@ export async function reportFights(code, { fresh = false } = {}) {
 // sourceID -- we want every raider's death. Each event carries `fight` so we bucket
 // by pull client-side. `killingAbilityGameID` is the killing blow; `targetID` the
 // victim (resolve to a name via reportRoster).
-// Distinct boss encounters in a report's fights, for the progression UI's picker.
-// Dedupe by encounterID (keep first seen), drop trash pulls (encounterID 0/absent).
-export function encountersIn(fights) {
-  const seen = new Map();
-  for (const fight of (fights || [])) {
-    if (!fight || !fight.encounterID || seen.has(fight.encounterID)) continue;
-    seen.set(fight.encounterID, { encounterID: fight.encounterID, name: fight.name, difficulty: fight.difficulty });
-  }
-  return [...seen.values()];
-}
-
 export async function reportDeaths(code, fightIDs, { fresh = false } = {}) {
   const ids = `[${(fightIDs || []).join(",")}]`;
   const out = [];
