@@ -5,7 +5,7 @@
 import { detectContext, detectPriority, DIFFICULTY, raidTeammates, slug, metricForSpec, setRunContext, isSupport, metricUnit,
   parseReportRef, reportFights, recentReportsFor, mapLimit } from "./core.js";
 import { isAuthed, beginLogin, handleRedirectCallback, logout } from "./auth.js";
-import { NeedsAuth, myCharacters, primeRateReset, fmtRateWait } from "./wcl.js";
+import { NeedsAuth, myCharacters, primeRateReset, fmtRateWait, pruneStaleCache } from "./wcl.js";
 import { paramsFromSearch, shareSearch, encodeSnapshot, decodeSnapshot, snapshotFromHash } from "./share.js";
 import * as progression from "./progression.js";
 import * as overview from "./overview.js";
@@ -60,7 +60,18 @@ function renderAuth() {
   if (isAuthed()) {
     authEl.innerHTML =
       '<span class="conn ok">✓ Connected · using your Warcraft Logs account</span>' +
+      '<button type="button" id="refresh-cache" class="linkbtn" title="Re-fetch the field you\'re compared against (rankings drift ~weekly). Keeps cached kill data, so it won\'t re-spend your point budget.">Force refresh</button>' +
       '<button type="button" id="disconnect" class="linkbtn">Disconnect</button>';
+    // Drop the drift-able (rankings/character) cache so the next run compares you to a
+    // FRESH field, then reload to re-analyze. Keeps immutable kill reports cached (no
+    // point re-spend). Fixes the "stale field still says you're X% behind" case.
+    $("refresh-cache").onclick = async () => {
+      const btn = $("refresh-cache");
+      btn.disabled = true; btn.textContent = "Refreshing…";
+      try { const { dropped } = await pruneStaleCache(); btn.textContent = `Cleared ${dropped} · reloading…`; }
+      catch { /* reload anyway */ }
+      location.reload();
+    };
     $("disconnect").onclick = () => { logout(); renderAuth(); renderMode(); };
   } else {
     // The prominent Connect call-to-action lives in the connect-prompt card

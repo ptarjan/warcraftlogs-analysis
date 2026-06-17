@@ -211,6 +211,43 @@ export async function _cacheWrite(query, data) {
 
 export function clearGqlCache() { _gqlCache.clear(); _loadedShards.clear(); }  // cleared cache reloads shards lazily
 
+// Force-refresh the DRIFT-ABLE data without re-spending points on logged kills.
+// Rankings/world/character queries (the "field" you're compared to) carry a ~weekly
+// TTL, so a stale browser cache can keep serving an out-of-date field for days --
+// the exact failure where an improved player still sees an old "you're X% behind".
+// This drops ONLY the non-immutable entries (same _isImmutable rule as the TTL), in
+// the in-memory cache AND the persistent store, so the next analysis re-fetches the
+// field fresh while every cached kill report (immutable, the expensive part) stays.
+// Returns { kept, dropped } counts. Best-effort: storage errors resolve to whatever
+// was pruned so far rather than throwing into the UI.
+export async function pruneStaleCache() {
+  let kept = 0, dropped = 0;
+  // In-memory (this session): so a re-run doesn't read the stale value back before
+  // the persistent prune lands.
+  for (const q of [..._gqlCache.keys()]) if (!_isImmutable(q)) { _gqlCache.delete(q); dropped++; } else kept++;
+  // Persistent store: IndexedDB (browser) cursor-delete, or the in-memory Map (Node).
+  try {
+    if (typeof indexedDB !== "undefined") {
+      const db = await _openIdb();
+      if (db) await /** @type {Promise<void>} */ (new Promise((resolve) => {
+        try {
+          const cur = db.transaction("q", "readwrite").objectStore("q").openCursor();
+          cur.onsuccess = (e) => {
+            const c = e.target.result;
+            if (!c) return resolve();
+            if (c.value && !_isImmutable(c.value.q)) { c.delete(); dropped++; } else kept++;
+            c.continue();
+          };
+          cur.onerror = () => resolve();
+        } catch { resolve(); }
+      }));
+    } else {
+      for (const [k, v] of [..._memStore.entries()]) if (v && !_isImmutable(v.q)) { _memStore.delete(k); dropped++; } else kept++;
+    }
+  } catch { /* fall through with whatever we pruned */ }
+  return { kept, dropped };
+}
+
 // ---- Node-only on-disk cache -------------------------------------------------
 // The browser path is already cached by the Worker (shared, keyed by query
 // hash). Node talks straight to WCL, so without this every CLI run re-fetches

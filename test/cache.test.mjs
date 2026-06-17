@@ -23,6 +23,19 @@ test("the cache round-trips, misses cleanly, and keeps large values", async () =
   assert.deepEqual(await _cacheRead("query{ big }"), big);
 });
 
+test("pruneStaleCache drops drift-able entries but keeps immutable kill reports", async () => {
+  const { _cacheRead, _cacheWrite, pruneStaleCache } = await import("../docs/wcl.js");
+  // An immutable kill report (must survive) and a drift-able rankings query (must go).
+  const reportQ = 'query{ reportData { report(code:"abc") { table } } }';
+  const rankingsQ = "query{ worldData { encounter { characterRankings } } }";
+  await _cacheWrite(reportQ, { kept: 1 });
+  await _cacheWrite(rankingsQ, { stale: 1 });
+  const { dropped } = await pruneStaleCache();
+  assert.ok(dropped >= 1, "at least the rankings entry was dropped");
+  assert.deepEqual(await _cacheRead(reportQ), { kept: 1 }, "immutable report stays cached");
+  assert.equal(await _cacheRead(rankingsQ), undefined, "drift-able rankings entry is gone");
+});
+
 test("a fetched query is served from the cache on the next reload (no 2nd fetch)", async () => {
   const { gql, clearGqlCache } = await import("../docs/wcl.js");
   clearGqlCache();
