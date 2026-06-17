@@ -374,6 +374,25 @@ test("usageDivergence ignores small/rare differences (floor + ratio)", () => {
   assert.equal(over.length, 0);
 });
 
+test("usageDivergence catches a SLOW ROTATION: core button cast far less but below 2x", () => {
+  // Demonology pressing every core button ~1.6x below the field trips no single 2x gap,
+  // so the whole deficit used to vanish into the PLAYSTYLE remainder. The big-absolute-gap
+  // band now names it (so usageDamageGaps can size it from measured damage).
+  const you = { "Hand of Gul'dan": 22, "Shadow Bolt": 14, Demonbolt: 19 };
+  const field = { "Hand of Gul'dan": 34, "Shadow Bolt": 23, Demonbolt: 22 };
+  const { under } = usageDivergence(you, field);
+  assert.ok(under.some((a) => a.name === "Hand of Gul'dan"));  // gap 12, ratio 1.55 -> flagged
+  assert.ok(under.some((a) => a.name === "Shadow Bolt"));      // gap 9,  ratio 1.64 -> flagged
+  assert.ok(!under.some((a) => a.name === "Demonbolt"));       // gap 3 but ratio 1.16 (<1.4) -> not
+});
+
+test("usageDivergence does NOT flag a high-volume filler cast only slightly less (no big ratio)", () => {
+  // A big ABSOLUTE deficit alone isn't enough -- a cheap filler the field weaves a bit more
+  // (30 vs 25, ratio 1.2) must stay silent, or every fast caster would 'under-press' it.
+  const { under } = usageDivergence({ Filler: 25 }, { Filler: 30 });  // gap 5 but ratio 1.2 (<1.4)
+  assert.equal(under.length, 0);
+});
+
 test("medianCastRates: medians per ability across kills so one pull's noise can't drive the lever", () => {
   // One bad pull where you spammed the wrong button (Whirlwind 8, Raging Blow 2) shouldn't
   // define the lever when your other kills are clean (Raging Blow ~7). Median per ability.

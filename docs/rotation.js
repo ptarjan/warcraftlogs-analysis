@@ -244,7 +244,17 @@ export function medianCastRates(rates) {
 // over); `over` = abilities you press far more than the field (a wrong button).
 // Class-agnostic: the target rates come entirely from the field. `floor` keeps
 // out rarely-cast noise; `ratio` requires a real gap (default: 2x).
-export function usageDivergence(youRate, fieldRate, { floor = 0.5, ratio = 2 } = {}) {
+//
+// SECOND under-band (`bigGap`/`midRatio`): the 2x ratio gate STRUCTURALLY misses a
+// "slow rotation" -- a player who casts EVERY core button ~1.5-1.6x below the field
+// (Demonology pressing Hand of Gul'dan 22/min vs 34, Shadow Bolt 14 vs 23) trips no
+// single 2x gap, so the whole deficit silently became the PLAYSTYLE remainder instead
+// of a named "press this more" lever. So ALSO flag an ability the field out-casts by a
+// LARGE absolute margin (>= bigGap casts/min) at a real proportional gap (>= midRatio),
+// even below 2x. This only ADMITS candidates; the caller still sizes them by MEASURED
+// damage-per-cast (usageDamageGaps) and drops any worth < 1% -- so a high-volume cheap
+// FILLER cast slightly less never survives, only a core button worth real damage does.
+export function usageDivergence(youRate, fieldRate, { floor = 0.5, ratio = 2, bigGap = 3, midRatio = 1.4 } = {}) {
   const names = new Set([...Object.keys(youRate || {}), ...Object.keys(fieldRate || {})]);
   /** @type {{name:string,you:number,field:number,gap:number,dmgPct?:number}[]} */
   const under = [];
@@ -252,7 +262,9 @@ export function usageDivergence(youRate, fieldRate, { floor = 0.5, ratio = 2 } =
   const over = [];
   for (const n of names) {
     const y = (youRate || {})[n] || 0, fl = (fieldRate || {})[n] || 0;
-    if (fl >= floor && fl >= y * ratio && fl - y >= floor) under.push({ name: n, you: y, field: fl, gap: fl - y });
+    const isUnder = (fl >= floor && fl >= y * ratio && fl - y >= floor)        // 2x gap (any size)
+      || (fl - y >= bigGap && fl >= y * midRatio);                             // big absolute gap, sub-2x
+    if (isUnder) under.push({ name: n, you: y, field: fl, gap: fl - y });
     if (y >= floor && y >= fl * ratio && y - fl >= floor) over.push({ name: n, you: y, field: fl, gap: y - fl });
   }
   under.sort((a, b) => b.gap - a.gap);
