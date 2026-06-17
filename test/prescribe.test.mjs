@@ -770,6 +770,28 @@ test("consumableLevers: don't recommend a swap the field MEASURED at ~0% (pointl
   assert.equal(consumableLevers(base(3), my).filter((f) => /FOOD/.test(f.text)).length, 1);
 });
 
+test("consumableLevers: an IMPLAUSIBLE measured delta (small-field confound) falls back to the est, not a 13% flask", () => {
+  // Hadryan's real case: a tiny high-ilvl Brewmaster field measured "13% DPS flask"
+  // (n=4/5) -- a flask can't give 13%; better players just flask AND play better. Above
+  // the 5% ceiling, distrust the measured value: use the est and drop the misleading cite.
+  const base = (flaskPct) => ({
+    flasks: new Map([["Flask of the Shattered Sun", 5], ["Flask of Thalassian Resistance", 4]]),
+    foods: new Map(), potions: new Map(), augRunes: new Map(), oils: new Map(),
+    guids: new Map([["Flask of the Shattered Sun", 222]]),
+    deltas: {}, topDeltas: { flasks: { pct: flaskPct, nHave: 4, nNot: 5 } }, n: 9,
+  });
+  const my = { flask: "Flask of Thalassian Resistance", flaskGuid: 999 };  // wrong flask -> a swap
+  const hi = consumableLevers(base(13), my).find((f) => /FLASK/.test(f.text));
+  assert.ok(hi, "the swap still surfaces");
+  assert.equal(hi.basis, "est", "implausible 13% -> est, not measured");
+  assert.doesNotMatch(hi.text, /13% more/, "drops the misleading confounded cite");
+  assert.ok(hi.impact <= 5, "sized at the small est, not 13%");
+  // A plausible measured delta (4%) is kept as measured with its cite.
+  const ok = consumableLevers(base(4), my).find((f) => /FLASK/.test(f.text));
+  assert.equal(ok.basis, "measured");
+  assert.match(ok.text, /4% more/);
+});
+
 test("consumableLevers: the NONE path also drops a consumable the field MEASURED at ~0% (no self-contradicting '~0% DPS, free parse')", () => {
   // Rezaa's real case: used NO combat potion, but the field's with/without split
   // measured 0% -> don't list "[~0% DPS] use a potion (peers gain 0%) free parse".

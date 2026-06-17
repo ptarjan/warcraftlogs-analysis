@@ -307,6 +307,11 @@ async function aggregateExecution(name, server, region, difficulty, className, s
 // are brief, so any uptime counts) AND how to render its lever (label/verb/sizes). This
 // table drove the lever rows; it now also drives detection, replacing three copied
 // matcher blocks (field tally, fieldDelta mask, mySetup). `field` keys the peer tallies.
+// A flask/food/potion/oil/rune can't plausibly give more than a few % DPS. A measured
+// field delta above this is small-sample confounding (a niche high-ilvl field), not the
+// consumable's value -> distrust it and fall back to the est. Matches the gear lever's
+// 5% per-swap cap (statScore/statValueScore), so setup items stay comparable.
+const CONS_MAX_PCT = 5;
 const CONSUMABLES = [
   { field: "flasks", mine: "flask", label: "FLASK", peerVerb: "run", note: "",
     match: (lc) => lc.includes("flask"), minPct: 50,
@@ -477,7 +482,15 @@ export function consumableLevers(field, my) {
     const mineName = my[cn.mine], mineGuid = my[cn.mine + "Guid"];
     // Prefer the MEASURED field delta (peers with it vs without) when the field
     // gives a counterfactual; else the category estimate. Both flagged honestly.
-    const fd = field.deltas && field.deltas[cn.field];
+    // BUT a consumable is a small UNIVERSAL buff -- it can't plausibly give > a few %.
+    // From a small/confounded field (a niche high-ilvl spec: ~9 peers) the measured
+    // delta is small-sample CONFOUNDING ("13% DPS flask, n=4/5" -- better players just
+    // flask AND play better), not the consumable's value. Above the same 5% ceiling the
+    // gear lever caps swaps at, distrust it: fall back to the est + drop the cite. Keeps
+    // the "measured floor" for the normal small deltas it's meant for.
+    const trust = (d) => d && Math.round(d.pct) <= CONS_MAX_PCT ? d : null;
+    const fdRaw = field.deltas && field.deltas[cn.field];
+    const fd = trust(fdRaw);
     const noneScore = fd ? DPS(Math.round(fd.pct)) : cn.none;
     const basis = fd ? "measured" : "est";
     const cite = fd ? ` (measured: peers with it do ${Math.round(fd.pct)}% more, n=${fd.nHave}/${fd.nNot})` : "";
@@ -492,11 +505,12 @@ export function consumableLevers(field, my) {
     } else if (mineName !== top) {
       // Swap: price the SPECIFIC field-favored item (peers on it vs not), not the
       // have-any delta -- so "defensive flask -> the DPS flask" reads measured.
-      const td = field.topDeltas && field.topDeltas[cn.field];
+      const tdRaw = field.topDeltas && field.topDeltas[cn.field];
       // Don't recommend a swap the field MEASURED at ~0% -- telling someone to swap
       // one food/flask/potion for another for no gain is noise, not coaching. (An
       // est swap, with no counterfactual to trust, still surfaces at the estimate.)
-      if (td && Math.round(td.pct) === 0) continue;
+      if (tdRaw && Math.round(tdRaw.pct) === 0) continue;
+      const td = trust(tdRaw);   // distrust an implausible (> ceiling) confounded delta -> est
       const swapCite = td ? ` (measured: peers on it do ${Math.round(td.pct)}% more than those without, n=${td.nHave}/${td.nNot})` : "";
       out.push(finding(DIM.SETUP, td ? DPS(Math.round(td.pct)) : cn.swap,
         `${cn.label}: ${wowheadSpell(mineGuid, mineName)} -> ${wowheadSpell(field.guids.get(top), top)}.${swapCite}`,
