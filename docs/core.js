@@ -1,7 +1,7 @@
 // @ts-check
 // Shared constants, formatting helpers, and low-level WCL fetchers.
 // Ported from analyze.py's fetcher layer; imported by the analysis modules.
-import { gql } from "./wcl.js";
+import { gql, metaGet, metaPut, setPreferCache } from "./wcl.js";
 import { slug } from "./format.js";
 import { isHealer, runMetric, eventTable } from "./runcontext.js";
 // The pure helpers, run context, and finding currency now live in focused modules;
@@ -37,6 +37,30 @@ export async function characterZone(name, server, region, difficulty) {
   const c = (await gql(q)).characterData.character;
   if (!c) throw new Error(`Character not found: ${name}-${server}-${region}`);
   return c;
+}
+
+// Decide whether we can REUSE the cached field instead of re-spending points to refresh
+// it. The field (leaderboards + your standing) carries a weekly TTL, but if you haven't
+// raided since it was last fetched there's nothing new to compare against. So we read a
+// cheap fingerprint of your kills -- zoneRankings, one query the analysis makes anyway --
+// and when it matches what we stored last run, flip the cache into reuse-the-stale-field
+// mode (setPreferCache) up to the cache's stale cap. A new kill changes the fingerprint
+// and we refresh exactly as before. Best-effort: any hiccup leaves the weekly TTL in
+// charge. Call this ONCE, up front, before the sections fetch the field.
+export async function revalidateCharacter(name, server, region, difficulty) {
+  try {
+    const c = await characterZone(name, server, region, difficulty);
+    const ranks = (c.zoneRankings.rankings || []).filter((r) => (r.totalKills || 0) > 0);
+    // Fingerprint = which bosses you've killed and how many times. Excludes rankPercent
+    // (that drifts with the FIELD, not with what YOU did); a new/again kill bumps totalKills.
+    const sig = ranks.map((r) => `${r.encounter.id}:${r.totalKills}`).sort().join(",");
+    const key = `fieldsig:${cName(name)}|${slug(clean(server))}|${cRegion(region)}|${difficulty}`;
+    const prev = metaGet(key);
+    if (prev && prev.sig === sig) { setPreferCache(true); return { unchanged: true, sig }; }
+    setPreferCache(false);
+    metaPut(key, { sig });
+    return { unchanged: false, sig };
+  } catch { return { unchanged: false, sig: null }; }
 }
 
 // Factored so the single-encounter query and the bundled multi-encounter query share

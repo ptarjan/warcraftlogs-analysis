@@ -382,3 +382,73 @@ test("disk cache: shards are gzipped; legacy plain shards are read and recompres
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 });
+
+// preferCache: when the player is unchanged (or fetching is off), serve the cached field
+// PAST its weekly TTL instead of re-spending points -- but only up to the ~month stale cap.
+test("disk cache: preferCache reuses an expired field within the cap, refetches past it", async () => {
+  const { gql, clearGqlCache, _resetGqlDisk, _shardId, setPreferCache } = await import("../docs/wcl.js");
+  const zlib = await import("node:zlib");
+  const file = path.join(os.tmpdir(), `wcl-prefer-${process.pid}.json`);
+  const dir = `${file}.shards`;
+  process.env.WCL_GQL_CACHE = "1";
+  process.env.WCL_GQL_CACHE_FILE = file;
+  const rankingsQ = "query { worldData { encounter(id:7) { characterRankings(page:1) } } }";
+  const DAY = 24 * 60 * 60 * 1000;
+  const seed = (ageMs, d) => {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* none */ }
+    fs.mkdirSync(dir, { recursive: true });
+    const shard = path.join(dir, `${_shardId(rankingsQ)}.json.gz`);
+    fs.writeFileSync(shard, zlib.gzipSync(JSON.stringify({ [rankingsQ]: { t: Date.now() - ageMs, d } })));
+  };
+  try {
+    // 14 days old: past the weekly TTL, within the 28-day cap. preferCache OFF -> refetch.
+    setPreferCache(false);
+    seed(14 * DAY, { ranks: "stale14" });
+    clearGqlCache(); _resetGqlDisk();
+    globalThis.fetch = mockFetch([TOKEN, ["/api/v2/client", { json: { data: { ranks: "fresh" } } }]]);
+    assert.deepEqual(await gql(rankingsQ), { ranks: "fresh" }, "off: expired field refetches");
+
+    // Same age, preferCache ON -> serve the stale field, no network.
+    setPreferCache(true);
+    seed(14 * DAY, { ranks: "stale14" });
+    clearGqlCache(); _resetGqlDisk();
+    globalThis.fetch = () => { throw new Error("preferCache must reuse the within-cap stale field"); };
+    assert.deepEqual(await gql(rankingsQ), { ranks: "stale14" }, "on: within-cap field reused");
+
+    // 30 days old (past the cap), preferCache ON -> still refetches (field can't drift forever).
+    seed(30 * DAY, { ranks: "stale30" });
+    clearGqlCache(); _resetGqlDisk();
+    globalThis.fetch = mockFetch([TOKEN, ["/api/v2/client", { json: { data: { ranks: "fresh2" } } }]]);
+    assert.deepEqual(await gql(rankingsQ), { ranks: "fresh2" }, "on: past-cap field still refetches");
+  } finally {
+    setPreferCache(false);
+    delete process.env.WCL_GQL_CACHE;
+    delete process.env.WCL_GQL_CACHE_FILE;
+    _resetGqlDisk();
+    try { fs.rmSync(file, { force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+});
+
+// revalidateCharacter: the kill-signature gate. First sight stores the signature and does
+// NOT reuse; an unchanged signature flips preferCache on so the field is reused next time.
+test("revalidateCharacter: unchanged kills -> reuse the field (preferCache on)", async () => {
+  const { revalidateCharacter } = await import("../docs/core.js");
+  const { clearGqlCache, _resetGqlDisk, setPreferCache, preferCache } = await import("../docs/wcl.js");
+  const zoneResp = (kills) => ({ data: { characterData: { character: {
+    id: 1, classID: 10, zoneRankings: { rankings: [{ encounter: { id: 1 }, totalKills: kills }] } } } } });
+  try {
+    clearGqlCache(); _resetGqlDisk(); setPreferCache(false);
+    globalThis.fetch = mockFetch([TOKEN, ["/api/v2/client", { json: zoneResp(3) }]]);
+    const first = await revalidateCharacter("Foo", "bar", "US", 5);
+    assert.equal(first.unchanged, false, "first sight: no prior signature -> don't reuse");
+    assert.equal(preferCache(), false, "first sight leaves the normal TTL in charge");
+
+    // Second run, same kills (zoneRankings now served from cache): signature matches.
+    const second = await revalidateCharacter("Foo", "bar", "US", 5);
+    assert.equal(second.unchanged, true, "same kills -> unchanged -> reuse the field");
+    assert.equal(preferCache(), true, "unchanged -> preferCache flipped on");
+  } finally {
+    setPreferCache(false); clearGqlCache(); _resetGqlDisk();
+  }
+});

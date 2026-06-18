@@ -133,7 +133,7 @@ if (!name || !server || !region) {
 const only = opt.only ? new Set(opt.only.split(",").map((s) => s.trim())) : null;
 
 // --- run ---
-const { detectContext, detectPriority, DIFFICULTY, setRunContext, metricUnit } = await import("./docs/core.js");
+const { detectContext, detectPriority, DIFFICULTY, setRunContext, metricUnit, revalidateCharacter } = await import("./docs/core.js");
 // Learn WCL's point-reset clock up front (one cheap query, while still under
 // budget) so if we exhaust the shared budget mid-run the error can say WHEN it
 // resets ("try again in ~N min") instead of a vague "try again shortly".
@@ -191,6 +191,10 @@ if (!cls || !spec || difficulty === undefined || !priority) {
 // an Augmentation analyzed via explicit flags mis-framed as personal DPS.)
 setRunContext(cls, spec);
 const p = { name, server, region, cls, spec, difficulty, priority };
+// Reuse the cached field instead of re-buying it when you haven't raided since the last
+// run (a cheap kill-signature check -- see revalidateCharacter). No-op on the first run
+// or after a new kill; the probe's zoneRankings read is already memoized from detection.
+if (fetching) await revalidateCharacter(name, server, region, difficulty);
 
 log(`=== ${p.name}-${p.server} (${p.region}) | ${p.spec} ${p.cls} | ${DIFFICULTY[p.difficulty] || p.difficulty} ===`);
 // Run the SUPPORTING sections CONCURRENTLY (mirrors the browser app.js, which fires

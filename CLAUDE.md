@@ -60,6 +60,20 @@ payoff; the list is sorted **biggest-DPS-first by the impact actually shown**.
   read cache (and skips persisting) for the poll. Only `reportFights`/`reportDeaths`
   thread `fresh`; ended pulls' TABLES are immutable and stay cached. Don't widen
   `_isImmutable` — it's load-bearing for the "logged kills never change" model.
+  (It DOES also match `meta:` keys — those are our own fingerprints, e.g. a
+  character's kill-signature, which must persist forever like a kill report.)
+- **Reuse the stale field when you haven't raided (`setPreferCache`).** The field
+  (leaderboards + your standing) has a weekly TTL, but re-fetching it for a player
+  who hasn't killed anything new is spending points on unchanged data. `cli.mjs`
+  calls `revalidateCharacter` up front: it fingerprints your kills (zoneRankings
+  `encounter:totalKills`, a query it makes anyway — NOT rankPercent, that drifts
+  with the field) and, when the signature matches last run's (stored via
+  `metaGet`/`metaPut`), flips `setPreferCache(true)` so reads serve the cached
+  field past its TTL up to `FIELD_STALE_CAP_MS` (~a month, the ceiling so it can't
+  drift forever). Cache-only runs serve stale unconditionally (no fetch, so stale
+  beats a `CacheMiss`). `_ttlForRead` gates SERVING; `_ttlForKeep` (also the cap)
+  gates disk RETENTION so a later run can still reuse it. A new kill changes the
+  fingerprint and the field refreshes exactly as before.
 - camelCase all derived fields. Snake_case only for OAuth/HTTP wire formats.
 - **Verify every WCL GraphQL field/arg against the schema — don't guess.** Before
   adding or changing a query, check `WCL-SCHEMA.md` (our verified query surface +

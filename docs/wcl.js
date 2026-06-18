@@ -147,7 +147,9 @@ const CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 // A specific logged kill's report data (events/tables for a report+fight) never
 // changes once logged -- so it must never expire from any cache. Ranking/world/
 // character queries (the "field") DO drift, so they keep a finite TTL.
-const _isImmutable = (q) => /report\s*\(\s*code\s*:/.test(q);
+// `meta:` keys are our OWN fingerprints (e.g. a character's kill-signature), not WCL
+// queries -- they never expire and must survive pruneStaleCache, same as a logged kill.
+const _isImmutable = (q) => /report\s*\(\s*code\s*:/.test(q) || q.startsWith("meta:");
 
 // Short, stable key from the query text (FNV-1a). Collisions are made safe by
 // storing the query alongside the value and verifying it on read.
@@ -201,7 +203,8 @@ async function _storeSet(key, val) {
 export async function _cacheRead(query) {
   try {
     const e = await _storeGet(_hash(query));
-    if (e && e.q === query && Date.now() - e.t < (_isImmutable(query) ? Infinity : CACHE_TTL)) return e.d;
+    const ttl = _isImmutable(query) ? Infinity : (_preferCache ? FIELD_STALE_CAP_MS : CACHE_TTL);
+    if (e && e.q === query && Date.now() - e.t < ttl) return e.d;
   } catch { /* fall through to network */ }
   return undefined;
 }
@@ -259,6 +262,37 @@ export async function pruneStaleCache() {
 // spanning several days stays warm instead of aging out and re-spending points.
 const DISK_TTL_MS = 7 * 24 * 60 * 60 * 1000; // rankings: refresh ~weekly
 const _ttlFor = (q) => (_isImmutable(q) ? Infinity : DISK_TTL_MS);
+// The ceiling on serving a STALE field (drift-able data) without re-fetching: a month.
+// Two callers reuse the cached field past its weekly TTL instead of re-spending points
+// -- a cache-only run (no fetching, so stale beats a CacheMiss) and an unchanged-player
+// re-review (your kill-signature matches, so you didn't raid -- see revalidateCharacter).
+// Past this cap we refetch even when unchanged, so the field can't drift indefinitely.
+const FIELD_STALE_CAP_MS = 28 * 24 * 60 * 60 * 1000;
+let _preferCache = false;
+// Turn on reuse-the-stale-field mode for the rest of this run. One char per process
+// (the CLI and the browser each analyze a single character), so a process-global flag
+// is safe -- it's set once up front, never toggled mid-analysis.
+export function setPreferCache(v) { _preferCache = !!v; }
+export function preferCache() { return _preferCache; }
+// TTL applied when DECIDING whether a cached entry is fresh enough to SERVE. Immutable
+// data never expires; with fetching off (cache-only) any cache beats a miss; when the
+// player is unchanged we reuse the field up to the cap; otherwise the normal weekly TTL.
+const _ttlForRead = (q) => {
+  if (_isImmutable(q)) return Infinity;
+  if (cacheOnly()) return Infinity;
+  if (_preferCache) return FIELD_STALE_CAP_MS;
+  return _ttlFor(q);
+};
+// TTL applied when deciding what to KEEP on disk at flush time. We retain drift-able
+// entries up to the stale cap (not just the weekly TTL) so a later preferCache/cache-only
+// run can still serve them; without this, flush would drop them at one week and the reuse
+// would never span runs. Read-eligibility is still gated by _ttlForRead, so a normal run
+// won't START serving these older entries -- they just stay on disk in case they're wanted.
+const _ttlForKeep = (q) => (_isImmutable(q) ? Infinity : FIELD_STALE_CAP_MS);
+// Persisted fingerprint store (Node disk cache). Used by revalidateCharacter to remember
+// a character's kill-signature across runs. `meta:` keys are immutable (never pruned).
+export function metaGet(key) { const q = "meta:" + key; _ensureLoaded(q); return _gqlCache.has(q) ? _gqlCache.get(q) : undefined; }
+export function metaPut(key, data) { const q = "meta:" + key; _gqlCache.set(q, data); diskPut(q, data); }
 let _diskReady = null;   // Promise, set once init starts
 let _diskStore = null;   // { [query]: { t, d } } -- the whole cache, in memory
 let _diskFile = null;    // legacy monolith path (still READ for back-compat + migrated away)
@@ -296,7 +330,7 @@ function _loadShardInto(id, migrate) {
     let buf; try { buf = _diskFs.readFileSync(file); } catch { continue; }   // shard not written yet
     try {
       for (const [q, e] of Object.entries(_decodeShard(buf)))
-        if (e && (now - e.t) < _ttlFor(q) && (!_diskStore[q] || _diskStore[q].t < e.t)) {
+        if (e && (now - e.t) < _ttlForRead(q) && (!_diskStore[q] || _diskStore[q].t < e.t)) {
           _diskStore[q] = e; _gqlCache.set(q, e.d);
           if (migrate) { _dirty.add(_shardId(q)); migrated = true; }
         }
@@ -432,7 +466,7 @@ function _flushDisk() {
   // Bucket our (non-expired) entries by shard once.
   const ours = {};
   for (const [q, e] of Object.entries(_diskStore)) {
-    if (now - e.t >= _ttlFor(q)) continue;
+    if (now - e.t >= _ttlForKeep(q)) continue;
     const s = _shardId(q);
     (ours[s] || (ours[s] = {}))[q] = e;
   }
@@ -447,7 +481,7 @@ function _flushDisk() {
     // absence (on the old monolith) caused the 396MB->38MB truncation.
     try {
       for (const [q, e] of Object.entries(_decodeShard(_diskFs.readFileSync(file))))
-        if (e && now - e.t < _ttlFor(q)) merged[q] = e;
+        if (e && now - e.t < _ttlForKeep(q)) merged[q] = e;
     } catch (err) {
       if (!(err && err.code === "ENOENT")) { stillDirty.add(s); continue; }  // exists but unreadable -> keep it
     }
