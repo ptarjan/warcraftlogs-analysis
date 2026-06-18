@@ -21,6 +21,22 @@ const trunc = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + "…" : s);
 // gate and the store so they can never drift again.
 export const priorityGain = (candPri, yoursPri) => (candPri || 0) - (yoursPri || 0);
 
+// A swap candidate this many ilvls (or more) below your current item in that slot is a
+// NET DOWNGRADE even if it carries more of the priority stat -- you'd shed primary + the
+// other secondaries. The lever only prices the priority gain, so without this floor it
+// recommends an OLD-TIER drop that an undergeared peer happens to show (the real bug: a
+// Dragonflight dungeon weapon at base ilvl 53 pitched as a "+mastery" upgrade over an
+// ilvl-289 weapon, because the current weapon had zero mastery). Sized to catch a
+// CROSS-EXPANSION item only: current pieces' base ilvls cluster within a few dozen of each
+// other (~246-298 in one observed field) while the misfired DF drop sits at 53 -- a ~200
+// gap. 100 sits comfortably between, so it never trims a legit lower-base current piece
+// (incl. crafted items, whose empty-bonus base is low but scale up).
+export const SWAP_ILVL_FLOOR = 100;
+// True if a swap candidate's BASE (empty-bonus) ilvl is close enough to your slot item's
+// to be a real sidegrade, not a cross-expansion downgrade. Null ilvls fail open (keep).
+export const withinSwapIlvl = (candBase, yourBase) =>
+  candBase == null || yourBase == null || candBase >= yourBase - SWAP_ILVL_FLOOR;
+
 // ring. You can't wear two; keep the bigger-gain slot and drop the duplicate, else
 // the list reads "replace Ring1 AND Ring2 with Omission of Light", which is impossible.
 // Non-unique items can legitimately fill two slots, so they're untouched.
@@ -257,6 +273,7 @@ export async function gearFindings(name, server, region, className, specName, di
     // slots, and not a tier-eligible slot (set-bonus interaction).
     const structural = (s === 12 || s === 13) || ist.embellished || TIER_SLOTS.has(s);
     const yoursPri = ist[priority] || 0;
+    const yourBase = (await itemStats(g.id, [])).ilvl;  // your slot item's native (empty-bonus) ilvl
     const slotCounter = perSlot[s] || new Map();
     const slotTotal = [...slotCounter.values()].reduce((a, b) => a + b, 0) || 1;
     let bestAlt = null;
@@ -265,6 +282,13 @@ export async function gearFindings(name, server, region, className, specName, di
         if (candId === g.id) continue;
         const cst = await itemStats(candId, bonusSample[candId]);
         if (cst.unique && myItemIds.has(candId)) continue;
+        // Skip an old-tier drop a peer happens to show -- a net downgrade despite more of
+        // the priority stat. The bonus-SCALED ilvl is unreliable (bonus IDs can drag an old
+        // item across tiers -- a DF dungeon weapon shows ilvl ~290+ scaled), so gate on the
+        // BASE (empty-bonus) ilvl, which reflects the item's native tier: current pieces sit
+        // ~290, the misfired DF weapon is 53. yourBase is the same measure for your slot.
+        const cstBase = (await itemStats(candId, [])).ilvl;
+        if (!withinSwapIlvl(cstBase, yourBase)) continue;
         // NET gain over YOUR current item (see priorityGain) -- not the candidate's
         // gross stat. Require real adoption (>=3 of the field) too.
         const netGain = priorityGain(cst[priority], yoursPri);

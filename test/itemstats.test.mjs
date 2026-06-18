@@ -179,3 +179,16 @@ test("different bonus IDs are cached separately (stats vary per instance)", asyn
   assert.equal(mast.mastery, 50);
   assert.equal(fx.calls.length, 2, "distinct bonus IDs must not collide in cache");
 });
+
+// A swap candidate from an OLD expansion (low base ilvl, but bonus-scaled to look current)
+// is a net downgrade despite more of the priority stat -- the finder must skip it. The base
+// (empty-bonus) ilvl is the tell: current pieces cluster ~250-300, the misfired DF drop was 53.
+test("withinSwapIlvl: rejects a cross-expansion drop, keeps current-tier sidegrades", async () => {
+  const { withinSwapIlvl, SWAP_ILVL_FLOOR } = await import("../docs/gear.js");
+  assert.equal(SWAP_ILVL_FLOOR, 100);
+  assert.equal(withinSwapIlvl(53, 289), false, "a Dragonflight base-53 drop vs your ilvl-289 slot is out");
+  assert.equal(withinSwapIlvl(246, 289), true, "a current base-246 piece (scales up) stays in");
+  assert.equal(withinSwapIlvl(289, 289), true, "same base ilvl is in");
+  assert.equal(withinSwapIlvl(null, 289), true, "unknown candidate ilvl fails open (keep)");
+  assert.equal(withinSwapIlvl(53, null), true, "unknown your ilvl fails open (keep)");
+});
