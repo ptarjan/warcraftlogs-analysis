@@ -831,6 +831,7 @@ export async function rotationFindings(name, server, region, className, specName
   return {
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener, atonement: !!you.atonement,
     usage, cooldowns, cdUsage, buffCds, perCast, dotGaps, dotCount: (you.dots || []).length, petGap, castGap, fieldPeers: peers.length, talent, abilityIds,
+    yourHero: yourHero || null,
     heroMatched: yourHero && peers.length ? (peers.every((p) => p.hero === yourHero) ? yourHero : null) : null,
     proc: { name: biggest ? biggest.name : null, isReal, youPerMin: biggest ? biggest.procPerMin : 0, fieldPerMin: fieldProc, youEmp, fieldEmp },
   };
@@ -965,6 +966,16 @@ function usageLevers(rot, link) {
     // function early-returns for them.)
     const underAbilities = u.under.filter((a) => a.name !== consumed && castable(a.name, rot && rot.talent));
     const measured = underAbilities.filter((a) => (a.dmgPct || 0) >= 1).sort((a, b) => b.dmgPct - a.dmgPct);
+    // OFF-BUILD: when your hero tree is known but the rotation peer pool ISN'T it (too few
+    // same-tree peers at your ilvl, so sameHeroPeers fell back to the off-tree field), a
+    // per-ability cast-rate gap is CONFOUNDED -- the field's optimal mix is for a different
+    // build, not yours. Mirror realOveruse's build-awareness (which already guards over-press):
+    // don't claim a confident misplay; flag that it may be the build and the reliable read is
+    // to switch + re-run. Keeps the impact (reconcile owns the gap) -- only the claim softens.
+    const offBuild = !!(rot && rot.yourHero && !rot.heroMatched);
+    const buildCaveat = offBuild
+      ? ` (but the field runs a different hero tree -- see HERO TREE -- so this may be a build difference, not a misplay; switch to the field's build and re-run for a same-build read)`
+      : "";
     measured.slice(0, 3).forEach((a, i) => {
       // Name the wrong-button swap once, on the biggest, when you over-press a filler.
       const over = (i === 0 && realOver.length)
@@ -972,7 +983,7 @@ function usageLevers(rot, link) {
         : "";
       out.push(finding(DIM.ROTATION, DPS(a.dmgPct),
         `ROTATION: press ${link(a.name)} more -- peers cast it ${f(a.field, 1)}/min vs your ${f(a.you, 1)}; ` +
-        `the casts you're missing are ~${a.dmgPct}% of your ${throughputWord()}.${over}`, "measured"));
+        `the casts you're missing are ~${a.dmgPct}% of your ${throughputWord()}.${over}${buildCaveat}`, "measured"));
     });
     // Fallback: when NONE could be measured (no peers, or too few of your own casts to
     // get a per-cast), keep the old lumped flat estimate so the lever still surfaces.

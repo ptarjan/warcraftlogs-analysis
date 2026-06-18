@@ -453,3 +453,23 @@ test("petLever: pet advice is class-agnostic -- no hard-coded ability names", ()
   assert.doesNotMatch(pet.text, /Army|Gargoyle|Dark Transformation|Bestial Wrath|Niuzao|Dreadstalker/,
     "no class-specific ability names in the generic pet advice");
 });
+
+// OFF-BUILD rotation caveat: when your hero tree is known but the rotation peer pool isn't it
+// (too few same-tree peers -> sameHeroPeers fell back to the off-tree field), a "press X more"
+// gap is build-confounded. Mirror realOveruse's build-awareness: keep the lever (impact stays)
+// but flag it may be the build, not a misplay. Found reviewing Boxo (Voidweaver vs 100% Archon).
+test("rotation: off-build (hero tree != field) caveats the press-more lever; on-build doesn't", () => {
+  const base = {
+    usage: { under: [{ name: "Vampiric Touch", you: 0.6, field: 2.1, dmgPct: 9 }], over: [] },
+    talent: { taken: new Set(["Vampiric Touch"]), universe: new Set(["Vampiric Touch"]) },
+    abilityIds: {},
+  };
+  const off = rotationLevers({ ...base, yourHero: "Voidweaver", heroMatched: null });
+  const offLever = off.find((l) => /press .*Vampiric Touch.* more/.test(l.text));
+  assert.ok(offLever, "press-more lever fires");
+  assert.match(offLever.text, /different hero tree/, "off-build -> build caveat appended");
+  const on = rotationLevers({ ...base, yourHero: "Voidweaver", heroMatched: "Voidweaver" });
+  const onLever = on.find((l) => /press .*Vampiric Touch.* more/.test(l.text));
+  assert.ok(onLever, "press-more lever fires when hero-matched");
+  assert.doesNotMatch(onLever.text, /different hero tree/, "on-build -> no caveat");
+});
