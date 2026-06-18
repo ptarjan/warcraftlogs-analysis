@@ -717,16 +717,24 @@ export async function detectContext(name, server, region) {
 // caller resolves the slug). Excludes you. Returns [] on any hiccup (private
 // reports, rate limit, schema gap) so the picker degrades gracefully.
 // Same region as you -- retail raids are within-region.
-export async function raidTeammates(name, server, region, { maxReports = 12, top = 24 } = {}) {
+export async function raidTeammates(name, server, region, { maxReports = 12, top = 24, difficulty = /** @type {number|null} */ (null) } = {}) {
   try {
-    // Find the highest difficulty you have kills in, and its killed encounters.
-    let difficulty = null, killed = [];
-    for (const d of DIFF_ORDER) {
-      const c = await characterZone(name, server, region, d);
+    // Which difficulty's kills to scan. Caller can pin ONE (to surface a team you raid
+    // at a lower difficulty -- otherwise hidden, since we'd only ever look at your top
+    // one); default null = the highest difficulty you have kills in.
+    let killed = [];
+    if (difficulty != null) {
+      const c = await characterZone(name, server, region, difficulty);
       killed = (c.zoneRankings.rankings || []).filter((r) => (r.totalKills || 0) > 0);
-      if (killed.length) { difficulty = d; break; }
+      if (!killed.length) return [];
+    } else {
+      for (const d of DIFF_ORDER) {
+        const c = await characterZone(name, server, region, d);
+        killed = (c.zoneRankings.rankings || []).filter((r) => (r.totalKills || 0) > 0);
+        if (killed.length) { difficulty = d; break; }
+      }
+      if (difficulty == null) return [];
     }
-    if (!difficulty) return [];
     // Collect distinct recent report codes (= raid nights) from your kills. More
     // reports -> a fuller team and a "shared" count that isn't capped at a tiny
     // sample (the bug: "4 raids together" was just "all 4 of the 4 we checked").

@@ -66,6 +66,15 @@ test("raidTeammates: tally / exclude self+pets / sort", async () => {
   assert.equal(mates.length, 3); // Tank, Healer, Mage (regulars filter falls back: too few >=2)
 });
 
+test("raidTeammates: a pinned difficulty scans ONLY that difficulty's kills", async () => {
+  const raidTeammates = await load();
+  globalThis.fetch = mockFetch([TOKEN, wclRoute(ROSTERS)]); // mock has Mythic(5) kills only
+  // Pinning Mythic finds the team; pinning Heroic (no kills here) is empty -- so a team
+  // at one difficulty can't leak into another, and the auto-detect path is unchanged.
+  assert.equal((await raidTeammates("Me", "proudmoore", "US", { difficulty: 5 })).length, 3);
+  assert.deepEqual(await raidTeammates("Me", "proudmoore", "US", { difficulty: 4 }), []);
+});
+
 test("raidTeammates: no kills -> empty (never throws)", async () => {
   const raidTeammates = await load();
   globalThis.fetch = mockFetch([TOKEN, ["/api/v2/client", { json: { data: { characterData: {

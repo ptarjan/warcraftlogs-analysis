@@ -198,27 +198,34 @@ async function renderMode() {
 // People you commonly raid with (from your kills' rosters), shown as a separate,
 // visually-distinct group below your own characters. Best-effort + lazy.
 //
-// You may raid with DIFFERENT teams on different characters (e.g. a Mythic main on
-// one realm, an alt-run on another). raidTeammates only sees ONE character's kills,
-// so scanning just chars[0] hides every other group. Scan your top few characters
-// and render a section per distinct team, labelled by which of YOUR characters that
-// team raids with -- so "the other group I raid with" actually shows up. Bounded for
-// quota (MATES_PICKER_CHARS), like the raid-nights picker.
+// You may raid with DIFFERENT teams on different characters (a Mythic main on one
+// realm, an alt-run on another) AND at different DIFFICULTIES on the same character
+// (a cross-realm Mythic group + a guild Heroic group). raidTeammates only sees ONE
+// character at ONE difficulty, so the old chars[0]/top-difficulty-only scan hid every
+// other team. Scan your top few characters across Mythic + Heroic and render a section
+// per distinct team. De-dupe across sections so a team you reach more than one way
+// (two characters, or Heroic + Mythic in a lockout) shows once. Bounded for quota.
 const MATES_PICKER_CHARS = 3;     // your characters to scan for teammates (bounded for quota)
+const MATES_DIFFS = [5, 4];       // Mythic, then Heroic -- where real teams are (skip Normal/LFR pugs)
 async function appendTeammates(picker, chars, run) {
   const scan = chars.slice(0, MATES_PICKER_CHARS);
   if (!scan.length) return;
-  // One teammate list per scanned character (bounded concurrency; raidTeammates is
-  // heavy and itself fans out over rosters). Keep the source character with each list.
-  const lists = await mapLimit(scan, 2, (c) =>
-    raidTeammates(c.name, c.server, c.region).then((m) => ({ c, m })).catch(() => ({ c, m: [] })));
+  // One list per (character, difficulty). Bounded concurrency; identical roster queries
+  // are cached, so a raid night logged at both Heroic and Mythic isn't re-fetched.
+  const jobs = [];
+  for (const c of scan) for (const d of MATES_DIFFS) jobs.push({ c, d });
+  const lists = await mapLimit(jobs, 3, ({ c, d }) =>
+    raidTeammates(c.name, c.server, c.region, { difficulty: d, maxReports: 8 })
+      .then((m) => ({ c, d, m })).catch(() => ({ c, d, m: [] })));
   if (run !== pickerRun) return;                        // re-rendered while we fetched
-  // De-dupe across groups (and against your own alts): a teammate you raid with on
-  // BOTH characters appears once, under the first (most-recently-active) group, so the
-  // OTHER group still shows its distinct members instead of repeating shared ones.
+  // De-dupe across sections (and against your own alts): a teammate surfaced by an
+  // earlier section (a higher difficulty, or another of your characters) is dropped
+  // from later ones, so each team shows its DISTINCT members and the same team reached
+  // two ways collapses instead of repeating. Jobs are ordered character-major,
+  // difficulty-descending, so a team's Mythic section wins over its Heroic one.
   const seen = new Set(chars.map((c) => `${c.name}|${c.server}`.toLowerCase()));
   const sections = [];
-  for (const { c, m } of lists) {
+  for (const { c, d, m } of lists) {
     const rows = (m || [])
       .map((t) => ({ ...t, slug: realmSlug(t.region, t.server) }))
       .filter((t) => {
@@ -227,17 +234,21 @@ async function appendTeammates(picker, chars, run) {
         seen.add(k);
         return true;
       });
-    if (rows.length) sections.push({ char: c, rows });
+    if (rows.length >= 2) sections.push({ char: c, diff: d, rows });   // skip a lone left-over
   }
   if (!sections.length) return;
-  // One header per group. With a single group keep the generic label; with more than
-  // one, name the character so you can tell your teams apart.
-  for (const { char, rows } of sections) {
+  // Header per group. One group -> the generic label. Several -> name the character;
+  // and when a single character has more than one team, add the difficulty to tell them
+  // apart (e.g. a Mythic group and a Heroic group on the same toon).
+  const perChar = new Map();
+  for (const s of sections) perChar.set(s.char.name, (perChar.get(s.char.name) || 0) + 1);
+  for (const { char, diff, rows } of sections) {
     const h = document.createElement("div");
     h.className = "picker-h mates-h";
-    h.textContent = sections.length > 1
-      ? `Raid teammates — your ${char.name} group`
-      : "Raid teammates — people you commonly raid with";
+    h.textContent = sections.length === 1
+      ? "Raid teammates — people you commonly raid with"
+      : `Raid teammates — your ${char.name} group` +
+        ((perChar.get(char.name) || 0) > 1 ? ` (${DIFFICULTY[diff]})` : "");
     picker.appendChild(h);
     const grid = document.createElement("div");
     grid.className = "picker-grid";
