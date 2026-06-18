@@ -480,7 +480,11 @@ export function gemLever(gf, gemDelta = null) {
   // surfaces at the flat estimate -- same call as the 0%-consumable-swap fix.)
   if (gemDelta && Math.round(gemDelta.pct) === 0) return [];
   const cite = gemDelta ? ` (measured: peers on the field's gem do ${Math.round(gemDelta.pct)}% more, n=${gemDelta.nHave}/${gemDelta.nNot})` : "";
-  return [finding(DIM.GEAR, gemDelta ? DPS(Math.round(gemDelta.pct)) : DPS(1, 2), msg + cite, gemDelta ? "measured" : "est")];
+  // Same cap as the stat lever: a confounded gem field-delta can read huge (12% on a skewed
+  // field) -- but gems are the cheapest stat change, never a double-digit lever. Cite the
+  // measured % (honest), but size the lever at the capped value so it can't dominate.
+  const gemImpact = gemDelta ? Math.min(Math.round(gemDelta.pct), GEAR_LEVER_CAP) : null;
+  return [finding(DIM.GEAR, gemImpact != null ? DPS(gemImpact) : DPS(1, 2), msg + cite, gemDelta ? "measured" : "est")];
 }
 
 // A stat-gain lever's size scales with the ACTUAL rating gained, so a +260 swap
@@ -491,6 +495,16 @@ export function gemLever(gf, gemDelta = null) {
 // ~75 rating/point keeps a typical swap near the old ~2% so gear-vs-rotation stays
 // balanced. Floor 0.5 (a tiny gain still shows), cap 5 (no one piece dominates
 // before reconciliation). Pure -- unit-tested.
+// Ceiling on ANY single gear lever (the bundled "re-itemize N slots" total, and the gem
+// lever). The per-swap cap is 5% and reconcileImpacts bounds the SUM to the gap -- but an
+// ABOVE-FIELD player has no gap to bound against (levers reconcile vs the gap-to-TOP), and
+// the stat/gem field-deltas are CONFOUNDED correlations that can read huge on a small or
+// skewed field (a Pres Evoker 30% ahead of the field showed a 27% "mastery" delta -> a 20%
+// re-itemize lever + a 12% gem lever = 32% from gear). CLAUDE.md: gear at your ilvl is ~a
+// few %; the matched-ilvl gap is PLAYSTYLE, not gear. 10 is generous headroom over the
+// legit max observed (a full re-itemize ~6-8%), so it only trims the confounded inflation;
+// reconcileImpacts moves the freed % into the playstyle remainder.
+export const GEAR_LEVER_CAP = 10;
 export function statScore(gain) {
   const impact = Math.min(5, Math.max(0.5, (gain || 0) / 75));
   const lo = Math.max(1, Math.round(impact - 1)), hi = Math.max(lo, Math.round(impact + 1));
@@ -550,7 +564,8 @@ export function gearLevers(gf, priority, statValue = null, gemDelta = null, abov
   // exact from->to swap. Impact = sum of the per-swap values (measured from the field
   // when we have it, else the sim estimate); reconcileImpacts rescales to the gap.
   if (swaps.length >= 3) {
-    const total = swaps.reduce((s, sw) => s + (statValueScore(sw.gain, statValue) || statScore(sw.gain)).impact, 0);
+    const rawTotal = swaps.reduce((s, sw) => s + (statValueScore(sw.gain, statValue) || statScore(sw.gain)).impact, 0);
+    const total = Math.min(rawTotal, GEAR_LEVER_CAP);   // gear is a few % -- don't let a confounded field-delta inflate it
     const gain = swaps.reduce((s, sw) => s + (sw.gain || 0), 0);
     const items = swaps.map((sw) => `${sw.slot} ${wowheadItem(sw.fromId, sw.fromName)}→${wowheadItem(sw.toId, sw.toName)}`).join(", ");
     out.push(finding(DIM.GEAR, { impact: total, label: `~${Math.round(total)}% ${metricUnit()}` },

@@ -179,3 +179,23 @@ test("different bonus IDs are cached separately (stats vary per instance)", asyn
   assert.equal(mast.mastery, 50);
   assert.equal(fx.calls.length, 2, "distinct bonus IDs must not collide in cache");
 });
+
+// A confounded field-delta (better players itemize better -> a 27% "mastery" or 12% "gem"
+// delta on a small/skewed field) must not inflate a gear lever past the "gear is a few %"
+// ceiling. Especially for an ABOVE-FIELD player, whose levers reconcile vs the gap-to-top
+// with no field gap to bound them. GEAR_LEVER_CAP caps both the bundled stat lever + gems.
+test("GEAR_LEVER_CAP: a confounded gem delta can't push the gem lever past the few-% ceiling", async () => {
+  const { gemLever, GEAR_LEVER_CAP } = await import("../docs/gear.js");
+  assert.equal(GEAR_LEVER_CAP, 10);
+  const gf = { gems: {
+    fieldTop: [[111, 5]], fieldTopName: "Flawless Quick Amethyst",
+    yourGems: new Map([[222, 3]]), fieldVarietyMed: 2, yourVariety: 3,
+  } };
+  // A wildly confounded 27% gem delta -> the lever must size at the cap, not 27%.
+  const hi = gemLever(gf, { pct: 27, nHave: 5, nNot: 4 });
+  assert.equal(hi.length, 1);
+  assert.equal(hi[0].impact, GEAR_LEVER_CAP, "27% gem delta capped to 10");
+  // A normal small delta passes through untouched.
+  const lo = gemLever(gf, { pct: 3, nHave: 5, nNot: 5 });
+  assert.equal(lo[0].impact, 3, "a real 3% gem delta is unchanged");
+});
