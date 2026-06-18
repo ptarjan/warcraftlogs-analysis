@@ -453,7 +453,7 @@ export function embellishmentRx(gf) {
 // stat), say so and link the field's gem. Pure -- unit-tested. Returns [] when
 // your gems already line up (or there's no field data to compare against).
 /** @param {any} gf @param {FieldDelta|null} [gemDelta] */
-export function gemLever(gf, gemDelta = null) {
+export function gemLever(gf, gemDelta = null, cap = GEAR_LEVER_CAP) {
   if (!gf || !gf.gems) return [];
   const gi = gf.gems;
   const fieldTopId = gi.fieldTop && gi.fieldTop[0] && gi.fieldTop[0][0];
@@ -483,7 +483,7 @@ export function gemLever(gf, gemDelta = null) {
   // Same cap as the stat lever: a confounded gem field-delta can read huge (12% on a skewed
   // field) -- but gems are the cheapest stat change, never a double-digit lever. Cite the
   // measured % (honest), but size the lever at the capped value so it can't dominate.
-  const gemImpact = gemDelta ? Math.min(Math.round(gemDelta.pct), GEAR_LEVER_CAP) : null;
+  const gemImpact = gemDelta ? Math.min(Math.round(gemDelta.pct), cap) : null;
   return [finding(DIM.GEAR, gemImpact != null ? DPS(gemImpact) : DPS(1, 2), msg + cite, gemDelta ? "measured" : "est")];
 }
 
@@ -505,6 +505,13 @@ export function gemLever(gf, gemDelta = null) {
 // legit max observed (a full re-itemize ~6-8%), so it only trims the confounded inflation;
 // reconcileImpacts moves the freed % into the playstyle remainder.
 export const GEAR_LEVER_CAP = 10;
+// Tighter ceiling when your OUTPUT already beats the field median (you're ahead, not behind).
+// The field-delta levers are confounded correlations from the field's stat-stackers -- but
+// those stackers AREN'T ahead of YOU, so the correlation doesn't predict your gains. A player
+// out-performing the field has little real gear to add (CLAUDE.md: gear is a few %; the gap to
+// the TOP is execution/selection-bias, not itemization). Reconcile sends the freed % to the
+// playstyle/gap-to-top remainder -- the honest bucket for an above-field player.
+export const GEAR_LEVER_CAP_AHEAD = 4;
 export function statScore(gain) {
   const impact = Math.min(5, Math.max(0.5, (gain || 0) / 75));
   const lo = Math.max(1, Math.round(impact - 1)), hi = Math.max(lo, Math.round(impact + 1));
@@ -535,10 +542,13 @@ export function statValueScore(gain, statValue) {
 // runs LESS of the stat than you do, so "stack even more" isn't a real lever (stats
 // soft-cap / have breakpoints). Genuine ilvl SWAPS still show; only the recrafts drop.
 /** @param {any} gf @param {string} priority @param {StatValue|null} [statValue] @param {FieldDelta|null} [gemDelta] @param {boolean} [aboveField] */
-export function gearLevers(gf, priority, statValue = null, gemDelta = null, aboveField = false) {
+export function gearLevers(gf, priority, statValue = null, gemDelta = null, aboveField = false, outputAhead = false) {
   if (!gf) return [];
   const PRI = priority.toUpperCase();
   const out = [];
+  // When you already out-PERFORM the field (not just out-stack one stat), the confounded
+  // field-delta levers can't be real gains -- tighten their ceiling. See GEAR_LEVER_CAP_AHEAD.
+  const cap = outputAhead ? GEAR_LEVER_CAP_AHEAD : GEAR_LEVER_CAP;
   const swaps = gf.swaps || [];
   // Cite the field-measured stat value once (so each swap line stays terse).
   const mcite = statValue && statValue.perRating > 0
@@ -555,7 +565,7 @@ export function gearLevers(gf, priority, statValue = null, gemDelta = null, abov
   if (measuredZero) {
     const embRx = embellishmentRx(gf);
     if (embRx) out.push(embRx);
-    out.push(...gemLever(gf, gemDelta));
+    out.push(...gemLever(gf, gemDelta, cap));
     return out;
   }
   // LEGIBILITY: a low player can have 5+ priority-stat swaps. Five separate
@@ -565,7 +575,7 @@ export function gearLevers(gf, priority, statValue = null, gemDelta = null, abov
   // when we have it, else the sim estimate); reconcileImpacts rescales to the gap.
   if (swaps.length >= 3) {
     const rawTotal = swaps.reduce((s, sw) => s + (statValueScore(sw.gain, statValue) || statScore(sw.gain)).impact, 0);
-    const total = Math.min(rawTotal, GEAR_LEVER_CAP);   // gear is a few % -- don't let a confounded field-delta inflate it
+    const total = Math.min(rawTotal, cap);   // gear is a few % -- don't let a confounded field-delta inflate it
     const gain = swaps.reduce((s, sw) => s + (sw.gain || 0), 0);
     const items = swaps.map((sw) => `${sw.slot} ${wowheadItem(sw.fromId, sw.fromName)}→${wowheadItem(sw.toId, sw.toName)}`).join(", ");
     out.push(finding(DIM.GEAR, { impact: total, label: `~${Math.round(total)}% ${metricUnit()}` },
@@ -591,6 +601,6 @@ export function gearLevers(gf, priority, statValue = null, gemDelta = null, abov
   }
   const embRx = embellishmentRx(gf);
   if (embRx) out.push(embRx);
-  out.push(...gemLever(gf, gemDelta));
+  out.push(...gemLever(gf, gemDelta, cap));
   return out;
 }

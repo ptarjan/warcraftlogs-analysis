@@ -199,3 +199,19 @@ test("GEAR_LEVER_CAP: a confounded gem delta can't push the gem lever past the f
   const lo = gemLever(gf, { pct: 3, nHave: 5, nNot: 5 });
   assert.equal(lo[0].impact, 3, "a real 3% gem delta is unchanged");
 });
+
+// When OUTPUT already beats the field (you're ahead, not behind), the confounded field-delta
+// levers get a tighter ceiling -- a player out-performing the field has little real gear to
+// add. Found reviewing Chiqasaurus (Pres Evoker 30% ahead, still ~20% gear post-cap).
+test("GEAR_LEVER_CAP_AHEAD: an above-field player's gem lever is capped tighter", async () => {
+  const { gemLever, GEAR_LEVER_CAP, GEAR_LEVER_CAP_AHEAD } = await import("../docs/gear.js");
+  assert.equal(GEAR_LEVER_CAP_AHEAD, 4);
+  assert.ok(GEAR_LEVER_CAP_AHEAD < GEAR_LEVER_CAP, "ahead cap is tighter than the normal cap");
+  const gf = { gems: {
+    fieldTop: [[111, 5]], fieldTopName: "Flawless Quick Amethyst",
+    yourGems: new Map([[222, 3]]), fieldVarietyMed: 2, yourVariety: 3,
+  } };
+  const delta = { pct: 12, nHave: 5, nNot: 4 };
+  assert.equal(gemLever(gf, delta)[0].impact, GEAR_LEVER_CAP, "behind/normal: capped at 10");
+  assert.equal(gemLever(gf, delta, GEAR_LEVER_CAP_AHEAD)[0].impact, GEAR_LEVER_CAP_AHEAD, "ahead: capped at 4");
+});

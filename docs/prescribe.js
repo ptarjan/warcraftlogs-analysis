@@ -1254,13 +1254,18 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // 54% haste vs the field's 37% -- recrafting for +177 more haste was the wrong advice.)
   const aboveField = (my && my.statPct != null && field && field.statPct != null)
     && my.statPct >= field.statPct + ABOVE_FIELD_MARGIN;
+  // Your OUTPUT already beats the field median (peerGapPct < 0 = ahead). Distinct from
+  // aboveField (which is the priority STAT): an ahead player has little real gear to add, so
+  // the confounded field-delta levers get a tighter cap (GEAR_LEVER_CAP_AHEAD). 5pp margin so
+  // a roughly-even player keeps the normal sizing.
+  const outputAhead = peerGapPct != null && peerGapPct <= -5;
   /** @type {Finding[]} */
   const rx = [
     ...executionLevers(execd, rot, peerGapPct, (execd && execd.activePct != null) ? execd.activePct : (you && you.activePct)),
     ...(field && my ? consumableLevers(field, my) : []),
     ...(field && my ? enchantLevers(field, my) : []),
     ...trinketRx,
-    ...gearLevers(gf, priority, field && field.statValue, field && field.gemDelta, aboveField),
+    ...gearLevers(gf, priority, field && field.statValue, field && field.gemDelta, aboveField, outputAhead),
     ...(my ? statGapLever(gf, my, field, priority) : []),
     // Healer-specific efficiency levers (overhealing, mana) -- self-silent for a
     // damage run (runIsHealer false, overheal 0). Measured from your benchmark kill.
