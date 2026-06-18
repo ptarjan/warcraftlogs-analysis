@@ -197,30 +197,58 @@ async function renderMode() {
 
 // People you commonly raid with (from your kills' rosters), shown as a separate,
 // visually-distinct group below your own characters. Best-effort + lazy.
+//
+// You may raid with DIFFERENT teams on different characters (e.g. a Mythic main on
+// one realm, an alt-run on another). raidTeammates only sees ONE character's kills,
+// so scanning just chars[0] hides every other group. Scan your top few characters
+// and render a section per distinct team, labelled by which of YOUR characters that
+// team raids with -- so "the other group I raid with" actually shows up. Bounded for
+// quota (MATES_PICKER_CHARS), like the raid-nights picker.
+const MATES_PICKER_CHARS = 3;     // your characters to scan for teammates (bounded for quota)
 async function appendTeammates(picker, chars, run) {
-  const primary = chars[0];
-  if (!primary) return;
-  let mates = [];
-  try { mates = await raidTeammates(primary.name, primary.server, primary.region); } catch { mates = []; }
-  if (run !== pickerRun || !mates.length) return;     // re-rendered, or none found
-  const ownKeys = new Set(chars.map((c) => `${c.name}|${c.server}`.toLowerCase()));
-  const rows = mates
-    .map((m) => ({ ...m, slug: realmSlug(m.region, m.server) }))
-    .filter((m) => !ownKeys.has(`${m.name}|${m.slug}`.toLowerCase())); // not your own alts
-  if (!rows.length) return;
-  const h = document.createElement("div");
-  h.className = "picker-h mates-h";
-  h.textContent = "Raid teammates — people you commonly raid with";
-  picker.appendChild(h);
-  const grid = document.createElement("div");
-  grid.className = "picker-grid";
-  for (const m of rows) {
-    grid.appendChild(charButton({
-      name: m.name, server: m.slug, region: m.region, label: realmLabel(m.region, m.slug),
-      extra: m.of ? `together in ${m.shared}/${m.of} recent raids` : `${m.shared} raids together`, cls: "charbtn mate",
-    }));
+  const scan = chars.slice(0, MATES_PICKER_CHARS);
+  if (!scan.length) return;
+  // One teammate list per scanned character (bounded concurrency; raidTeammates is
+  // heavy and itself fans out over rosters). Keep the source character with each list.
+  const lists = await mapLimit(scan, 2, (c) =>
+    raidTeammates(c.name, c.server, c.region).then((m) => ({ c, m })).catch(() => ({ c, m: [] })));
+  if (run !== pickerRun) return;                        // re-rendered while we fetched
+  // De-dupe across groups (and against your own alts): a teammate you raid with on
+  // BOTH characters appears once, under the first (most-recently-active) group, so the
+  // OTHER group still shows its distinct members instead of repeating shared ones.
+  const seen = new Set(chars.map((c) => `${c.name}|${c.server}`.toLowerCase()));
+  const sections = [];
+  for (const { c, m } of lists) {
+    const rows = (m || [])
+      .map((t) => ({ ...t, slug: realmSlug(t.region, t.server) }))
+      .filter((t) => {
+        const k = `${t.name}|${t.slug}`.toLowerCase();
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+    if (rows.length) sections.push({ char: c, rows });
   }
-  picker.appendChild(grid);
+  if (!sections.length) return;
+  // One header per group. With a single group keep the generic label; with more than
+  // one, name the character so you can tell your teams apart.
+  for (const { char, rows } of sections) {
+    const h = document.createElement("div");
+    h.className = "picker-h mates-h";
+    h.textContent = sections.length > 1
+      ? `Raid teammates — your ${char.name} group`
+      : "Raid teammates — people you commonly raid with";
+    picker.appendChild(h);
+    const grid = document.createElement("div");
+    grid.className = "picker-grid";
+    for (const m of rows) {
+      grid.appendChild(charButton({
+        name: m.name, server: m.slug, region: m.region, label: realmLabel(m.region, m.slug),
+        extra: m.of ? `together in ${m.shared}/${m.of} recent raids` : `${m.shared} raids together`, cls: "charbtn mate",
+      }));
+    }
+    picker.appendChild(grid);
+  }
 }
 
 // A ?char=&region=&server= deep link prefills the form and, when it has enough
