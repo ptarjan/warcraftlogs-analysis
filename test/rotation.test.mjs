@@ -437,3 +437,19 @@ test("openerSequence takes the first N casts within the window", () => {
   assert.deepEqual(openerSequence(casts, 20000, 2), ["A", "B"]);      // capped at n
   assert.deepEqual(openerSequence([], 20000, 8), []);
 });
+
+// The pet-damage lever fires for EVERY pet spec (BM Hunter, Unholy DK, Demo Warlock), so its
+// advice must be class-agnostic -- naming DK cooldowns (Army/Gargoyle) to a Hunter is the
+// hard-coded-ability bug CLAUDE.md forbids. Found reviewing Kynigós (BM Hunter).
+test("petLever: pet advice is class-agnostic -- no hard-coded ability names", () => {
+  const rot = {
+    petGap: { you: 34, field: 39, pct: 8 },
+    usage: { under: [], over: [] }, talent: { taken: new Set(), universe: new Set() },
+    heroMatched: true, abilityIds: {},
+  };
+  const out = rotationLevers(rot);
+  const pet = out.find((l) => /PET (DAMAGE|HEALING)/.test(l.text));
+  assert.ok(pet, "pet lever fires when pets under-perform the field");
+  assert.doesNotMatch(pet.text, /Army|Gargoyle|Dark Transformation|Bestial Wrath|Niuzao|Dreadstalker/,
+    "no class-specific ability names in the generic pet advice");
+});

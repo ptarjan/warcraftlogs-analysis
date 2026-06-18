@@ -1048,8 +1048,8 @@ function petLever(rot) {
     const g = rot.petGap;
     out.push(finding(DIM.ROTATION, DPS(g.pct),
       `PET ${throughputWord().toUpperCase()}: your pets do ${g.you}% of your ${throughputWord()} vs the field's ${g.field}% -- ~${g.pct}% behind. ` +
-      `Use your pet cooldowns more: summon on cooldown, keep the pet active/transformed, and line up your ` +
-      `big pet windows (Army/Gargoyle/burst). It's a major damage source you're under-using, not gear.`, "measured"));
+      `Use your pet cooldowns more: summon it on cooldown, keep it active, and line up its burst cooldowns ` +
+      `with your damage windows. It's a major damage source you're under-using, not gear.`, "measured"));
   }
   return out;
 }
