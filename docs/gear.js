@@ -518,19 +518,30 @@ export function statScore(gain) {
   return { impact, label: hi > lo ? `~${lo}-${hi}% ${metricUnit()}` : `~${lo}% ${metricUnit()}` };
 }
 
+// How much of the field's measured stat-delta is CONFOUND, not the stat. The
+// per-rating value comes from a field split (peers who itemize MORE of the priority
+// stat vs less). But the peers who stack the stat are also, on average, the better
+// PLAYERS -- so most of "stack crit -> +18%" is them playing better, not the crit.
+// CLAUDE.md is explicit: gear at your item level is worth ~a few %; the matched-ilvl
+// gap is PLAYSTYLE, not gear. So we trust only HALF of the field delta as gear value
+// and let reconcileImpacts move the freed % into the playstyle/rotation bucket -- the
+// whole point of the tool. Mirrors the 0.5 damp the rotation per-cast lever already
+// applies to its own confounded (crit-RNG) signal, so gear and rotation are sized on
+// the same conservative footing and the list leans toward what you actually PLAY.
+export const FIELD_DELTA_CONFOUND = 0.5;
 // MEASURED size for a stat swap: price the rating gained at the field's own value
 // per point, instead of the ~75/point sim constant. `statValue` is from the
 // ilvl-matched field (peers who itemize MORE of the priority stat vs less, at the
 // SAME item level, so it's an itemization choice not gear) -> a measured DPS %
 // across the stat-rating spread (core.fieldDelta), with `perRating` the slope.
-// Confounded (better players itemize better), so it's a measured FLOOR -- same
-// footing as the consumable/stat deltas. Capped at the whole spread's value and at
-// 5% so one swap can't dominate before reconcileImpacts. null when the field gave
-// no counterfactual -> caller falls back to statScore (the sim estimate).
+// Confounded (better players itemize better) -> damped by FIELD_DELTA_CONFOUND so a
+// skewed field can't inflate gear over the rotation levers. Capped at the whole
+// spread's value and at 5% so one swap can't dominate before reconcileImpacts. null
+// when the field gave no counterfactual -> caller falls back to statScore (the sim).
 /** @param {number} gain @param {StatValue|null} statValue */
 export function statValueScore(gain, statValue) {
   if (!statValue || !(statValue.perRating > 0)) return null;
-  const impact = Math.min(5, statValue.pct || 5, Math.max(0, (gain || 0) * statValue.perRating));
+  const impact = FIELD_DELTA_CONFOUND * Math.min(5, statValue.pct || 5, Math.max(0, (gain || 0) * statValue.perRating));
   const r = Math.round(impact);
   return { impact, label: `~${r >= 1 ? r : "<1"}% ${metricUnit()}` };
 }
@@ -552,7 +563,7 @@ export function gearLevers(gf, priority, statValue = null, gemDelta = null, abov
   const swaps = gf.swaps || [];
   // Cite the field-measured stat value once (so each swap line stays terse).
   const mcite = statValue && statValue.perRating > 0
-    ? ` -- measured: at your item level, peers who stack ${priority} do ${Math.round(statValue.pct)}% more (n=${statValue.nHave}/${statValue.nNot})`
+    ? ` -- at your item level, peers who stack ${priority} do ${Math.round(statValue.pct)}% more (n=${statValue.nHave}/${statValue.nNot}), but that's mostly them being better players, so this is sized as gear alone`
     : "";
   const measured = !!(statValue && statValue.perRating > 0);
   // HONESTY: if the field MEASURES no benefit from stacking this stat at your ilvl

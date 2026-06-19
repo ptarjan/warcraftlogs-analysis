@@ -22,18 +22,20 @@ test("priorityGain: NET gain over your current item, not the candidate's gross s
 test("statValueScore: prices a swap from the field's measured per-rating value, not the sim constant", async () => {
   const { statValueScore } = await import("../docs/gear.js");
   // Field: peers who stack crit do 6% more, across a 3000-rating spread -> 0.002%/
-  // rating. A +260 crit swap is worth ~0.52% -> rounds to ~1%, basis measured.
+  // rating. A +260 crit swap prices at ~0.52% raw, then HALVED for the better-player
+  // confound (FIELD_DELTA_CONFOUND) -> ~0.26% -> rounds to <1%, basis measured.
   const sv = { pct: 6, perRating: 6 / 3000, nHave: 6, nNot: 5 };
   const s = statValueScore(260, sv);
-  assert.equal(s.label, "~1% DPS");
-  assert.ok(Math.abs(s.impact - 0.52) < 0.01);
+  assert.equal(s.label, "~<1% DPS");
+  assert.ok(Math.abs(s.impact - 0.26) < 0.01);
 });
 
-test("statValueScore: caps a single swap at the whole stat-spread value (and 5%)", async () => {
+test("statValueScore: caps a single swap at the whole stat-spread value (and 5%), then damps the confound", async () => {
   const { statValueScore } = await import("../docs/gear.js");
-  // A huge gain can't claim more than the field's measured spread value (4%).
+  // A huge gain can't claim more than the field's measured spread value (4%), and
+  // that 4% is then halved for the better-player confound -> 2%.
   const s = statValueScore(99999, { pct: 4, perRating: 1, nHave: 6, nNot: 6 });
-  assert.equal(s.impact, 4);
+  assert.equal(s.impact, 2);
 });
 
 test("statValueScore: null when the field gave no counterfactual (caller keeps the est)", async () => {
