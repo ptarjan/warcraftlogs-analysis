@@ -3,7 +3,7 @@
 // Ported from analyze.py's fetcher layer; imported by the analysis modules.
 import { gql, metaGet, metaPut, setPreferCache } from "./wcl.js";
 import { slug } from "./format.js";
-import { isHealer, runMetric, eventTable } from "./runcontext.js";
+import { isHealer, runMetric, eventTable, resetRunContext } from "./runcontext.js";
 // The pure helpers, run context, and finding currency now live in focused modules;
 // re-export so the many `import { f, median, DPS, finding, runIsHealer, ... } from
 // "./core.js"` sites keep working unchanged. core.js is now just the WCL data/fetch layer.
@@ -808,6 +808,11 @@ async function classSpecFromKill(name, server, region, encounterId, difficulty) 
 
 // Highest difficulty the character has kills in, plus their class/spec.
 export async function detectContext(name, server, region) {
+  // Detection must be metric-NEUTRAL: the browser analyzes character after character without
+  // a reload, and this runs BEFORE the caller's setRunContext, so a prior healer run's hps
+  // metric would otherwise leak in and make a DPS's detection query the (empty) hps rankings.
+  // Reset to the default (dps -- works for every spec, same as a fresh load) first.
+  resetRunContext();
   let found = null;
   for (const d of DIFF_ORDER) {
     const c = await characterZone(name, server, region, d); // throws if not found

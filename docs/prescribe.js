@@ -852,7 +852,11 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // only ever looks at the benchmark boss). Drop the weak-window to avoid two items for one
   // idea -- no fragile fraction-overlap test (they can now be on different bosses).
   const gLevers = graphLevers(graphData);
-  const hasPhaseDip = gLevers.some((l) => l.kind === KIND.PHASE_DIP);
+  // Only a SIZED graph dip supersedes the rotation weak-window. The cdsCover branch returns
+  // a PHASE_DIP that's an INFO (impact 0, "not a personal lever to fix") -- letting that drop
+  // the rotation's sized WEAK_WINDOW would delete a real gainable fix and replace it with
+  // nothing. Gate on impact, not just kind.
+  const hasPhaseDip = gLevers.some((l) => l.kind === KIND.PHASE_DIP && l.impact > 0);
   let rotLevers = hasPhaseDip
     ? rotMerged.levers.filter((l) => l.kind !== KIND.WEAK_WINDOW)
     : rotMerged.levers;

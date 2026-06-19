@@ -195,6 +195,42 @@ test("detectContext: a spec-flexer is detected on the most-recent kill's spec, n
   assert.equal(ctx.specName, "Unholy", "detected the most-recent kill's spec (Unholy), not the older Frost parse");
 });
 
+test("detectContext resets a leaked run-metric so a DPS detects after a healer (no hps-ranking starvation)", async () => {
+  // The browser analyzes character after character without a reload, and detection runs
+  // BEFORE setRunContext. Analyze a healer (metric -> hps), then a DPS: detection would
+  // query the DPS's HEALING ranks (empty) and fail with "couldn't determine class". The
+  // fix resets the metric to the neutral default at the start of detectContext.
+  const NAME = "Dpser";
+  process.env.WCL_ALLOW_FETCH = "1";
+  setRunMetric("hps"); // simulate the prior healer run's leaked global
+  globalThis.fetch = mockFetch([
+    ["oauth/token", { json: { access_token: "t", expires_in: 3600 } }],
+    ["/api/v2/", (u, opts) => {
+      const q = JSON.parse(opts.body).query || "";
+      if (/zoneRankings/.test(q)) return { json: { data: { characterData: { character: { id: 1, classID: 6, zoneRankings: {
+        zone: 1, bestPerformanceAverage: 70, medianPerformanceAverage: 50, rankings: [
+          { encounter: { id: 1, name: "B1" }, totalKills: 1, rankPercent: 80, bracketData: 480 },
+        ] } } } } } };
+      if (/encounterRankings/.test(q)) {
+        // A pure DPS has NO healing ranks: empty under hps, real under dps. Without the reset
+        // detection queries hps here, gets [], and throws; with it, dps finds the kill.
+        const ranks = /metric:\s*hps/.test(q) ? []
+          : [{ bracketData: 480, rankPercent: 80, startTime: 100, report: { code: "RPT1", fightID: 1 }, duration: 2e5 }];
+        return { json: { data: { characterData: { character: { encounterRankings: { ranks } } } } } };
+      }
+      if (/reportData/.test(q)) return { json: { data: { reportData: { report: { dmg: { data: { totalTime: 2e5, entries: [
+        { name: NAME, id: 1, type: "DeathKnight", icon: "DeathKnight-Frost", itemLevel: 480, total: 1e7 },
+      ], auras: [] } } } } } } };
+      return { json: { data: {} } };
+    }],
+  ]);
+  try {
+    const ctx = await detectContext(NAME, "s", "US");
+    assert.equal(ctx.className, "DeathKnight", "detected despite the leaked hps metric");
+    assert.equal(runMetric(), "dps", "detection reset the leaked metric to the neutral default");
+  } finally { setRunMetric("dps"); }
+});
+
 // Kill SELECTION must also be spec-consistent: a flexer's off-spec kills must not seed
 // the benchmark/measurement kill. The bug (one layer past detection): an Unholy DK's
 // median-parse kill was a FROST one, so prescribe measured 0% pet damage and 0 Scourge

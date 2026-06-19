@@ -67,6 +67,13 @@ export function setRunContext(className, specName) {
   _run.metric = metricForSpec(className, specName);
   _run.support = isSupport(specName);
 }
+// Reset to the default (dps, non-support). The browser analyzes many characters in one
+// page session WITHOUT reload, and detection runs BEFORE setRunContext -- so without a reset
+// the previous character's metric leaks into the next one's detection (analyze a healer, then
+// a DPS -> detection queries hps rankings the DPS doesn't have -> "couldn't determine class").
+// detectContext calls this first so every detection runs metric-neutral (dps works for all
+// specs -- the same state as a fresh page load).
+export function resetRunContext() { _run.metric = "dps"; _run.support = false; }
 // Low-level knobs -- mainly tests, which force a metric without a real spec.
 /** @param {"dps"|"hps"} m */
 export function setRunMetric(m) { _run.metric = m === "hps" ? "hps" : "dps"; }
