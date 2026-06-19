@@ -212,8 +212,16 @@ export function damageCurve(events, start, durMs, bins = 10) {
 // can't press buttons while dead; that's a SURVIVAL finding, surfaced elsewhere. `deaths`
 // (fight-progress fractions 0-1) excludes those bins, so a player who died mid-fight and
 // stayed down doesn't get told to "keep your uptime" across the half they spent on the floor.
-// Returns { from, to, youDps, yourTypical, fieldDps, lostFrac } (lostFrac = window deficit vs
-// your typical / your total ~= % gainable).
+//
+// TWO reference frames, kept distinct: DETECTION is own-baseline (a bin is a candidate hole
+// only where you dropped below YOUR typical -- that's what keeps a uniformly-behind player
+// from having their whole fight flagged). But SIZING is FIELD-relative: lostFrac is the
+// window's share of your gap TO THE FIELD (sum of field-minus-you over the window / your
+// total), because that is the number that must add up to the measured field gap. Sizing it
+// vs your own typical was the bug -- it's a different denominator than the gap, so it
+// over-counted for a player who's near/ahead of the field on net (they lose vs their own
+// ceiling in one window but make it up elsewhere, so only the field-deficit is gainable
+// toward the gap). Returns { from, to, youDps, yourTypical, fieldDps, lostFrac }.
 /** @param {number[]|null|undefined} youCurve @param {(number[]|null|undefined)[]|null|undefined} fieldCurves @param {{minDrop?:number,minActive?:number,minPeers?:number,deaths?:number[]}} [opts] */
 export function weakestWindow(youCurve, fieldCurves, { minDrop = 0.4, minActive = 0.5, minPeers = 3, deaths = [] } = {}) {
   if (!youCurve || !fieldCurves || fieldCurves.length < minPeers) return null;
@@ -225,14 +233,17 @@ export function weakestWindow(youCurve, fieldCurves, { minDrop = 0.4, minActive 
   // You were DEAD in bin i if a death landed at/before its start AND you're still near-zero
   // there (you never got rezzed back to real output -- a recovered bin reads high and is kept).
   const deadIn = (i) => (deaths || []).some((d) => d <= i / bins) && youCurve[i] < yourTypical * 0.1;
-  // A bin is YOUR hole when you've dropped well below your OWN typical AND the field is still
-  // going (so it's not a shared intermission) AND you weren't dead (a death isn't a rotation hole).
-  const def = youCurve.map((y, i) => (!deadIn(i) && y < yourTypical * (1 - minDrop) && fieldMed[i] >= fieldTypical * minActive) ? yourTypical - y : 0);
+  // ELIGIBLE = a candidate hole bin: you dropped well below YOUR OWN typical (the discrete-hole
+  // detector) AND the field is still going (not a shared intermission) AND you weren't dead.
+  const elig = youCurve.map((y, i) => !deadIn(i) && y < yourTypical * (1 - minDrop) && fieldMed[i] >= fieldTypical * minActive);
+  // Per-bin contribution to the FIELD gap: how far you trail the field there (0 if you're
+  // ahead of the field in that bin -- closing it wouldn't shrink your gap, it'd extend a lead).
+  const gapBin = youCurve.map((y, i) => elig[i] ? Math.max(0, fieldMed[i] - y) : 0);
   let best = null, bestSum = 0, rs = -1, sum = 0;
   for (let i = 0; i <= bins; i++) {
-    const pos = i < bins && def[i] > 0;
+    const pos = i < bins && elig[i];
     if (pos && rs < 0) { rs = i; sum = 0; }
-    if (pos) sum += def[i];
+    if (pos) sum += gapBin[i];
     if (!pos && rs >= 0) {
       if (!best || sum > bestSum) {
         let yd = 0, fd = 0; for (let j = rs; j < i; j++) { yd += youCurve[j]; fd += fieldMed[j]; }
@@ -242,9 +253,11 @@ export function weakestWindow(youCurve, fieldCurves, { minDrop = 0.4, minActive 
       rs = -1;
     }
   }
-  if (!best) return null;
+  // bestSum <= 0 means your own-baseline hole is a spot you're actually AT/ABOVE the field --
+  // real vs your ceiling, but NOT a gap to the field, so it's not a lever here.
+  if (!best || !(bestSum > 0)) return null;
   const youTot = youCurve.reduce((a, b) => a + b, 0);
-  return { ...best, lostFrac: youTot > 0 ? bestSum / youTot : 0 };   // deficit vs your typical / your total ~= % gainable
+  return { ...best, lostFrac: youTot > 0 ? bestSum / youTot : 0 };   // window's share of your FIELD gap
 }
 
 // Median casts/min per ability across the field's kills (absent in a kill = 0),

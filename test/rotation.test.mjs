@@ -240,6 +240,27 @@ test("weakestWindow: finds where YOU crater below your own norm, but SKIPS a sha
   assert.equal(weakestWindow(you, [[1], [1]]), null);
 });
 
+test("weakestWindow: SIZING is field-relative (a slice of your GAP), not vs your own ceiling", () => {
+  // Detection is own-baseline (find the discrete hole); SIZING must be your deficit to the
+  // FIELD there, or it over-counts for a near/ahead player and the list stops adding up.
+  // You crater to 30k in bins 4-5; your typical ~80k, but the FIELD only does 50k there.
+  const you   = [80000, 82000, 78000, 81000, 30000, 30000, 80000, 79000, 81000, 80000];
+  const fdist = [85000, 84000, 83000, 82000, 50000, 50000, 81000, 80000, 82000, 83000];
+  const field = [fdist, fdist, fdist, fdist];
+  const w = weakestWindow(you, field);
+  assert.ok(w, "the discrete own-baseline hole is still detected");
+  assert.equal(Math.round(w.from * 10), 4);
+  const youTot = you.reduce((a, b) => a + b, 0);
+  // Gainable toward the GAP = (50k-30k)*2 / total -- NOT (80k-30k)*2 (vs your own typical).
+  assert.ok(Math.abs(w.lostFrac - (2 * 20000) / youTot) < 1e-9,
+    `sized by field deficit, not own-typical deficit (got ${w.lostFrac.toFixed(4)})`);
+  // The SAME own-baseline hole, but you're still AT/ABOVE the field in it (field only 25k there)
+  // -> real vs your ceiling, but NOT a gap to the field -> not a lever.
+  const fAhead = [85000, 84000, 83000, 82000, 25000, 25000, 81000, 80000, 82000, 83000];
+  assert.equal(weakestWindow(you, [fAhead, fAhead, fAhead, fAhead]), null,
+    "ahead of the field in your own-hole -> no gap lever (don't claim DPS that closing it can't add)");
+});
+
 test("weakestWindow: DEATH GUARD -- a stretch you spent DEAD is not flagged as a rotation hole", () => {
   // Mazaltoff's real case: died ~46% in, did ~0 for the back half. Without the guard that's a
   // huge bogus weak window ("keep your uptime" -- you were on the floor). With deaths supplied,
