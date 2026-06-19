@@ -9,7 +9,7 @@
 //   - your opener sequence vs the field's
 import {
   playerMetrics, ilvlPeers, mapLimit, median, bestKill,
-  playerAbilities, dotUptimes, petDamage, fightWindow, fightEvents, paginateEvents, buffUptimes, f, DPS, INFO, finding, KIND, DIM, eventTable, runIsHealer, throughputWord,
+  playerAbilities, dotUptimes, petDamage, fightWindow, fightEvents, paginateEvents, buffUptimes, f, DPS, INFO, finding, KIND, DIM, eventTable, runIsHealer, runIsSupport, throughputWord,
   damageAbilitiesForced, alwaysAtonement, atonementIfDamaging, isAtonement,
 } from "./core.js";
 import { talentedAbilities, heroTreeOf } from "./talents.js";
@@ -1071,8 +1071,10 @@ export async function rotationFindings(name, server, region, className, specName
   // intermission guard, so an ahead player who just front-loads never trips it, but a real
   // dip below the field surfaces even for someone ahead on totals (the whole point -- finding
   // where an otherwise-good player still bleeds). Hero-matched + not a pure healer (curve of
-  // a different build / a reactive healer isn't comparable).
-  const weakWindow = (heroSafe && (!runIsHealer() || you.atonement))
+  // a different build / a reactive healer isn't comparable). Also NOT a SUPPORT spec (Aug):
+  // their personal-damage curve ebbs while they spend GCDs on ally buffs -- that's correct
+  // play, not a hole, and would read as a false weak window (support is framed by buff value).
+  const weakWindow = (heroSafe && (!runIsHealer() || you.atonement) && !runIsSupport())
     ? weakestWindow(you.dmgCurve, peers.map((p) => p.dmgCurve).filter(Boolean))
     : null;
   return {
