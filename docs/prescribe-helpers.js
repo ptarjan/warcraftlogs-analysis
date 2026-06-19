@@ -63,7 +63,7 @@ export function reconcileProtectingMeasured(measured, est, target) {
 //                  is the amps it puts on ALLIES (credited to their parses), so a
 //                  personal-DPS gap mostly measures buff value the comparison can't
 //                  see, NOT a personal playstyle deficit. (The buff-uptime lever is
-//                  the part the support DOES control -- see the Support buffs card.)
+//                  the part the support DOES control -- see the Support card.)
 //  - "playstyle":  a big remainder for a NON-elite DAMAGE player -- genuinely how they
 //                  play the same gear the field plays (the tool's whole point).
 //  - "underpress": a small remainder with a real cast deficit -- GCD uptime.
@@ -221,7 +221,7 @@ export function residualText(kind, r, d, rot, rx) {
     // A support's personal DPS is a fraction of their value: Ebon Might / Prescience amp
     // ALLIES, credited to THEIR parses. A big personal-DPS remainder is buff value the
     // comparison can't see; what they control is buff UPTIME, not personal damage.
-    return `SUPPORT VALUE IS OFF YOUR SHEET (~${r}%): your throughput is mostly the amps you keep on allies (Ebon Might / Prescience / Breath of Eons), which WCL credits to THEIR parses -- so this gap is buff value a personal-DPS comparison can't see, not DPS you can add. What you control is buff UPTIME (see the Support buffs card) and your cooldown/gear use above.`;
+    return `SUPPORT VALUE IS OFF YOUR SHEET (~${r}%): your throughput is mostly the amps you keep on allies (Ebon Might / Prescience / Breath of Eons), which WCL credits to THEIR parses -- so this gap is buff value a personal-DPS comparison can't see, not DPS you can add. What you control is buff UPTIME (see the Support card) and your cooldown/gear use above.`;
   }
   if (kind === "playstyle") {
     // A big remainder at matched ilvl is NOT gear/sim and NOT "press faster" -- it's

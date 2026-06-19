@@ -442,7 +442,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const unit = metricUnit();
   log("");
   log(`=== ${unit} over the fight: ${name} vs the ilvl-matched field (one chart per boss) ===`);
-  if (isSupport(specName)) { log("  Support spec -- personal damage isn't the lever; see the Support buffs card for your ally value."); return; }
+  if (isSupport(specName)) { log("  Support spec -- personal damage isn't the lever; see the Support card for your ally value."); return; }
   let ranks;
   try {
     const c = await characterZone(name, server, region, difficulty);

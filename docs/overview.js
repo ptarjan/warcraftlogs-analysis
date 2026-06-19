@@ -98,7 +98,7 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
       : `you're about even with the ilvl-matched field here.`));
   }
   // (Gear / enchants / trinkets / secondary-stat allocation are NOT shown here -- the
-  // Gear audit card owns them. This card stays the parse-standing + peer head-to-head.)
+  // Gear card owns them. This card stays the parse-standing + peer head-to-head.)
 }
 
 // Quantify how much higher people parse on `low` vs `high` difficulty.

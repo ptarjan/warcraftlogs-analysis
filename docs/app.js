@@ -555,13 +555,13 @@ window.addEventListener("wcl-ratelimit", (e) => {
 // Supporting analyses (collapsed by default -- evidence behind the list).
 /** @type {[string, (p: any, log: (line?: string) => void) => any][]} */
 const SUPPORTING = [
-  ["Overview & item-level comparison", (p, log) => overview.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-  ["Timeline diagnosis", (p, log) => timeline.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-  ["DPS over the fight (vs the field)", (p, log) => graph.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-  ["Rotation: opener & priority", (p, log) => rotation.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-  ["Talents vs the field", (p, log) => talents.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-  ["Chasing 99: you vs the top parses", (p, log) => topparse.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
-  ["Gear audit", (p, log) => gear.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty, p.priority)],
+  ["Overview", (p, log) => overview.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  ["Timeline", (p, log) => timeline.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  ["Damage curve", (p, log) => graph.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  ["Rotation", (p, log) => rotation.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  ["Talents", (p, log) => talents.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  ["Top parses", (p, log) => topparse.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
+  ["Gear", (p, log) => gear.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty, p.priority)],
 ];
 
 // The supporting cards for this run. Healers get a "Healing efficiency" card
@@ -572,9 +572,9 @@ function supportingFor(isHealerRun, isSupportRun) {
   const list = SUPPORTING.slice();
   /** @type {[string, (p:any, log:(line?:string)=>void)=>any]} */
   const extraCard = isHealerRun
-    ? ["Healing efficiency",
+    ? ["Healing",
        (p, log) => healing.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)]
-    : ["Support buffs",
+    : ["Support",
        (p, log) => support.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)];
   const after = list.findIndex(([t]) => /^Rotation/.test(t));   // sits next to rotation
   list.splice(after >= 0 ? after + 1 : list.length, 0, extraCard);

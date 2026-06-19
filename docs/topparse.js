@@ -220,7 +220,7 @@ export async function run(log, name, server, region, className, specName, diffic
   const fnd = await topParseFindings(name, server, region, difficulty, className, specName);
   if (!fnd) { log("(couldn't build a top-parse comparison for this character)"); return; }
 
-  log(`=== Chasing 99: you vs the top parses on ${fnd.boss} (your kill: ${f(fnd.yourPct, 0)}%ile) ===`);
+  log(`=== You vs the top parses on ${fnd.boss} (your kill: ${f(fnd.yourPct, 0)}%ile) ===`);
   log("");
 
   log("--- Raid-comp throughput amps (you can't press these -- it's who's in the raid) ---");
