@@ -8,7 +8,8 @@ import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
 const { DPS, COMP, INFO, finding, fieldDelta, setRunMetric, KIND } = await import("../docs/core.js");          // shared Finding currency
-const { rotationLevers, usageDamageGaps, perCastValue, dmgGapPct } = await import("../docs/rotation.js");
+const { rotationLevers } = await import("../docs/rotation.js");
+const { usageDamageGaps, perCastValue, dmgGapPct } = await import("../docs/rotation-helpers.js");
 
 test("perCastValue/dmgGapPct: the shared 'missed casts x your per-cast / total' kernel", () => {
   assert.equal(perCastValue(10000, 10), 1000);        // total/casts

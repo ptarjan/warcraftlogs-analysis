@@ -5,7 +5,8 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, usageDamageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, empoweredStats, empowermentCandidate, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, rotationLevers, mergeRotationRecurrence, medianCastRates, consensusOpener, openerDivergence, majorCooldownIds, cooldownStackFraction, cooldownStackGap, cooldownUseComparable, damageCurve, weakestWindow } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, usageDamageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, empoweredStats, empowermentCandidate, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, medianCastRates, consensusOpener, openerDivergence, majorCooldownIds, cooldownStackFraction, cooldownStackGap, cooldownUseComparable, damageCurve, weakestWindow } = await import("../docs/rotation-helpers.js");
+const { rotationLevers, mergeRotationRecurrence } = await import("../docs/rotation.js");
 const { setRunMetric } = await import("../docs/core.js");
 
 // Run a body with the run metric forced, always restoring "dps" so it never leaks.

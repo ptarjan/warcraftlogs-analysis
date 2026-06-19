@@ -13,7 +13,8 @@ import {
 import { timelineFindings } from "./timeline.js";
 import { gearFindings, gearLevers, itemInstance, sourceText } from "./gear.js";
 import { wowheadSpell, wowheadItem, wclReport } from "./links.js";
-import { rotationFindings, rotationLevers, mergeRotationRecurrence, castable } from "./rotation.js";
+import { rotationFindings, rotationLevers, mergeRotationRecurrence } from "./rotation.js";
+import { castable } from "./rotation-helpers.js";
 import { talentFindings, talentLevers } from "./talents.js";
 import { topParseFindings, topParseLevers, RAID_DAMAGE } from "./topparse.js";
 import { healingLevers } from "./healing.js";
