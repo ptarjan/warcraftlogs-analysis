@@ -8,7 +8,7 @@
 //     how often you land them vs the field
 //   - your opener sequence vs the field's
 import {
-  playerMetrics, ilvlPeers, mapLimit, median, bestKill,
+  playerMetrics, ilvlPeers, mapLimit, median, bestKill, reportDeaths,
   playerAbilities, dotUptimes, petDamage, fightWindow, fightEvents, paginateEvents, buffUptimes, f, DPS, INFO, finding, KIND, DIM, eventTable, runIsHealer, runIsSupport, throughputWord,
   damageAbilitiesForced, alwaysAtonement, atonementIfDamaging, isAtonement,
 } from "./core.js";
@@ -214,18 +214,27 @@ export function damageCurve(events, start, durMs, bins = 10) {
 // opener). The field is the INTERMISSION GUARD only: a bin counts solely when the field is
 // still ACTIVE there (>= minActive of the field's own typical), so a phase the field also
 // sits out (boss untargetable) is the boss, not you. The realistic recovery target is your
-// OWN typical (proven elsewhere in the fight). Returns { from, to, youDps, yourTypical,
-// fieldDps, lostFrac } (lostFrac = window deficit vs your typical / your total ~= % gainable).
-export function weakestWindow(youCurve, fieldCurves, { minDrop = 0.4, minActive = 0.5, minPeers = 3 } = {}) {
+// OWN typical (proven elsewhere in the fight). DEATH GUARD: a bin where you were DEAD (a
+// death landed at/before it and you never recovered output) is NOT a rotation hole -- you
+// can't press buttons while dead; that's a SURVIVAL finding, surfaced elsewhere. `deaths`
+// (fight-progress fractions 0-1) excludes those bins, so a player who died mid-fight and
+// stayed down doesn't get told to "keep your uptime" across the half they spent on the floor.
+// Returns { from, to, youDps, yourTypical, fieldDps, lostFrac } (lostFrac = window deficit vs
+// your typical / your total ~= % gainable).
+/** @param {number[]|null|undefined} youCurve @param {(number[]|null|undefined)[]|null|undefined} fieldCurves @param {{minDrop?:number,minActive?:number,minPeers?:number,deaths?:number[]}} [opts] */
+export function weakestWindow(youCurve, fieldCurves, { minDrop = 0.4, minActive = 0.5, minPeers = 3, deaths = [] } = {}) {
   if (!youCurve || !fieldCurves || fieldCurves.length < minPeers) return null;
   const bins = youCurve.length;
   const median = (a) => { const x = [...a].sort((p, q) => p - q); return x.length ? x[Math.floor(x.length / 2)] : 0; };
   const fieldMed = youCurve.map((_, i) => median(fieldCurves.map((c) => (c && c[i]) || 0)));
   const yourTypical = median(youCurve), fieldTypical = median(fieldMed);
   if (!(yourTypical > 0) || !(fieldTypical > 0)) return null;
+  // You were DEAD in bin i if a death landed at/before its start AND you're still near-zero
+  // there (you never got rezzed back to real output -- a recovered bin reads high and is kept).
+  const deadIn = (i) => (deaths || []).some((d) => d <= i / bins) && youCurve[i] < yourTypical * 0.1;
   // A bin is YOUR hole when you've dropped well below your OWN typical AND the field is still
-  // going (so it's not a shared intermission). Deficit = how far below your typical you are.
-  const def = youCurve.map((y, i) => (y < yourTypical * (1 - minDrop) && fieldMed[i] >= fieldTypical * minActive) ? yourTypical - y : 0);
+  // going (so it's not a shared intermission) AND you weren't dead (a death isn't a rotation hole).
+  const def = youCurve.map((y, i) => (!deadIn(i) && y < yourTypical * (1 - minDrop) && fieldMed[i] >= fieldTypical * minActive) ? yourTypical - y : 0);
   let best = null, bestSum = 0, rs = -1, sum = 0;
   for (let i = 0; i <= bins; i++) {
     const pos = i < bins && def[i] > 0;
@@ -1074,8 +1083,24 @@ export async function rotationFindings(name, server, region, className, specName
   // a different build / a reactive healer isn't comparable). Also NOT a SUPPORT spec (Aug):
   // their personal-damage curve ebbs while they spend GCDs on ally buffs -- that's correct
   // play, not a hole, and would read as a false weak window (support is framed by buff value).
-  const weakWindow = (heroSafe && (!runIsHealer() || you.atonement) && !runIsSupport())
-    ? weakestWindow(you.dmgCurve, peers.map((p) => p.dmgCurve).filter(Boolean))
+  const wwGate = heroSafe && (!runIsHealer() || you.atonement) && !runIsSupport();
+  // YOUR death times (fight-progress fractions) so weakestWindow's death guard can drop bins
+  // you spent dead -- a death is a survival finding, not "press more". One fetch, only when
+  // the lever will run (best-effort: no death data just means no guard). The kill's window is
+  // already cached from analyzeKill, so fightWindow is free here.
+  const yourDeaths = [];
+  if (wwGate) {
+    try {
+      const [ds, de] = await fightWindow(best.code, best.fight);
+      for (const x of await reportDeaths(best.code, [best.fight])) {
+        if (x.targetID !== you.sourceID || !(de > ds)) continue;
+        const fr = (x.timestamp - ds) / (de - ds);
+        if (fr >= 0 && fr <= 1) yourDeaths.push(fr);
+      }
+    } catch (e) { /* no death data -> no guard, lever still runs */ }
+  }
+  const weakWindow = wwGate
+    ? weakestWindow(you.dmgCurve, peers.map((p) => p.dmgCurve).filter(Boolean), { deaths: yourDeaths })
     : null;
   return {
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener, atonement: !!you.atonement,

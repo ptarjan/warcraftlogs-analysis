@@ -239,6 +239,25 @@ test("weakestWindow: finds where YOU crater below your own norm, but SKIPS a sha
   assert.equal(weakestWindow(you, [[1], [1]]), null);
 });
 
+test("weakestWindow: DEATH GUARD -- a stretch you spent DEAD is not flagged as a rotation hole", () => {
+  // Mazaltoff's real case: died ~46% in, did ~0 for the back half. Without the guard that's a
+  // huge bogus weak window ("keep your uptime" -- you were on the floor). With deaths supplied,
+  // the dead bins are excluded -> no rotation window from the death.
+  const you   = [60000, 62000, 58000, 61000, 30000,   0,    0,    0,    0,    0];
+  const fdist = [62000, 61000, 60000, 60000, 56000, 55000, 54000, 53000, 52000, 58000];
+  const field = [fdist, fdist, fdist, fdist];
+  // No deaths supplied -> the back-half zeros read as a giant (false) hole.
+  const naive = weakestWindow(you, field);
+  assert.ok(naive && naive.lostFrac > 0.2, "without the guard a death reads as a massive false window");
+  // Death at 46% -> bins 5-9 (you ~0 after it) are excluded; nothing left to flag.
+  assert.equal(weakestWindow(you, field, { deaths: [0.46] }), null, "death-stretch excluded -> no rotation window");
+  // A real ALIVE hole still fires even with an (earlier, recovered) death: you die at 10%, recover
+  // to typical by bin 2, then crater bins 5-6 while ALIVE -> that genuine hole is still flagged.
+  const you2 = [40000, 5000, 60000, 61000, 60000, 20000, 18000, 60000, 60000, 61000];
+  const w2 = weakestWindow(you2, field, { deaths: [0.10] });
+  assert.ok(w2 && Math.round(w2.from * 10) === 5, "an alive crater after recovery still fires");
+});
+
 test("weakWindowLever: surfaces the field-validated weak stretch as a measured, sized finding", () => {
   const rot = { weakWindow: { from: 0.2, to: 0.4, youDps: 12000, yourTypical: 60000, fieldDps: 55000, lostFrac: 0.08 }, usage: { under: [], over: [] }, abilityIds: {} };
   const lev = rotationLevers(rot).find((f) => /DAMAGE TIMELINE/.test(f.text));
