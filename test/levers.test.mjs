@@ -43,7 +43,11 @@ test("rotationLevers: cooldown/empowerment/dot/pet/press-more all render with th
     talent: null, heroMatched: null,
   };
   const out = rotationLevers(rot);
-  assert.ok(out.some((x) => x.kind === "COOLDOWN"), "cooldown lever tagged");
+  const cd = out.find((x) => x.kind === "COOLDOWN");
+  assert.ok(cd, "cooldown lever tagged");
+  // The cooldown lever sizes its % from real damage-per-cast (cooldownGaps/cdUsage ->
+  // dmgGapPct), exactly like the sibling buff/pet/dot levers -- so it's measured, not est.
+  assert.equal(cd.basis, "measured", "cooldown % is sized from measured damage, basis measured");
   assert.ok(out.some((x) => x.kind === "EMPOWERMENT"), "empowerment lever tagged");
   assert.ok(out.some((x) => /press .*A/.test(x.text)), "measured press-more lever fires");
   assert.ok(out.every((x) => x.dim === "Rotation"), "rotation levers are dim Rotation");

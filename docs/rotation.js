@@ -1304,7 +1304,7 @@ function cooldownLevers(rot, link) {
       out.push(finding(DIM.ROTATION, DPS(cd.pct),
         `COOLDOWN: you cast ${link(cd.name)} ${cd.youCasts.toFixed(1)}x this fight (${f(cd.you, 1)}/min) vs the field's ` +
         `${cd.fieldCasts.toFixed(1)}x (${f(cd.field, 1)}/min) -- ~${cd.pct}% of your ${throughputWord()}. Use it on cooldown ` +
-        `(or line it up with your burst); it's a button you're skipping, not gear.`, "est", KIND.COOLDOWN));
+        `(or line it up with your burst); it's a button you're skipping, not gear.`, "measured", KIND.COOLDOWN));
     }
   }
   for (const cd of ((rot && rot.cdUsage) || [])) {
@@ -1313,7 +1313,7 @@ function cooldownLevers(rot, link) {
       out.push(finding(DIM.ROTATION, DPS(cd.pct),
         `COOLDOWN: you cast ${wowheadSpell(cd.id, cd.name)} ${cd.youPerFight.toFixed(0)}x/kill vs the field's ` +
         `${cd.fieldPerFight.toFixed(0)}x -- ~${cd.pct}% of your ${throughputWord()}. Use it on cooldown; it's a button you're ` +
-        `skipping, not gear.`, "est", KIND.COOLDOWN));
+        `skipping, not gear.`, "measured", KIND.COOLDOWN));
     }
   }
   return out;
