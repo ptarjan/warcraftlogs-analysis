@@ -334,6 +334,48 @@ export async function fightEvents(code, fight, sourceId, start, end, { autoFallb
   return { casts: casts.filter((e) => !e.fake), autos };
 }
 
+// Rolling DPS over a fight for one actor (+ its pets), from WCL's `graph` view --
+// ONE cheap binned request instead of paginating every DamageDone event for a curve.
+// `viewBy:Source` (with the sourceID filter) returns a series for the actor, one per
+// pet, and a "Total" (actor+pets) series; we take "Total" so the curve matches the
+// RANKING throughput (pets folded in, like overview/timeline). dataType follows the run
+// metric (eventTable() -> Healing for healers, DamageDone otherwise). Verified live (2026-06): each
+// series carries { pointStart, pointInterval, total, data:[…] } where data[i] is the
+// rolling DPS at pointStart + i*pointInterval -- mean(data) ~= total/dur confirms it's
+// a RATE, not per-bin damage. Returns { dur, dps:[…], phases:[…] } where `phases` are
+// the fraction-of-fight (0..1) at which each PHASE begins (from this kill's
+// phaseTransitions, [0] for a single-phase fight) -- the consumer aligns phases across
+// kills with these (boss phases end at different fight-% per kill, so raw fight-% smears
+// boundaries). Same request as the graph (one unit per report+fight+source). NB: pass
+// the fight window as start/end or the graph bins the WHOLE report (mostly-zero pre-pull).
+export async function dpsOverTime(code, fight, sourceId) {
+  const [s, e] = await fightWindow(code, fight);
+  if (!(e > s)) return null;
+  const q = `query { reportData { report(code:"${code}") {
+    graph(fightIDs:${fight}, sourceID:${sourceId}, dataType:${eventTable()}, viewBy:Source, startTime:${s}, endTime:${e})
+    ph: fights(fightIDs:${fight}) { phaseTransitions { id startTime } } } } }`;
+  const rep = (await gql(q)).reportData.report;
+  const g = rep.graph;
+  const series = (g && g.data && g.data.series) || [];
+  if (!series.length) return null;
+  const trans = (((rep.ph || [])[0] || {}).phaseTransitions) || [];
+  let phases = trans.map((t) => Math.max(0, Math.min(1, (t.startTime - s) / (e - s))));
+  phases = [...new Set(phases)].sort((a, b) => a - b);
+  if (!phases.length || phases[0] > 0.0001) phases.unshift(0);   // phase 1 always starts at 0
+  // Prefer the "Total" (actor+pets) series; with no pets there's just the one actor
+  // series and no Total, so fall back to it; defensively sum if neither is present.
+  const total = series.find((x) => x.name === "Total");
+  let dps;
+  if (total) dps = (total.data || []).map((v) => +v || 0);
+  else if (series.length === 1) dps = (series[0].data || []).map((v) => +v || 0);
+  else {
+    const len = Math.max(...series.map((x) => (x.data || []).length));
+    dps = Array.from({ length: len }, (_, i) => series.reduce((a, x) => a + (+(x.data || [])[i] || 0), 0));
+  }
+  if (dps.length < 3) return null;
+  return { dur: (e - s) / 1000, dps, phases };
+}
+
 // --------------------------------------------------------------------- //
 // Pull/progression fetchers (the raid-night flow -- see progression.js)
 // --------------------------------------------------------------------- //

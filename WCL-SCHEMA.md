@@ -27,6 +27,20 @@ are valid.
     - **Mana**: `events(dataType:Casts, includeResources:true)` rides a `classResources:[{amount,max,type,cost}]` snapshot on each cast — mana is `type:0` (`core.manaStats` → end-of-fight %, low-water, OOM). The dedicated `events(dataType:Resources)` returns only discrete resource-change events (`resourceChange`/`waste`/`maxResourceAmount`), less useful for a mana-over-time read.
   - `events(fightIDs, dataType, limit, sourceID?, abilityID?, startTime?, endTime?, includeResources?)` → `ReportEventPaginator { data, nextPageTimestamp }`. `dataType`: EventDataType — verified to include `Casts`, `DamageDone`, `Healing`, `CombatantInfo`, **`Resources`** (full enum: All/Buffs/Casts/CombatantInfo/DamageDone/DamageTaken/Deaths/Debuffs/Dispels/Healing/Interrupts/Resources/Summons/Threat). `includeResources:Boolean` rides a resource snapshot on other event types (mana = resource type 0). Used for the healer MANA lever.
   - `fights(fightIDs) { startTime, endTime }` → `[ReportFight]` (also has `kill`, `difficulty`, `size`).
+    - **`phaseTransitions { id startTime }`** on `ReportFight` (verified live 2026-06): each
+      entry is a phase BOUNDARY — `id` the phase number (1-based; id 1 is at fight start),
+      `startTime` the absolute ms it begins. `null` for a single-phase fight. `core.dpsOverTime`
+      returns the boundaries as fraction-of-fight so the graph card can ALIGN phases across
+      kills (a faster phase ends at a different fight-% each kill, so raw fight-% smears it).
+  - **`graph(fightIDs, sourceID, dataType, viewBy, startTime, endTime)`** → JSON (verified
+    live 2026-06). `dataType` is TableDataType (`DamageDone`/`Healing`/…). Returns
+    `{ data: { series: [{ name, guid, type, pointStart, pointInterval, total, data:[…] }] } }`.
+    With `viewBy:Source` + a `sourceID` filter the series are the actor, one per pet, and a
+    `"Total"` (actor+pets) series. `data[i]` is the ROLLING throughput (DPS/HPS) at
+    `pointStart + i*pointInterval` — a RATE, not per-bin damage (mean(data) ≈ total/dur).
+    MUST pass `startTime`/`endTime` = the fight window or it bins the WHOLE report (mostly
+    zero pre-pull). `core.dpsOverTime` (the DPS-over-time card). One cheap binned request
+    instead of paginating every damage event.
   - `fights { … }` with NO `fightIDs` → ALL pulls in the report (the progression
     flow's backbone). Verified-present `ReportFight` fields (live, 2026-06):
     `id, name, kill, fightPercentage, bossPercentage, lastPhase, encounterID,

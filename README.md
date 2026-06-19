@@ -45,6 +45,11 @@ obvious answers turned out to be wrong; these are the comparisons that survived:
   swings: autos kept swinging → **in range, not pressing** (hesitation/latency);
   autos stopped too → **out of range / moving**. Normalized vs peers on the SAME
   fight, so intermissions cancel out.
+- **DPS over the fight** — a chart of your damage curve across the kill overlaid on
+  the ilvl-matched field's band (median + 25–75%), then a read on your biggest dip.
+  Curves are **aligned by phase** (each phase resampled separately) so a boss phase
+  someone clears faster doesn't smear the comparison — the dip is pinned to a real
+  phase, not a blurry "late in the fight".
 - **Gear audit** — reads every item's REAL secondary stats (Wowhead tooltip API)
   and compares slot-by-slot to the top-DPS field; detects embellishments and
   re-stattable crafted gear via bonus IDs.
@@ -283,6 +288,7 @@ query coalescing), and a smoke test that the browser modules import under Node.
 - `docs/core.js` — shared constants, formatting, and low-level fetchers.
 - `docs/overview.js` — overview + ilvl/duration-controlled comparison.
 - `docs/timeline.js` — comparative timeline root-cause analysis.
+- `docs/graph.js` — DPS-over-time chart vs the phase-aligned field band.
 - `docs/gear.js` — automatic gear audit (real item stats vs the field).
 - `docs/prescribe.js` — the prioritized, actionable prescription.
 - `docs/app.js` / `docs/index.html` — the UI.
