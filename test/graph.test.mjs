@@ -40,16 +40,20 @@ test("phase-aligns curves whose phase boundaries fall at DIFFERENT fight-%", () 
 });
 
 test("graphLevers: a cooldown-cause dip is a sized DPS lever, idle is a 0-impact locator", () => {
-  const base = { boss: "Boss", isHealer: false };
-  const cd = graphLevers({ ...base, worst: { deficit: 0.3, gainPct: 4, phase: 5, center: 0.8, cause: "cooldown", cpmRatio: 1.0 } });
+  const base = { boss: "Boss", unit: "DPS", isHealer: false };
+  const wBase = { deficit: 0.3, gainPct: 4, phase: 5, center: 0.8, youTypical: 60000, youWindow: 42000 };
+  const cd = graphLevers({ ...base, worst: { ...wBase, cause: "cooldown", cpmRatio: 1.0 } });
   assert.equal(cd.length, 1);
   assert.equal(cd[0].dim, "Execution");
   assert.equal(cd[0].kind, "PHASE_DIP");
   assert.equal(cd[0].impact, 4, "cooldown dip carries the sized DPS impact");
   assert.match(cd[0].text, /Phase 5/);
   assert.match(cd[0].text, /cooldown/i);
+  // OWN-BASELINE framing -- vs your own typical, never "X% under the field".
+  assert.match(cd[0].text, /your own/);
+  assert.doesNotMatch(cd[0].text, /under the field|less than the field/i);
 
-  const idle = graphLevers({ ...base, worst: { deficit: 0.3, gainPct: 4, phase: 5, center: 0.8, cause: "idle", cpmRatio: 0.4 } });
+  const idle = graphLevers({ ...base, worst: { ...wBase, cause: "idle", cpmRatio: 0.4 } });
   assert.equal(idle.length, 1);
   assert.equal(idle[0].impact, 0, "an idle dip is INFO (the lost-GCD lever already sizes it)");
   assert.match(idle[0].text, /idle|coast|quiet|rotation going/i);
