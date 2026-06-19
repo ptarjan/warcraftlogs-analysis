@@ -7,7 +7,7 @@
 import {
   characterZone, characterEncounter, playerMetrics, ilvlPeers, PEER_SAMPLE, BOSS_FANOUT,
   median, collectUpTo, mapLimit, bestRank, dpsOverTime, metricUnit, runIsHealer, isSupport,
-  fightWindow, fightEvents, abilityCurvesOverTime, selfBuffIntervals, finding, DIM, DPS, INFO, KIND,
+  fightWindow, fightEvents, abilityCurvesOverTime, selfBuffIntervals, playerDeaths, finding, DIM, DPS, INFO, KIND,
 } from "./core.js";
 
 // Browser renders the chart as an inline SVG (app.js), the CLI as an ASCII sparkline.
@@ -94,7 +94,10 @@ export async function graphFindings(name, server, region, className, specName, d
     try { const s = /** @type {any} */ (await analyzeBoss(name, server, region, r.encounter, difficulty, className, specName, { deep: false })); return s && s.worst ? { r, s } : null; }
     catch { return null; }
   });
-  const dips = scans.filter((x) => x && x.s.worst.deficit >= DIP_FLOOR && (x.s.worst.gainPct || 0) >= 1)
+  // Exclude DEATH-contaminated dips: a death is survival, not a press-lever, so it must not
+  // win the "biggest gainable rotation hole" pick (else we'd tell you to press through your
+  // own corpse). The card still shows the boss + the death note.
+  const dips = scans.filter((x) => x && x.s.worst.deficit >= DIP_FLOOR && (x.s.worst.gainPct || 0) >= 1 && !x.s.worst.death)
     .sort((a, b) => (b.s.worst.gainPct || 0) - (a.s.worst.gainPct || 0));
   if (!dips.length) return null;
   return analyzeBoss(name, server, region, dips[0].r.encounter, difficulty, className, specName, { deep: true });
@@ -127,11 +130,23 @@ export async function analyzeBoss(name, server, region, encounter, difficulty, c
   const cmp = buildCurveComparison(yc, peers);
   if (!cmp) return { skip: "fewpeers", boss: encounter.name };
 
+  // DEATH GUARD: a dip that's really a DEATH (you died in/just-before the window -> a corpse
+  // casts nothing, deals nothing) is NOT a rotation hole. Flag it so we never tell you to
+  // "press through" your own death -- it's survival, handled elsewhere. (Same lesson as the
+  // weak-window lever's death guard.) Checked first, and it skips the rotation diagnosis.
+  const w = cmp.worst;
+  if (w && w.deficit >= DIP_FLOOR) {
+    try {
+      const deaths = await playerDeaths(code, fight, you.sourceID);
+      const d = deaths.find((f) => f >= (w.fracStart || 0) - 0.05 && f <= (w.fracEnd || 1));
+      if (d != null) w.death = { atPct: Math.round(100 * d) };
+    } catch (e) { /* no death data -> proceed (best effort) */ }
+  }
+
   // DIAGNOSE the dip. Cast rate DURING the dip window vs the whole fight (cached casts):
   // collapses -> you go passive (movement/coast); holds but damage is down -> cooldown/amp
   // timing. The deep attribution (which ability / which cooldown) only runs when asked.
-  const w = cmp.worst;
-  if (w && w.deficit >= DIP_FLOOR && !runIsHealer()) {
+  if (w && w.deficit >= DIP_FLOOR && !w.death && !runIsHealer()) {
     try {
       const [fS, fE] = await fightWindow(code, fight);
       const durMs = fE - fS;
@@ -210,6 +225,7 @@ export function graphLevers(d) {
   if (!d || d.skip || d.isHealer) return [];
   const w = d.worst;
   if (!w || w.deficit < DIP_FLOOR || !(w.gainPct >= 1)) return [];
+  if (w.death) return [];                                   // a death is survival, not a press-lever
   const where = w.phase ? `Phase ${w.phase}` : w.center < 1 / 3 ? "the opener" : w.center < 2 / 3 ? "mid-fight" : "the execute";
   const unit = d.unit || "DPS";
   // Same ALL-CAPS-label house style as every other lever (and the rotation weak-window
@@ -329,7 +345,7 @@ export function buildCurveComparison(yc, peers) {
   const yourTypical = liveYou.length ? median(liveYou) : (median(you48) || 1);
   const fieldTypical = liveFld.length ? median(liveFld) : (median(pmed) || 1);
   const W = Math.max(4, Math.round(N * 0.18));
-  /** @type {{start:number,end:number,deficit:number,center:number,phase?:number,nPhases?:number,gainPct?:number,fracStart?:number,fracEnd?:number,cause?:string,cpmRatio?:number,youTypical?:number,youWindow?:number,fieldWindow?:number,culprit?:{name:string,normalK:number,windowK:number},uniform?:boolean,uniformPct?:number,cooldown?:{name:string,inPct:number,outPct:number,drop:number},cdsCover?:boolean}|null} */
+  /** @type {{start:number,end:number,deficit:number,center:number,phase?:number,nPhases?:number,gainPct?:number,fracStart?:number,fracEnd?:number,cause?:string,cpmRatio?:number,youTypical?:number,youWindow?:number,fieldWindow?:number,culprit?:{name:string,normalK:number,windowK:number},uniform?:boolean,uniformPct?:number,cooldown?:{name:string|null,inPct:number,outPct:number,drop:number},cdsCover?:boolean,death?:{atPct:number}}|null} */
   let worst = null;
   for (let i = 0; i + W <= N; i++) {
     let youSum = 0, fldDrop = 0, fldSum = 0, n = 0;
@@ -413,6 +429,7 @@ function renderBoss(log, d, unit) {
   const kk = (n) => `${Math.round((n || 0) / 1000)}k`;
   if (!(w && w.deficit >= DIP_FLOOR)) { log("  -> You hold your level wherever the field does — no soft spot here."); return; }
   const where = w.phase ? `Phase ${w.phase}` : w.center < 1 / 3 ? "your opener" : w.center < 2 / 3 ? "the middle" : "the execute";
+  if (w.death) { log(`  -> Your damage craters in ${where} because you DIED (~${w.death.atPct}% in) — that's survival, not a rotation hole. See the deaths in the timeline/progression view.`); return; }
   const drop = `${where}: your ${unit} drops to ~${kk(w.youWindow)} vs your own ~${kk(w.youTypical)} the rest of the kill, while the field holds ~${kk(w.fieldWindow)}`;
   if (w.cause === "idle") log(`  -> ${drop} — your cast rate falls to ${Math.round(100 * (w.cpmRatio || 0))}% of normal, so you go quiet there. Keep pressing through it. (~${w.gainPct}%)`);
   else if (w.culprit) log(`  -> ${drop} — your ${w.culprit.name} is way down (~${w.culprit.windowK}k vs ~${w.culprit.normalK}k); land it in ${where}. (~${w.gainPct}%)`);

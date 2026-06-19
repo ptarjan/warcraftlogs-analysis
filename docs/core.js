@@ -401,6 +401,18 @@ export async function abilityCurvesOverTime(code, fight, sourceId) {
     .map((x) => ({ name: x.name, guid: x.guid, data: (x.data || []).map((v) => +v || 0) }));
 }
 
+// Fractions-of-fight (0..1) at which the player DIED on a kill -- so a damage dip that's
+// really a death (a corpse casts nothing and deals no damage) is never mis-sold as a
+// rotation hole. Low-volume (one Deaths-events page for one actor). [] if they never died.
+export async function playerDeaths(code, fight, sourceId) {
+  const [s, e] = await fightWindow(code, fight);
+  if (!(e > s)) return [];
+  const q = `query { reportData { report(code:"${code}") { events(
+    fightIDs:${fight}, sourceID:${sourceId}, dataType:Deaths, limit:100, startTime:${s}, endTime:${e}) { data } } } }`;
+  const rows = (await gql(q)).reportData.report.events.data || [];
+  return rows.filter((r) => r.type === "death").map((r) => (r.timestamp - s) / (e - s));
+}
+
 // Your SELF-applied buffs as active-intervals over the fight -- so a consumer can read
 // each buff's uptime in ANY window (the Buffs table ignores startTime/endTime, verified)
 // AND measure which buff is a damage AMP (its presence lifts your DPS). Buffs EVENTS

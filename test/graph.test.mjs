@@ -92,6 +92,15 @@ test("graphLevers: names the culprit ability / the mistimed cooldown, or honestl
   assert.match(cover[0].text, /cleave|Bloodlust|raid cooldown|fewer targets/i);
 });
 
+test("graphLevers: a death-contaminated dip is NOT a press-lever", () => {
+  const base = { boss: "Boss", unit: "DPS", isHealer: false };
+  const wBase = { deficit: 0.4, gainPct: 10, phase: 3, center: 0.85, youTypical: 42000, youWindow: 20000, fieldWindow: 41000, cause: "idle", cpmRatio: 0.66 };
+  // Same dip, but you DIED in the window -> survival, not rotation -> no lever.
+  assert.deepEqual(graphLevers({ ...base, worst: { ...wBase, death: { atPct: 89 } } }), []);
+  // Without the death it IS a sized lever (sanity).
+  assert.equal(graphLevers({ ...base, worst: wBase })[0].impact, 10);
+});
+
 test("graphLevers: nothing to add when there's no real dip, or for healers/skips", () => {
   assert.deepEqual(graphLevers({ boss: "B", worst: { deficit: 0.05, gainPct: 0 } }), []);
   assert.deepEqual(graphLevers({ boss: "B", isHealer: true, worst: { deficit: 0.3, gainPct: 4, cause: "cooldown" } }), []);
