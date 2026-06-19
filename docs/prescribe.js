@@ -1007,7 +1007,14 @@ function renderVerdict(log, d, yours) {
     const residualWord = hasPress ? "reps" : runIsHealer()
       ? "healing efficiency + throughput (stats/gear/comp), not activity"
       : "damage-per-cast (stats/gear), not activity";
-    log(`VERDICT: your biggest character levers are the ${setupFixes.length} gear/setup fix${setupFixes.length > 1 ? "es" : ""} below${buildNote}${hasPress ? " + pressing faster" : ""}. The big gap is ${compList0.length ? "comp + " : ""}${residualWord}${overhaulDisclaimer("rotation", d.skipped)}.`);
+    // Don't reassure "not a rotation overhaul" when a rotation habit recurs across your
+    // OTHER bosses (hidden on the benchmark) -- point at it instead, or it reads as the
+    // verdict dismissing the HABIT ACROSS FIGHTS note (Silvercircle: gear-led, yet he
+    // under-presses Hand of Gul'dan on 2/3 of his bosses).
+    const rotTail = d.rotHabitAcrossFights
+      ? " -- though you have a rotation habit that recurs across your other fights (see HABIT ACROSS FIGHTS)"
+      : overhaulDisclaimer("rotation", d.skipped);
+    log(`VERDICT: your biggest character levers are the ${setupFixes.length} gear/setup fix${setupFixes.length > 1 ? "es" : ""} below${buildNote}${hasPress ? " + pressing faster" : ""}. The big gap is ${compList0.length ? "comp + " : ""}${residualWord}${rotTail}.`);
   } else {
     // "Nothing to fix" must NOT be claimed over sections we never loaded. An empty
     // actionable list is MORE likely under a partial run (a skipped rotation/talents/gear
@@ -1354,5 +1361,9 @@ export async function run(log, name, server, region, className = "Monk", specNam
     medP, bestP, topParse, nBosses: ranks.length, gearAgeDays, hist, histBoss,
     you, field, execd, rot, tp, gf, my, priority, rx, skipped, aboveField,
     recurKinds: rotMerged.recurringKinds,
+    // A rotation habit that recurs on your OTHER bosses but was HIDDEN on the benchmark
+    // kill (an INFO "HABIT ACROSS FIGHTS" note). The verdict uses this so a setup-led
+    // "not a rotation overhaul" never dismisses a habit we just flagged across your raid.
+    rotHabitAcrossFights: rotMerged.infos.length > 0,
   });
 }

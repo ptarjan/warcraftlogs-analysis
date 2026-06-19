@@ -1547,8 +1547,11 @@ export function mergeRotationRecurrence(mainLevers, otherBosses = []) {
     const on = firedOn.get(fnd.recurKey);
     const count = on ? on.size : 1;
     if (count < 2) return fnd;   // only the benchmark kill -> no recurrence claim
+    const where = count === totalBosses
+      ? (count === 2 ? "both recent bosses I checked" : `all ${count} recent bosses I checked`)
+      : `${count} of the ${totalBosses} recent bosses I checked`;
     return { ...fnd, text: fnd.text +
-      ` You do this on ${count === totalBosses ? `all ${count} recent bosses I checked` : `${count} of the ${totalBosses} recent bosses I checked`} -- a consistent habit, so fixing it lifts every fight, not just this kill.` };
+      ` You do this on ${where} -- a consistent habit, so fixing it lifts every fight, not just this kill.` };
   });
 
   // The lever KINDS that recur across >=2 of the analyzed bosses (benchmark or not). A
