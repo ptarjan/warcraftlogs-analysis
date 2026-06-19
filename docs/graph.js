@@ -167,18 +167,23 @@ export function graphLevers(d) {
   if (!w || w.deficit < DIP_FLOOR || !(w.gainPct >= 1)) return [];
   const where = w.phase ? `Phase ${w.phase}` : w.center < 1 / 3 ? "the opener" : w.center < 2 / 3 ? "mid-fight" : "the execute";
   const unit = d.unit || "DPS";
+  // Same ALL-CAPS-label house style as every other lever (and the rotation weak-window
+  // it replaces): "DAMAGE TIMELINE: ...". Sized OWN-BASELINE (vs YOUR own typical); the
+  // field-holds clause is the measured "others sustain here, so it's a real hole" -- the
+  // window only fires when the field does NOT drop there (see buildCurveComparison).
+  const head = `DAMAGE TIMELINE: in ${where} on ${d.boss} your ${unit} drops to ~${kfmt(w.youWindow)} vs your own ~${kfmt(w.youTypical)} the rest of the kill -- and the field holds its pace here (~${kfmt(w.fieldWindow)}), so it's a real hole, not a low-damage phase`;
   if (w.cause === "idle") {
     return [finding(DIM.EXECUTION, INFO,
-      `Your softest stretch is ${where} on ${d.boss} -- your ${unit} drops to ~${kfmt(w.youWindow)} vs your own ~${kfmt(w.youTypical)} the rest of the kill, and your cast rate falls to ${Math.round(100 * (w.cpmRatio || 0))}% of normal. That's the lost-GCD time above, in one window: keep your rotation going through the ${where} mechanics instead of coasting.`,
+      `${head}: your cast rate falls to ${Math.round(100 * (w.cpmRatio || 0))}% of normal, so you go quiet here (the lost-GCD time above, in one window). Keep your rotation going through ${where}'s mechanics instead of coasting.`,
       "measured", KIND.PHASE_DIP)];
   }
-  // cooldown / unknown-cause -> a real sized lever, framed against YOUR OWN typical.
-  const drop = `your ${unit} drops to ~${kfmt(w.youWindow)} vs your own ~${kfmt(w.youTypical)} the rest of the kill`;
-  const cd = w.cause === "cooldown"
-    ? `${drop}, but your cast rate's normal -- your burst cooldowns are spent earlier and you run ${where} on filler. Hold/align a burst cooldown for ${where}.`
-    : `${drop}. Line up your cooldowns and keep your uptime up through it.`;
-  return [finding(DIM.EXECUTION, DPS(w.gainPct),
-    `${where} on ${d.boss}: ${cd}`, "measured", KIND.PHASE_DIP)];
+  // Cast rate normal but output down -> your damage PER cast is lower here, which usually
+  // means your big hits (a burst cooldown / amp) landed earlier. Stated as the likely
+  // lever, not a measured fact about others' cooldown timing.
+  const tail = w.cause === "cooldown"
+    ? `. You press just as much there (cast rate normal), so your hits land softer -- likely a burst cooldown that fired earlier. Try saving one for ${where}.`
+    : `. Keep your uptime and cooldowns lined up through it.`;
+  return [finding(DIM.EXECUTION, DPS(w.gainPct), head + tail, "measured", KIND.PHASE_DIP)];
 }
 
 // Pure: turn your curve + the peer curves into the aligned band + the worst-dip read.
@@ -235,24 +240,33 @@ export function buildCurveComparison(yc, peers) {
     if (you48[g] < plo[g]) below++; else if (you48[g] > phi[g]) above++;
   }
 
-  // The dip is measured OWN-BASELINE: where YOUR output trails YOUR OWN typical, NOT the
-  // field median. Field-relative is the high-percentile trap -- a player 45% ahead of the
-  // field can be "under the field median" in one phase (they front-load) with nothing
-  // gainable there; telling them to match the field contradicts their own headline. Own-
-  // baseline is always gainable (you've demonstrably done better yourself this same kill)
-  // and consistent for elite and average players alike. (Same principle as the rotation
-  // weak-window lever.) The field band stays as the chart's visual context.
+  // The dip is sized OWN-BASELINE (where YOUR output trails YOUR OWN typical), NOT the
+  // field median -- field-relative is the high-percentile trap (a player 45% ahead of the
+  // field can be "under the field median" in a phase they front-load, nothing gainable).
+  // BUT it must also be a YOU-SPECIFIC hole: the field has to HOLD its pace in that window
+  // too. If everyone drops there (movement phase, fewer targets, boss damage reduction),
+  // it's an inherent low-damage phase, NOT something you can fix -- so we require the field
+  // to sustain (its own drop < 15%). That's the measured answer to "do others sustain
+  // here?" -- only windows where they do get flagged. (Same logic as the rotation weak
+  // window; here it's phase-aligned.) The field band also stays as the chart's visual.
   const liveYou = you48.filter((_, g) => live[g]);
+  const liveFld = pmed.filter((_, g) => live[g]);
   const yourTypical = liveYou.length ? median(liveYou) : (median(you48) || 1);
+  const fieldTypical = liveFld.length ? median(liveFld) : (median(pmed) || 1);
   const W = Math.max(4, Math.round(N * 0.18));
-  /** @type {{start:number,end:number,deficit:number,center:number,phase?:number,nPhases?:number,gainPct?:number,fracStart?:number,fracEnd?:number,cause?:string,cpmRatio?:number,youTypical?:number,youWindow?:number}|null} */
+  /** @type {{start:number,end:number,deficit:number,center:number,phase?:number,nPhases?:number,gainPct?:number,fracStart?:number,fracEnd?:number,cause?:string,cpmRatio?:number,youTypical?:number,youWindow?:number,fieldWindow?:number}|null} */
   let worst = null;
   for (let i = 0; i + W <= N; i++) {
-    let sum = 0, n = 0;
-    for (let g = i; g < i + W; g++) if (live[g]) { sum += (yourTypical - you48[g]) / yourTypical; n++; }
+    let youSum = 0, fldDrop = 0, fldSum = 0, n = 0;
+    for (let g = i; g < i + W; g++) if (live[g]) {
+      youSum += (yourTypical - you48[g]) / yourTypical;
+      fldDrop += (fieldTypical - pmed[g]) / fieldTypical;
+      fldSum += pmed[g]; n++;
+    }
     if (n < W / 2) continue;                                  // mostly-intermission window -> skip
-    const deficit = sum / n;                                  // avg fraction below YOUR typical
-    if (!worst || deficit > worst.deficit) worst = { start: i, end: i + W, deficit, center: (i + W / 2) / N };
+    if (fldDrop / n > 0.15) continue;                         // field ALSO drops here -> inherent low phase, not gainable
+    const deficit = youSum / n;                               // avg fraction below YOUR typical, where the field holds
+    if (!worst || deficit > worst.deficit) worst = { start: i, end: i + W, deficit, center: (i + W / 2) / N, fieldWindow: fldSum / n };
   }
   // Which phase the dip falls in (aligned runs only) + SIZE it in overall-DPS terms: the
   // damage if you held your own typical across the window, as a % of your whole-fight
@@ -347,17 +361,18 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const kk = (n) => `${Math.round((n || 0) / 1000)}k`;
   if (w && w.deficit >= DIP_FLOOR) {
     const where = w.phase ? `Phase ${w.phase}` : w.center < 1 / 3 ? "your opener" : w.center < 2 / 3 ? "the middle" : "the execute";
-    const drop = `${where}: your ${unit} drops to ~${kk(w.youWindow)} vs your own ~${kk(w.youTypical)} the rest of the kill`;
+    // your-own-typical drop + the measured "others hold here" (so it's a real, gainable hole).
+    const drop = `${where}: your ${unit} drops to ~${kk(w.youWindow)} vs your own ~${kk(w.youTypical)} the rest of the kill, while the field holds ~${kk(w.fieldWindow)}`;
     if (w.cause === "idle") {
-      log(`  -> ${drop}, and your cast rate falls to ${Math.round(100 * (w.cpmRatio || 0))}% of normal — you go quiet here.`);
+      log(`  -> ${drop} — and your cast rate falls to ${Math.round(100 * (w.cpmRatio || 0))}% of normal, so you go quiet here.`);
       log(`     Keep your rotation going through ${where}'s movement/mechanics instead of coasting. (~${w.gainPct}% ${unit})`);
     } else if (w.cause === "cooldown") {
-      log(`  -> ${drop}, but you keep pressing (cast rate normal) — your burst is spent earlier and you run ${where} on filler.`);
-      log(`     Hold a burst cooldown for ${where}. (~${w.gainPct}% ${unit})`);
+      log(`  -> ${drop} — but you press just as much (cast rate normal), so your hits land softer there.`);
+      log(`     Likely a burst cooldown that fired earlier; try saving one for ${where}. (~${w.gainPct}% ${unit})`);
     } else {
-      log(`  -> ${drop}. Line up your cooldowns and keep your uptime up through it. (~${w.gainPct}% ${unit})`);
+      log(`  -> ${drop}. Keep your uptime and cooldowns lined up through it. (~${w.gainPct}% ${unit})`);
     }
   } else {
-    log("  -> No one stretch stands out — you hold your level across the kill.");
+    log("  -> No one stretch stands out — you hold your level wherever the field does.");
   }
 }

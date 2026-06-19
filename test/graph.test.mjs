@@ -39,9 +39,21 @@ test("phase-aligns curves whose phase boundaries fall at DIFFERENT fight-%", () 
   assert.ok(r.worst.fracStart >= 0.25 && r.worst.fracEnd <= 0.70, `dip maps to your phase-2 window, got ${r.worst.fracStart}-${r.worst.fracEnd}`);
 });
 
+test("no dip when the FIELD also drops there (inherent low-damage phase, not gainable)", () => {
+  // You crater in phase 2 -- but so does the field (everyone does less here). It's the
+  // phase, not you, so nothing to flag.
+  const you = { phases: [0, 0.30, 0.65], dps: curve([0, 0.30, 0.65], [100, 25, 100]) };
+  const peers = Array.from({ length: 4 }, () => ({
+    phases: [0, 0.30, 0.65], dps: curve([0, 0.30, 0.65], [100, 25, 100]), overall: 100,
+  }));
+  const r = buildCurveComparison(you, peers);
+  assert.ok(r);
+  assert.ok(!r.worst || r.worst.deficit < 0.12, "field also drops -> no gainable hole flagged");
+});
+
 test("graphLevers: a cooldown-cause dip is a sized DPS lever, idle is a 0-impact locator", () => {
   const base = { boss: "Boss", unit: "DPS", isHealer: false };
-  const wBase = { deficit: 0.3, gainPct: 4, phase: 5, center: 0.8, youTypical: 60000, youWindow: 42000 };
+  const wBase = { deficit: 0.3, gainPct: 4, phase: 5, center: 0.8, youTypical: 60000, youWindow: 42000, fieldWindow: 37000 };
   const cd = graphLevers({ ...base, worst: { ...wBase, cause: "cooldown", cpmRatio: 1.0 } });
   assert.equal(cd.length, 1);
   assert.equal(cd[0].dim, "Execution");
