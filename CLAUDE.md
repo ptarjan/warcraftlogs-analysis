@@ -31,6 +31,16 @@ payoff; the list is sorted **biggest-DPS-first by the impact actually shown**.
 - Each analysis module exports `run(log, …)` (the card entrypoint — renders) AND
   a `…Findings` data function (`gearFindings`, `rotationFindings`,
   `timelineFindings`, …) that only computes. Keep compute and render separate.
+- **A big module's PURE helpers live in a sibling `…-helpers.js` (or `…-levers.js`);
+  the entrypoint module imports them.** rotation→`rotation-helpers.js` (empowered/opener/
+  usage/per-cast math), prescribe→`prescribe-helpers.js` (pctLabel/reconcile/verdict/
+  residual + the shared CONSUMABLES) + `prescribe-levers.js` (execution/consumable/enchant/
+  trinket/stat-gap builders); app's pure bits → `markup.js` (link/**bold** tokenizer) +
+  `dps-chart.js` (the SVG curve); wcl's HTTP → `wcl-transport.js` (token + nodeWcl/browserWcl,
+  a leaf). The split keeps the unit-tested logic isolated and the entrypoint focused — DON'T
+  move helpers back inline to "save an import". The sibling is the SINGLE source of truth:
+  importers (incl. tests) import the helper from the sibling, NOT a re-export from the
+  entrypoint (the export-hygiene guard in `test/imports.test.mjs` fails on a duplicate export).
 - **Findings are the shared currency.** A finding is `{ dim, impact, label, text }`
   built with `DPS()/COMP()/INFO` + `finding()` from `core.js` — `impact` (a
   number) is the ONLY sort key, `label` is the matching display string (built
