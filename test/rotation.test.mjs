@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, empoweredStats, empowermentCandidate, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, rotationLevers, medianCastRates } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, empoweredStats, empowermentCandidate, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, rotationLevers, medianCastRates, consensusOpener, openerDivergence } = await import("../docs/rotation.js");
 const { setRunMetric } = await import("../docs/core.js");
 
 // Run a body with the run metric forced, always restoring "dps" so it never leaks.
@@ -516,4 +516,69 @@ test("rotation: off-build (hero tree != field) caveats the press-more lever; on-
   const onLever = on.find((l) => /press .*Vampiric Touch.* more/.test(l.text));
   assert.ok(onLever, "press-more lever fires when hero-matched");
   assert.doesNotMatch(onLever.text, /different hero tree/, "on-build -> no caveat");
+});
+
+// --- OPENER consensus + divergence diagnostic ----------------------------------
+
+test("consensusOpener: position-wise modal opener, truncated where the field diverges", () => {
+  // 4 peers agree on Niuzao > Breath > Keg for the first 3, then scatter.
+  const openers = [
+    ["Niuzao", "Breath of Fire", "Keg Smash", "Tiger Palm"],
+    ["Niuzao", "Breath of Fire", "Keg Smash", "Blackout Kick"],
+    ["Niuzao", "Breath of Fire", "Keg Smash", "Rising Sun Kick"],
+    ["Niuzao", "Breath of Fire", "Spinning Crane", "Tiger Palm"],
+  ];
+  const c = consensusOpener(openers);
+  // Pos0/1 unanimous; pos2 Keg has 3/4 (>=0.34) so kept; pos3 is a 2/4 tie on Tiger Palm.
+  assert.deepEqual(c.slice(0, 3), ["Niuzao", "Breath of Fire", "Keg Smash"]);
+  assert.equal(consensusOpener([]), null);
+  assert.equal(consensusOpener(null), null);
+});
+
+test("openerDivergence: flags a high-consensus early cooldown you DELAY past minPosGap", () => {
+  // Field opens with Niuzao at pos 0; you cast 2 fillers first (Niuzao at pos 2).
+  const peers = Array.from({ length: 5 }, () => ["Niuzao", "Breath of Fire", "Keg Smash"]);
+  const you = ["Blackout Kick", "Tiger Palm", "Niuzao", "Breath of Fire"];
+  const og = openerDivergence(you, peers);
+  assert.equal(og.ability, "Niuzao");
+  assert.equal(og.omitted, false);
+  assert.equal(og.youPos, 2);
+  assert.equal(og.delay, 2);
+});
+
+test("openerDivergence: the field's lead cast SKIPPED from your opener reads as omitted", () => {
+  // Field leads with Niuzao(0); you never cast it in your opener (you open on fillers).
+  const peers = Array.from({ length: 5 }, () => ["Niuzao", "Keg Smash", "Breath of Fire"]);
+  const you = ["Tiger Palm", "Blackout Kick", "Keg Smash"];
+  const og = openerDivergence(you, peers);
+  assert.equal(og.ability, "Niuzao", "the field's pos-0 lead, absent from your opener");
+  assert.equal(og.omitted, true);
+  assert.equal(og.youPos, null);
+});
+
+test("openerDivergence: silent when you open about as early, on a split field, or no data", () => {
+  const peers = Array.from({ length: 5 }, () => ["Niuzao", "Breath of Fire", "Keg Smash"]);
+  // You open with Niuzao at pos 0 too -> no divergence.
+  assert.equal(openerDivergence(["Niuzao", "Keg Smash"], peers), null);
+  // Split field: only 2/5 open with Niuzao (< minShare) -> no consensus to diverge from.
+  const split = [["Niuzao"], ["Niuzao"], ["Tiger Palm"], ["Keg Smash"], ["Blackout Kick"]];
+  assert.equal(openerDivergence(["Tiger Palm", "Niuzao"], split), null);
+  // Too few peers.
+  assert.equal(openerDivergence(["x"], [["Niuzao"], ["Niuzao"]]), null);
+  assert.equal(openerDivergence([], peers), null);
+});
+
+test("openerLever (via rotationLevers): renders an INFO diagnostic from openerGap, none without", () => {
+  const rot = { abilityIds: { Niuzao: 132578 },
+    openerGap: { ability: "Niuzao", peerShare: 0.8, peerPos: 0, youPos: 2, omitted: false, delay: 2 } };
+  const lev = rotationLevers(rot).filter((l) => /^OPENER:/.test(l.text));
+  assert.equal(lev.length, 1);
+  assert.equal(lev[0].impact, 0, "diagnostic: no DPS claim");
+  assert.equal(lev[0].kind, "OPENER");
+  assert.match(lev[0].text, /delay it ~2 globals/);
+  // Omitted variant reads "isn't in your opener at all".
+  const omit = rotationLevers({ abilityIds: {}, openerGap: { ability: "Niuzao", peerShare: 0.8, peerPos: 0, youPos: null, omitted: true, delay: Infinity } });
+  assert.match(omit.find((l) => /^OPENER:/.test(l.text)).text, /isn't in your opener at all/);
+  // No openerGap (the gates suppressed it) -> no opener line.
+  assert.equal(rotationLevers({ abilityIds: {} }).filter((l) => /^OPENER:/.test(l.text)).length, 0);
 });

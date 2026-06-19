@@ -9,7 +9,7 @@
 //   - your opener sequence vs the field's
 import {
   playerMetrics, ilvlPeers, mapLimit, median, bestKill,
-  playerAbilities, dotUptimes, petDamage, fightWindow, fightEvents, paginateEvents, buffUptimes, f, DPS, finding, KIND, DIM, eventTable, runIsHealer, throughputWord,
+  playerAbilities, dotUptimes, petDamage, fightWindow, fightEvents, paginateEvents, buffUptimes, f, DPS, INFO, finding, KIND, DIM, eventTable, runIsHealer, throughputWord,
   damageAbilitiesForced, alwaysAtonement, atonementIfDamaging, isAtonement,
 } from "./core.js";
 import { talentedAbilities, heroTreeOf } from "./talents.js";
@@ -32,6 +32,55 @@ export function openerSequence(casts, windowMs = 20000, n = 8) {
   if (!casts.length) return [];
   const t0 = casts[0].t;
   return casts.filter((c) => c.t - t0 <= windowMs).slice(0, n).map((c) => c.name);
+}
+
+// The field's CONSENSUS opener (for display): the modal ability at each opener
+// position across peers, truncated at the first position where no ability holds a
+// plurality -- past there the field genuinely diverges and there's no consensus to
+// show. Replaces the brittle single-peer opener (peers[0]), which could showcase one
+// outlier's pull as "the field's". Pure -> testable.
+export function consensusOpener(openers, { minShare = 0.34, maxLen = 8 } = {}) {
+  const live = (openers || []).filter((o) => o && o.length);
+  if (!live.length) return null;
+  const out = [];
+  for (let i = 0; i < maxLen; i++) {
+    const at = live.map((o) => o[i]).filter(Boolean);
+    if (!at.length) break;
+    const counts = new Map();
+    for (const nm of at) counts.set(nm, (counts.get(nm) || 0) + 1);
+    const [name, c] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (c / live.length < minShare) break;        // no plurality here -> consensus ends
+    out.push(name);
+  }
+  return out.length ? out : null;
+}
+
+// Where YOUR opener diverges from the field's: the field's consensus FIRST cast -- the
+// opening cooldown they lead with -- that you delay or skip. The opener sets up your first
+// burst window; leading with two fillers before your major cooldown (or never casting it
+// in the opener) bleeds that window in a way the whole-fight cast-rate levers can't see
+// (your per-minute rate is fine; the TIMING of the first cast is the loss). We key off the
+// field's POSITION-0 mode only -- their primary opener -- so a mid-opener filler the field
+// happens to share never reads as "you skipped it", and a split field (no consensus lead)
+// stays silent. Fires when you cast that lead >= minPosGap globals late, or not at all in
+// your opener. The caller gates this on being BEHIND the field + hero-matched + castability,
+// so a good player who opens differently-but-fine never sees it. Pure -> testable.
+//   youOpener:   your opener (ability names, in cast order)
+//   peerOpeners: each peer's opener
+export function openerDivergence(youOpener, peerOpeners, { minShare = 0.6, minPosGap = 2, minPeers = 3 } = {}) {
+  const live = (peerOpeners || []).filter((o) => o && o.length);
+  if (live.length < minPeers || !(youOpener || []).length) return null;
+  // The field's consensus opening cast = the mode of position 0 across peers.
+  const firsts = new Map();
+  for (const o of live) firsts.set(o[0], (firsts.get(o[0]) || 0) + 1);
+  const [lead, c] = [...firsts.entries()].sort((a, b) => b[1] - a[1])[0];
+  const share = c / live.length;
+  if (share < minShare) return null;              // no field-wide opening cast to compare to
+  const at = youOpener.indexOf(lead);
+  if (at === 0) return null;                       // you lead with it too -> opening fine
+  const omitted = at < 0;
+  if (!omitted && at < minPosGap) return null;     // you cast it ~as early -> not a real delay
+  return { ability: lead, peerShare: share, peerPos: 0, youPos: omitted ? null : at, omitted, delay: omitted ? Infinity : at };
 }
 
 // What FRACTION of an ability's casts land "empowered" -- the high-damage version
@@ -712,7 +761,7 @@ export async function rotationFindings(name, server, region, className, specName
   const empShares = peers.map((p) => p.empShare).filter((x) => x != null);
   const fieldEmp = (isReal && empShares.length >= 3) ? median(empShares) : null;
   const youEmp = empCand ? empCand.empShare : null;
-  const fieldOpener = peers.length ? peers[0].opener : null;
+  const fieldOpener = consensusOpener(peers.map((p) => p.opener));
   // For an ATONEMENT healer the rotation IS the damage rotation, so the field rate must be
   // the peers' DAMAGE cast rate -- built by filtering each peer's already-fetched all-casts
   // rate (by id) to YOUR damage abilities (dmgId2Name). No extra peer fetch. Otherwise the
@@ -853,11 +902,31 @@ export async function rotationFindings(name, server, region, className, specName
   const petShares = peers.map((p) => p.petShare).filter((x) => x != null);
   const fieldPetShare = petShares.length >= 3 ? median(petShares) : null;
   const petGap = (you.petShare != null && fieldPetShare != null) ? petShareGap(you.petShare, fieldPetShare) : null;
+  const heroMatched = yourHero && peers.length ? (peers.every((p) => p.hero === yourHero) ? yourHero : null) : null;
+  // OPENER divergence: a high-consensus early cooldown the field opens with that you
+  // delay/skip. A named DIAGNOSTIC, gated hard so it never nags a good player:
+  //   - only when you're BEHIND the field on this kill (a faster opener can't be the
+  //     story for someone already ahead -- Hadryan delays Niuzao yet parses +45%);
+  //   - only when peers are HERO-MATCHED (a different build opens with different buttons,
+  //     so the comparison would be confounded -- mirror the press-more buildCaveat);
+  //   - only an ability you can actually CAST (don't tell you to open with a skipped talent).
+  // Compared on total damage / duration (peers + you are on the same boss). Damage-only,
+  // so suppressed for a PURE healer the same way usageLevers is (reactive misframe).
+  const yourDps = (you.total && you.dur) ? you.total / you.dur : 0;
+  const peerDpss = peers.map((p) => (p.total && p.dur) ? p.total / p.dur : null).filter((x) => x != null);
+  const fieldMedDps = peerDpss.length >= 3 ? median(peerDpss) : null;
+  const behindField = fieldMedDps != null && yourDps > 0 && yourDps < fieldMedDps * 0.97;
+  const heroSafe = !yourHero || !!heroMatched;       // unknown hero = best-effort; known = require a match
+  let openerGap = null;
+  if (behindField && heroSafe && (!runIsHealer() || you.atonement)) {
+    const og = openerDivergence(you.opener, peers.map((p) => p.opener));
+    if (og && castable(og.ability, talent)) openerGap = og;
+  }
   return {
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener, atonement: !!you.atonement,
-    usage, cooldowns, cdUsage, buffCds, perCast, dotGaps, dotCount: (you.dots || []).length, petGap, castGap, fieldPeers: peers.length, talent, abilityIds,
+    usage, cooldowns, cdUsage, buffCds, perCast, dotGaps, dotCount: (you.dots || []).length, petGap, castGap, fieldPeers: peers.length, talent, abilityIds, openerGap,
     yourHero: yourHero || null,
-    heroMatched: yourHero && peers.length ? (peers.every((p) => p.hero === yourHero) ? yourHero : null) : null,
+    heroMatched,
     proc: { name: empCand ? empCand.name : null, isReal, youPerMin: empCand ? empCand.procPerMin : 0, fieldPerMin: fieldProc, youEmp, fieldEmp,
             youEmpCount: empCand ? empCand.empCount : null, youEmpN: empCand ? empCand.empN : null },
   };
@@ -1146,6 +1215,24 @@ function empowermentLever(rot, link) {
   return out;
 }
 
+// OPENER: a cooldown the field reliably opens with that you delay or skip. A NAMED
+// rotation DIAGNOSTIC, not a sized lever -- a single opening window is hard to price in
+// DPS and a sim won't value it, so it carries INFO (impact 0) and never inflates the
+// list. rotationFindings already gated it to BEHIND-the-field, hero-matched, castable
+// players, so a good player who opens differently-but-fine never reaches here. The fix
+// is concrete: front-load that button so your first burst lines up with the field's.
+function openerLever(rot, link) {
+  const og = rot && rot.openerGap;
+  if (!og) return [];
+  const share = Math.round(og.peerShare * 100);
+  const lead = og.omitted
+    ? `the field opens with ${link(og.ability)} (${share}% of peers) but it isn't in your opener at all`
+    : `the field opens with ${link(og.ability)} (${share}% of peers) but you delay it ~${og.delay} global${og.delay === 1 ? "" : "s"} (you cast it ${og.youPos + 1}th)`;
+  return [finding(DIM.ROTATION, INFO,
+    `OPENER: ${lead}. Open with ${link(og.ability)} -- front-loading it lines your first burst window up with the field's. ` +
+    `(Pull up a rank-1 opener of this fight and diff the first ~10s against yours.)`, "measured", KIND.OPENER)];
+}
+
 // Assemble all rotation levers into the shared { dim, impact, label, text } currency.
 // Each kind is its own pure (rot, link) -> Finding[] above; this just concatenates in
 // priority order. Only a GENUINE under-used proc is actionable -- crit-driven big hits
@@ -1160,5 +1247,6 @@ export function rotationLevers(rot) {
     ...petLever(rot),
     ...dotLevers(rot),
     ...empowermentLever(rot, link),
+    ...openerLever(rot, link),
   ];
 }
