@@ -53,7 +53,7 @@ test("fieldDelta measures an attribute's value from the field (have vs not)", ()
   // Too few on one side -> null.
   assert.equal(fieldDelta([110, 100, 100, 100, 100], [true, false, false, false, false]), null);
 });
-const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, verdictBlindSpots, overhaulDisclaimer, strengths, killHistory, consumableLevers, residualText, residualSummary } = await import("../docs/prescribe.js");
+const { rxHeadline, executionLevers, latencyLever, trinketLevers, reconcileImpacts, pickCurrentKill, pickBenchmarkKill, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, verdictBlindSpots, overhaulDisclaimer, compCoversGap, strengths, killHistory, consumableLevers, residualText, residualSummary } = await import("../docs/prescribe.js");
 
 test("killHistory: parse spread (consistency) + recent-vs-old trend (improvement), time-ordered", () => {
   const k = (p, t) => ({ rankPercent: p, startTime: t });
@@ -592,6 +592,17 @@ test("verdictLever: headlines the ACTUAL biggest lever, not a fixed category pre
   assert.equal(verdictLever([uptime, gear]), "execution");
   assert.equal(verdictLever([gear, talent]), "setup");
   assert.equal(verdictLever([]), "none");
+});
+
+test("compCoversGap: comp alone explaining the whole gap -> verdict names comp, not a <1% lever", () => {
+  // Luvalot: 83rd %ile, 7% behind, all of it Power Infusion (15%) + Aug (6%) -> his own
+  // levers reconcile to ~0, so "your biggest lever is a ROTATION fix" misreads/deflates.
+  assert.equal(compCoversGap(7, 21), true);    // comp 21% >= the 7% gap -> all yours scale to 0
+  assert.equal(compCoversGap(7, 7), true);     // exactly covers -> target 0
+  assert.equal(compCoversGap(30, 10), false);  // real gap beyond comp -> keep the normal verdict
+  assert.equal(compCoversGap(7, 0), false);    // no comp -> not a comp verdict
+  assert.equal(compCoversGap(null, 5), false); // no measured gap -> normal verdict
+  assert.equal(compCoversGap(0, 5), false);    // you're ahead/even -> not a "gap is comp" claim
 });
 
 test("verdictBlindSpots: a 'nothing to fix' verdict can't claim sections it never loaded match", () => {

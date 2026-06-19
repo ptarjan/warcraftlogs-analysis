@@ -954,6 +954,12 @@ function renderHeader(log, d, you, field, peerGap, topGap) {
   }
 }
 
+// Raid COMP alone accounts for your WHOLE measured gap -> every one of your own levers
+// reconciles to ~0, so the verdict names comp (a roster ask) instead of headlining a <1%
+// lever that contradicts the "~0pp you can fix" breakdown. Pure -> testable. (compImpact >=
+// peerGap > 0 already implies a comp finding exists, so no separate length check needed.)
+export const compCoversGap = (peerGap, compImpact) => peerGap != null && peerGap > 0 && compImpact >= peerGap;
+
 // A blunt, character-specific VERDICT: name the situation so the report never reads like a
 // template -- and always points at an action (respec / the few setup fixes / "tighten your
 // play, there's no shortcut"). `yours` is the actionable findings, sorted biggest-first.
@@ -968,6 +974,10 @@ function renderVerdict(log, d, yours) {
   // the verbs ("respec" vs "play differently") never mismatch.
   const rotKindOf = (r) => r.kind === KIND.EMPOWERMENT ? "an EMPOWERMENT timing fix (landing your hardest hit in its high-damage window)"
     : r.kind === KIND.COOLDOWN ? "a COOLDOWN you under-use"
+    // WEAK_WINDOW is dim Rotation but it's an UPTIME/execution gap, not pressing the wrong
+    // button -- calling it "a ROTATION/priority fix" misreads it (Stonestorm: his only
+    // "rotation" lever is his damage cratering in one phase, with ✓ PRIORITY standing).
+    : r.kind === KIND.WEAK_WINDOW ? "keeping your damage up through the one phase where it craters (see the DAMAGE TIMELINE item)"
     : r.kind === KIND.OVERHEAL ? "healing SMARTER -- cutting your overhealing (output landing on already-full health bars)"
     : "a ROTATION/priority fix";
   // The VERDICT must name the ACTUAL biggest character lever. `yours` is sorted by
@@ -976,6 +986,18 @@ function renderVerdict(log, d, yours) {
   // bug: a 3% talent swap got announced as "your biggest lever -- sort that first"
   // over an 8% rotation fix, contradicting the biggest-first list right above it.
   const lever = verdictLever(yours);
+  // When raid COMP alone accounts for your whole measured gap, reconcile scales every one
+  // of your own levers to ~0 -- so headlining a <1% rotation tweak as "your biggest lever"
+  // both contradicts the "~0pp you can fix" breakdown right below AND deflates a player who
+  // is actually matching the field. Name the comp instead: it's a roster ask, not a fix you
+  // make to your character. (Luvalot: 83rd %ile, 7% behind, all of it Power Infusion + Aug.)
+  const peerGap = (d.you && d.you.dps && d.field && d.field.dpsMed)
+    ? Math.round(((d.field.dpsMed - d.you.dps) / d.you.dps) * 100) : null;
+  const compImpact = compList0.reduce((s, r) => s + (r.impact || 0), 0);
+  if (compCoversGap(peerGap, compImpact)) {
+    log(`VERDICT: on your own character you're already matching the field at your item level -- every fix below is under ~1%. Your ${peerGap}% gap is raid COMP (the buffs in the comp list below): a roster ask your group fills, not something you change on your character.`);
+    return;
+  }
   // Other actionable categories present below the top one, named so the verdict
   // doesn't falsely claim "your build/gear already matches" when a fix exists.
   const extras = [];
