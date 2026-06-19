@@ -272,7 +272,19 @@ let _preferCache = false;
 // Turn on reuse-the-stale-field mode for the rest of this run. One char per process
 // (the CLI and the browser each analyze a single character), so a process-global flag
 // is safe -- it's set once up front, never toggled mid-analysis.
-export function setPreferCache(v) { _preferCache = !!v; }
+export function setPreferCache(v) {
+  const was = _preferCache;
+  _preferCache = !!v;
+  // The load-time TTL (_loadShardInto) is also the SERVE gate -- gql() returns from
+  // _gqlCache with no read-time freshness check. So a stale-but-within-cap field entry
+  // whose shard was loaded during detectContext (BEFORE this flip) was dropped under the
+  // stricter pre-flip TTL and, because its shard is marked loaded, never reconsidered --
+  // defeating the whole point of preferCache. On the false->true flip, forget which shards
+  // were read so _ensureLoaded re-reads them under the now-permissive cap and the cached
+  // field is reused instead of re-fetched. (_diskStore keeps the fresh entries already in
+  // memory; the newer-wins check means re-reading never clobbers them.)
+  if (_preferCache && !was) _loadedShards = new Set();
+}
 export function preferCache() { return _preferCache; }
 // TTL applied when DECIDING whether a cached entry is fresh enough to SERVE. Immutable
 // data never expires; with fetching off (cache-only) any cache beats a miss; when the

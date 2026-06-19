@@ -430,6 +430,53 @@ test("disk cache: preferCache reuses an expired field within the cap, refetches 
   }
 });
 
+// The real CLI ordering: detectContext loads shards BEFORE revalidateCharacter flips
+// preferCache on. A within-cap stale field entry whose shard was loaded during detection
+// (under the stricter TTL) must still be reused after the flip -- not silently re-fetched.
+test("disk cache: preferCache reuses a field whose shard was loaded BEFORE the flip", async () => {
+  const { gql, clearGqlCache, _resetGqlDisk, _shardId, setPreferCache } = await import("../docs/wcl.js");
+  const zlib = await import("node:zlib");
+  const file = path.join(os.tmpdir(), `wcl-preflip-${process.pid}.json`);
+  const dir = `${file}.shards`;
+  process.env.WCL_GQL_CACHE = "1";
+  process.env.WCL_GQL_CACHE_FILE = file;
+  const DAY = 24 * 60 * 60 * 1000;
+  const fieldQ = "query { worldData { encounter(id:9) { characterRankings(page:1) } } }";
+  // A second query that shares fieldQ's shard -- it stands in for the detection query
+  // that loads the shard before the flip. (Brute-forced; ~4096 shards -> found fast.)
+  const sid = _shardId(fieldQ);
+  let detectQ = null;
+  for (let i = 0; i < 200000 && !detectQ; i++) { const q = `query{ d${i} }`; if (_shardId(q) === sid) detectQ = q; }
+  assert.ok(detectQ, "found a colliding query for the shard");
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+    // Same shard file: detectQ fresh, fieldQ 14 days stale (past weekly TTL, within cap).
+    fs.writeFileSync(path.join(dir, `${sid}.json.gz`), zlib.gzipSync(JSON.stringify({
+      [detectQ]: { t: Date.now(), d: { ok: "detect" } },
+      [fieldQ]: { t: Date.now() - 14 * DAY, d: { ranks: "stale14" } },
+    })));
+    clearGqlCache(); _resetGqlDisk();
+    // Detection: preferCache still OFF. Loading the shard drops the stale field entry and
+    // marks the shard loaded. No network needed for detectQ (it's fresh).
+    setPreferCache(false);
+    globalThis.fetch = () => { throw new Error("detectQ is fresh -- no fetch"); };
+    assert.deepEqual(await gql(detectQ), { ok: "detect" }, "fresh detection entry served");
+    // The signature matched -> preferCache flips ON. The field, dropped at load, must now be
+    // reused from the same shard, NOT re-fetched (the bug: shard stays marked-loaded).
+    setPreferCache(true);
+    globalThis.fetch = () => { throw new Error("preferCache must reuse the pre-flip-loaded field"); };
+    assert.deepEqual(await gql(fieldQ), { ranks: "stale14" }, "within-cap field reused after the flip");
+  } finally {
+    setPreferCache(false);
+    delete process.env.WCL_GQL_CACHE;
+    delete process.env.WCL_GQL_CACHE_FILE;
+    _resetGqlDisk();
+    try { fs.rmSync(file, { force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+});
+
 // revalidateCharacter: the kill-signature gate. First sight stores the signature and does
 // NOT reuse; an unchanged signature flips preferCache on so the field is reused next time.
 test("revalidateCharacter: unchanged kills -> reuse the field (preferCache on)", async () => {
