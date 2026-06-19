@@ -6,16 +6,11 @@
 // run spends the connected user's OWN hourly point budget (a full analysis is
 // many heavy requests; a shared budget can't carry it). No token -> NeedsAuth.
 // (The Cloudflare Worker still proxies Wowhead tooltips below -- no WCL secret.)
-import {
-  IS_NODE, TOKEN_URL, CLIENT_API_URL, USER_API_URL, WOWHEAD_URL, WORKER_URL,
-} from "./config.js";
-import { getAccessToken, logout } from "./auth.js";
+import { IS_NODE, WOWHEAD_URL, WORKER_URL } from "./config.js";
+import { getAccessToken, NeedsAuth } from "./auth.js";
+import { nodeWcl, browserWcl, withTimeout } from "./wcl-transport.js";
 
 export class PrivateReport extends Error {}
-
-// Raised when the browser has no valid token (or it expired). Callers catch this
-// to send the user through the connect flow instead of showing a network error.
-export class NeedsAuth extends Error {}
 
 // Raised when WCL's shared hourly point budget is used up (HTTP 429). Carries
 // `resetIn` (seconds until the budget refreshes) when we could learn it -- from
@@ -29,94 +24,9 @@ export class RateLimited extends Error {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Abort a request that hangs on a dead socket instead of freezing forever (a
-// no-timeout fetch once stalled a CLI run for 26 minutes). An abort surfaces as
-// a thrown error, which the gql retry loop treats as a transient transport
-// failure and retries with backoff.
-const HTTP_TIMEOUT_MS = 45000;
-const withTimeout = (opts = {}) => ({ ...opts, signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) });
-
-// ---- Node direct-to-WCL path (client-credentials) ----------------------------
-const WCL_TOKEN_URL = TOKEN_URL;
-const WCL_API_URL = CLIENT_API_URL;
+// The HTTP transport (token + nodeWcl/browserWcl + withTimeout) lives in wcl-transport.js.
+// gql()/_gqlRun below own the caching, batching, retry/backoff, and rate-limit logic.
 const WOWHEAD = WOWHEAD_URL;
-let _nodeToken = null;
-
-async function nodeCreds() {
-  let id = process.env.WCL_CLIENT_ID, secret = process.env.WCL_CLIENT_SECRET;
-  if (id && secret) return { id, secret };
-  // Fall back to .env / worker/.dev.vars next to the repo (gitignored).
-  const fs = await import("node:fs");
-  const path = await import("node:path");
-  const { fileURLToPath } = await import("node:url");
-  const dir = path.dirname(fileURLToPath(import.meta.url));
-  for (const rel of ["../worker/.dev.vars", "../.env"]) {
-    try {
-      for (const line of fs.readFileSync(path.join(dir, rel), "utf8").split("\n")) {
-        const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.*?)\s*$/);
-        if (!m) continue;
-        const v = m[2].replace(/^["']|["']$/g, "");
-        if (m[1] === "WCL_CLIENT_ID") id = id || v;
-        if (m[1] === "WCL_CLIENT_SECRET") secret = secret || v;
-      }
-    } catch { /* file absent -- try the next */ }
-  }
-  if (!id || !secret)
-    throw new Error("Missing WCL_CLIENT_ID / WCL_CLIENT_SECRET (env, .env, or worker/.dev.vars)");
-  return { id, secret };
-}
-
-async function nodeToken() {
-  const now = Date.now() / 1000;
-  if (_nodeToken && _nodeToken.exp > now + 60) return _nodeToken.t;
-  const { id, secret } = await nodeCreds();
-  const r = await fetch(WCL_TOKEN_URL, withTimeout({
-    method: "POST",
-    headers: { Authorization: `Basic ${btoa(`${id}:${secret}`)}`,
-               "Content-Type": "application/x-www-form-urlencoded" },
-    body: "grant_type=client_credentials",
-  }));
-  if (!r.ok) throw new Error(`token exchange failed: ${r.status}`);
-  const j = await r.json();
-  _nodeToken = { t: j.access_token, exp: now + (j.expires_in || 0) };
-  return _nodeToken.t;
-}
-
-async function nodeWcl(query) {
-  const token = await nodeToken();
-  const r = await fetch(WCL_API_URL, withTimeout({
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
-  }));
-  // Read Retry-After like the browser path so the CLI's 429 message can say WHEN
-  // the budget resets (it talks direct to WCL, which sends the header) instead of
-  // the vague "try again shortly".
-  return { status: r.status, j: await r.json().catch(() => ({})), retryAfter: readRetryAfter(r) };
-}
-
-// Reset hint (seconds) WCL / the Worker may send on a 429, for the UI countdown.
-const readRetryAfter = (r) => {
-  const n = parseInt(r.headers.get("Retry-After") || "", 10);
-  return Number.isFinite(n) ? n : null;
-};
-
-// ---- Browser path: the user's own PKCE token (connect-only) -------------------
-async function browserWcl(query) {
-  const token = getAccessToken();
-  if (!token) throw new NeedsAuth("Connect your Warcraft Logs account to run the analysis.");
-  const r = await fetch(USER_API_URL, withTimeout({
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
-  }));
-  // A dead/expired token must reconnect; clear it so the UI reflects the change.
-  if (r.status === 401) {
-    logout();
-    throw new NeedsAuth("Your Warcraft Logs session expired -- reconnect to continue.");
-  }
-  return { status: r.status, j: await r.json().catch(() => ({})), retryAfter: readRetryAfter(r) };
-}
 
 // Session-level dedupe: identical queries fired concurrently share one request
 // (coalescing), and a resolved query is reused for the rest of the session.

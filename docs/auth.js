@@ -10,6 +10,11 @@
 // cleanly under Node -- the CLI never calls any of it.
 import { CLIENT_ID, AUTHORIZE_URL, TOKEN_URL, REDIRECT_URI } from "./config.js";
 
+// Thrown when an analysis needs a (re)connected Warcraft Logs account: no token, or a
+// 401 from a dead one. The UI catches it to show the reconnect flow. Lives here (the auth
+// module) so both the transport layer and the gql client can throw/check it without a cycle.
+export class NeedsAuth extends Error {}
+
 const TOKEN_KEY = "wclToken";          // { access_token, expires_at }
 const VERIFIER_KEY = "wclPkceVerifier"; // outstanding flow's code_verifier
 const STATE_KEY = "wclPkceState";       // outstanding flow's anti-CSRF state

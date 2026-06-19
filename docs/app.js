@@ -4,8 +4,8 @@
 // the supporting analyses as collapsible cards below.
 import { detectContext, detectPriority, DIFFICULTY, raidTeammates, slug, metricForSpec, setRunContext, isSupport, metricUnit, runIsHealer,
   parseReportRef, reportFights, recentReportsFor, mapLimit } from "./core.js";
-import { isAuthed, beginLogin, handleRedirectCallback, logout } from "./auth.js";
-import { NeedsAuth, myCharacters, primeRateReset, fmtRateWait, pruneStaleCache } from "./wcl.js";
+import { isAuthed, beginLogin, handleRedirectCallback, logout, NeedsAuth } from "./auth.js";
+import { myCharacters, primeRateReset, fmtRateWait, pruneStaleCache } from "./wcl.js";
 import { paramsFromSearch, shareSearch, encodeSnapshot, decodeSnapshot, snapshotFromHash } from "./share.js";
 import { tokenizeMarkup } from "./markup.js";
 import * as progression from "./progression.js";
