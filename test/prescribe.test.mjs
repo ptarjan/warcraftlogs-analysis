@@ -808,6 +808,23 @@ test("consumableLevers: the NONE path also drops a consumable the field MEASURED
   assert.equal(consumableLevers(base(null), my).filter((f) => /POTION/.test(f.text)).length, 1, "unmeasured -> est shows");
 });
 
+test("consumableLevers: a POTION swap needs a MEASURED gain (potions are near-equivalent), unlike a flask", () => {
+  // "I used a different potion because it's what I had on me -- it's barely a difference."
+  // Combat potions barely differ, so an UNMEASURED potion swap is noise. Require a measured
+  // with/without delta to surface it; a flask swap still surfaces at est (a flask matters).
+  const base = (topDelta) => ({
+    foods: new Map(), flasks: new Map(), augRunes: new Map(), oils: new Map(),
+    potions: new Map([["Tempered Potion", 7], ["Potion of Unwavering Focus", 3]]),
+    guids: new Map([["Tempered Potion", 555]]),
+    deltas: {}, topDeltas: topDelta ? { potions: topDelta } : {}, n: 10,
+  });
+  const my = { potion: "Potion of Unwavering Focus", potionGuid: 999 };   // a DIFFERENT potion
+  assert.equal(consumableLevers(base(null), my).filter((f) => /POTION/.test(f.text)).length, 0,
+    "unmeasured potion swap -> suppressed (barely a difference)");
+  const shown = consumableLevers(base({ pct: 2, nHave: 7, nNot: 3 }), my).find((f) => /POTION/.test(f.text));
+  assert.ok(shown && shown.basis === "measured", "a MEASURED potion gain still surfaces");
+});
+
 test("residualText (playstyle): empowered-share wording reflects ahead / even / behind, not always 'as often'", () => {
   const rot = (you, field) => ({ proc: { name: "Tiger Palm", youEmp: you, fieldEmp: field }, usage: { under: [] } });
   // genuinely AHEAD (40% vs 20%, Hadryan): say MORE often, don't tell them they're "the same"

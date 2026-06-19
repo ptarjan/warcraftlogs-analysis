@@ -320,7 +320,7 @@ const CONSUMABLES = [
     match: (lc) => lc.includes("well fed"), minPct: 50,
     none: DPS(1, 2), missText: "you ate none", tail: "Free parse.", swap: DPS(1) },
   { field: "potions", mine: "potion", label: "COMBAT POTION", peerVerb: "pop",
-    note: " (pre-pull + again on cooldown/burst = 2 per fight)",
+    note: " (pre-pull + again on cooldown/burst = 2 per fight)", swapNeedsMeasure: true,
     match: (lc) => lc.includes("potion") && !lc.includes("healing"), minPct: 0,
     none: DPS(1, 3), missText: "you used none", tail: "Free parse with equal gear.", swap: DPS(1) },
   { field: "augRunes", mine: "augrune", label: "AUGMENT RUNE", peerVerb: "use",
@@ -511,6 +511,12 @@ export function consumableLevers(field, my) {
       // est swap, with no counterfactual to trust, still surfaces at the estimate.)
       if (tdRaw && Math.round(tdRaw.pct) === 0) continue;
       const td = trust(tdRaw);   // distrust an implausible (> ceiling) confounded delta -> est
+      // Combat potions are near-equivalent, so an UNMEASURED potion swap is noise ("I used
+      // a different potion because it's what I had -- it's barely a difference"). Require a
+      // MEASURED gain (a real with/without delta) to surface a potion swap. Flasks/foods/
+      // oils/runes meaningfully differ (a defensive flask IS a real loss), so they keep the
+      // est swap even at a slim field majority.
+      if (cn.swapNeedsMeasure && !td) continue;
       const swapCite = td ? ` (measured: peers on it do ${Math.round(td.pct)}% more than those without, n=${td.nHave}/${td.nNot})` : "";
       out.push(finding(DIM.SETUP, td ? DPS(Math.round(td.pct)) : cn.swap,
         `${cn.label}: ${wowheadSpell(mineGuid, mineName)} -> ${wowheadSpell(field.guids.get(top), top)}.${swapCite}`,

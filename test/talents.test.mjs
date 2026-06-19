@@ -87,6 +87,18 @@ test("looksLikeDpsTalent keeps damage talents, even hybrids that ALSO heal/shiel
   assert.equal(looksLikeDpsTalent("Increases your Haste by 15%."), true);                 // a throughput stat
 });
 
+test("looksLikeDpsTalent drops CC/displacement even when it ALSO deals damage (a 'stop', not a respec)", () => {
+  // Real tooltips: a knock-up / disorient that also hits reads as DPS off the damage
+  // clause alone, so it got recommended as a respec -- but a player runs it for the STOP.
+  assert.equal(looksLikeDpsTalent("Pulses arcane energy around the target enemy, dealing (34.5% of Spell Power) Arcane damage to all enemies within 8 yds, and knocking them upward."), false); // Supernova
+  assert.equal(looksLikeDpsTalent("Enemies in a cone in front of you take (90% of Spell Power) Fire damage and are Disoriented for 4 sec."), false); // Dragon's Breath
+  assert.equal(looksLikeDpsTalent("Roars, dealing (50% of Attack Power) damage and stunning all nearby enemies for 4 sec."), false); // a damage+stun (e.g. Shockwave-like)
+  // GUARD: a real throughput talent whose CC is incidental (it also buffs damage/a stat
+  // or procs) is still a DPS pick -- the veto must not eat it.
+  assert.equal(looksLikeDpsTalent("Your Frostbolt deals 15% increased damage and has a chance to stun the target."), true);
+  assert.equal(looksLikeDpsTalent("Comet Storm calls down 7 icy comets, dealing (180% of Spell Power) Frost damage."), true); // no CC -> stays DPS
+});
+
 test("looksLikeDpsTalent drops HEALING spells that scale with Spell Power (not DPS talents)", () => {
   // Real tooltips: heals scale with Spell Power ("X% of Spell Power"), which the DPS-cue
   // regex used to match -- so Chain Heal / Earth Shield got recommended to a DPS player.

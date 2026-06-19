@@ -92,6 +92,18 @@ export function looksLikeDpsTalent(tooltipText) {
   const off = t.replace(/damage (taken|reduction)|(reduces?|reducing|less)[^.]{0,40}damage|damage[^.]{0,20}(reduced|taken)/g, " ");
   const dpsy = /% of (attack|spell) power|(increased|additional|extra|bonus) damage|damage (dealt|done)|deals?\s+\d|inflicts?\s+\d|increases?[^.]{0,40}(damage|critical strike|\bcrit\b|\bhaste\b|mastery|versatil|attack power|spell power|\bagility\b|\bstrength\b|\bintellect\b)|\d+%[^.]{0,30}\bdamage\b/.test(off);
   if (!dpsy) return false;
+  // A CC / displacement (knock back/up/down, stun, disorient, incapacitate, fear,
+  // silence) is taken for the STOP, not the throughput -- even when it also deals
+  // damage. Supernova ("...Arcane damage ... and knocking them upward") and Dragon's
+  // Breath (damage + disorient) read as DPS off the damage clause alone and got
+  // recommended as a respec; a player runs them for the control. The classifier's whole
+  // job is to not chase utility (the comment already names Typhoon, a no-damage
+  // knockback that `dpsy` excludes) -- this closes the gap for CC that ALSO hits.
+  // EXCEPTION: a talent that grants a throughput BUFF (a stat/%-damage increase or a
+  // proc) is a real DPS pick whose CC is incidental, so keep it.
+  const cc = /\bknock(s|ed|ing)?\b|knockback|knocks? (back|up|down)|\bstun(s|ned|ning)?\b|\bdisorient|incapacitat|\bfear(s|ed|ing)?\b|horrif|\bsilenc(e|es|ed|ing)/.test(t);
+  const throughputBuff = /(increased|additional|extra|bonus) (damage|critical|haste|mastery|versat|attack power|spell power)|increases?\b[^.]{0,40}(damage (done|dealt)|critical strike|\bcrit\b|\bhaste\b|mastery|versatil|attack power|spell power)|\bgrants?\b|\bproc/.test(off);
+  if (cc && !throughputBuff) return false;
   // HEALING/absorb effects scale with Spell Power too ("231% of Spell Power" of HEALING),
   // so the "% of spell power" / stat cues above misfire on them -- Chain Heal and Earth
   // Shield read as DPS talents and got recommended to a DPS player as a respec. A talent
@@ -109,7 +121,7 @@ const _dpsCache = new Map();
 async function isDpsTalent(spellId) {
   if (!spellId) return false;
   if (_dpsCache.has(spellId)) return _dpsCache.get(spellId);
-  const ck = "taldps3:" + spellId; // "3" re-classifies past v2 entries that mislabeled Spell-Power HEALS (Chain Heal/Earth Shield) as DPS
+  const ck = "taldps4:" + spellId; // "4" re-classifies past entries: CC/displacement (Supernova, Dragon's Breath) that ALSO deals damage is utility, not a DPS respec
   try { const c = localStorage.getItem(ck); if (c !== null && c !== undefined) { const v = c === "1"; _dpsCache.set(spellId, v); return v; } } catch (e) { /* ignore */ }
   let dps = false;
   try { const d = await spellTooltip(spellId); dps = looksLikeDpsTalent(d && d.tooltip); } catch (e) { dps = false; }
