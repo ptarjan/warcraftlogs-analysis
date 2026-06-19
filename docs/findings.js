@@ -48,7 +48,7 @@ export const DIM = Object.freeze({
 export const KIND = Object.freeze({
   TALENTS: "TALENTS", HERO_TREE: "HERO_TREE", EMPOWERMENT: "EMPOWERMENT",
   COOLDOWN: "COOLDOWN", PRESS_FASTER: "PRESS_FASTER", OVERHEAL: "OVERHEAL", MOVEMENT: "MOVEMENT",
-  OPENER: "OPENER", CD_ALIGN: "CD_ALIGN",
+  OPENER: "OPENER", CD_ALIGN: "CD_ALIGN", WEAK_WINDOW: "WEAK_WINDOW",
 });
 
 // Empirically value an attribute from the FIELD's own logs -- the natural

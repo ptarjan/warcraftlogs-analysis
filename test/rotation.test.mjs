@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, empoweredStats, empowermentCandidate, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, rotationLevers, medianCastRates, consensusOpener, openerDivergence, majorCooldownIds, cooldownStackFraction, cooldownStackGap, cooldownUseComparable } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, empoweredStats, empowermentCandidate, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, rotationLevers, medianCastRates, consensusOpener, openerDivergence, majorCooldownIds, cooldownStackFraction, cooldownStackGap, cooldownUseComparable, damageCurve, weakestWindow } = await import("../docs/rotation.js");
 const { setRunMetric } = await import("../docs/core.js");
 
 // Run a body with the run metric forced, always restoring "dps" so it never leaks.
@@ -205,6 +205,51 @@ test("empoweredStats: the share plus the concrete empowered/total counts (for '4
   const amts = [38000, 39000, 40000, 41000, 42000, 40000, 39000, 100000, 105000, 98000];
   assert.deepEqual(empoweredStats(amts), { share: 0.3, empowered: 3, total: 10 });
   assert.equal(empoweredStats([1, 2, 3]), null);          // too few -> null
+});
+
+test("damageCurve: DPS per fight-progress bin, length-normalized (rate, not share)", () => {
+  // 100ms fight, 10 bins -> each bin is 10ms = 0.01s. One 100-dmg event in bin 0 -> 100/0.01 = 10000 DPS.
+  const evs = [{ timestamp: 5, amount: 100 }, { timestamp: 95, amount: 50 }];
+  const d = damageCurve(evs, 0, 100, 10);
+  assert.equal(d.length, 10);
+  assert.equal(d[0], 10000); assert.equal(d[9], 5000);   // rate, not share
+  assert.equal(d[5], 0);
+  assert.equal(damageCurve([], 0, 100), null);
+  assert.equal(damageCurve(evs, 0, 0), null);            // bad duration
+});
+
+test("weakestWindow: finds where YOU crater below your own norm, but SKIPS a shared intermission", () => {
+  // bins = DPS per slice. Your typical ~58k. You crater in bins 2-3 (~5k) while the field stays
+  // high there -> a real hole. Bin 5 is a SHARED intermission (you AND field ~0, boss gone) ->
+  // excluded because the field isn't active. The opener (bin0/1) is ABOVE your typical -> not a hole
+  // (so the "top burst harder" non-finding never fires).
+  const you   = [70000, 68000,  5000,  5000, 58000,     0, 58000, 58000, 56000, 60000];
+  const fdist = [95000, 92000, 60000, 60000, 56000,   300, 54000, 53000, 52000, 58000];
+  const field = [fdist, fdist, fdist, fdist];
+  const w = weakestWindow(you, field);
+  assert.ok(w, "fires on a real self-relative hole");
+  assert.equal(Math.round(w.from * 10), 2);             // window starts at bin 2 (20%)
+  assert.equal(Math.round(w.to * 10), 4);               // ...through bin 3 (ends at 40%)
+  assert.ok(w.youDps < w.yourTypical * 0.5, "you cratered below your own typical");
+  assert.ok(w.lostFrac > 0.08, `gainable vs your own norm (got ${w.lostFrac.toFixed(2)})`);
+  // The huge opener (you 70k > typical 58k) is NOT flagged even though the field bursts harder.
+  // A player who holds steady at their typical everywhere -> no hole.
+  assert.equal(weakestWindow([58000, 58000, 58000, 58000, 58000, 300, 58000, 58000, 58000, 58000], field), null);
+  // Too few peers -> null.
+  assert.equal(weakestWindow(you, [[1], [1]]), null);
+});
+
+test("weakWindowLever: surfaces the field-validated weak stretch as a measured, sized finding", () => {
+  const rot = { weakWindow: { from: 0.2, to: 0.4, youDps: 12000, yourTypical: 60000, fieldDps: 55000, lostFrac: 0.08 }, usage: { under: [], over: [] }, abilityIds: {} };
+  const lev = rotationLevers(rot).find((f) => /DAMAGE TIMELINE/.test(f.text));
+  assert.ok(lev, "fires when there's a weak window");
+  assert.equal(lev.basis, "measured");
+  assert.match(lev.text, /20-40% stretch/);
+  assert.match(lev.text, /falls to ~12k vs your own ~60k/);
+  assert.match(lev.text, /field keeps dealing ~55k/);
+  assert.equal(lev.impact, 8);                           // sized from lostFrac
+  // No weak window -> silent.
+  assert.equal(rotationLevers({ usage: { under: [], over: [] }, abilityIds: {} }).filter((f) => /DAMAGE TIMELINE/.test(f.text)).length, 0);
 });
 
 test("empowermentCandidate: picks the high-VOLUME bimodal filler, NOT the hardest-median hit", () => {

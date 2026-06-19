@@ -189,6 +189,62 @@ export function empowermentCandidate(hits, dmgTotals, biggest = null) {
   return [...cands].sort((a, b) => (tot[b.name] || 0) - (tot[a.name] || 0))[0];
 }
 
+// Your damage RATE (DPS) per fight-PROGRESS bin (default deciles): damage dealt in each
+// 1/bins slice of the fight, divided by that slice's seconds. Bucketing by fight PROGRESS
+// (not absolute seconds) makes it comparable across kills of different length; using a RATE
+// (not a share) makes it comparable in level so an absolute "you trail the field here" read
+// works whether you're ahead or behind overall. null if no data.
+export function damageCurve(events, start, durMs, bins = 10) {
+  if (!(durMs > 0) || !(events && events.length)) return null;
+  const binSec = durMs / bins / 1000;
+  const d = new Array(bins).fill(0); let any = false;
+  for (const ev of events) {
+    const f = (ev.timestamp - start) / durMs;
+    if (f < 0 || f >= 1) continue;
+    d[Math.min(bins - 1, Math.floor(f * bins))] += ev.amount || 0; any = true;
+  }
+  return any ? d.map((v) => v / binSec) : null;
+}
+
+// Your single WEAKEST stretch: the contiguous fight-progress window where YOUR DPS craters
+// below YOUR OWN typical level -- while the field does NOT dip there. Keying off your own
+// baseline (not the field's level) is what makes it the right read for an ahead OR behind
+// player: it finds a DISCRETE hole where you fell off your normal output, not "the top burst
+// harder than you everywhere" (which an absolute-vs-top comparison wrongly flags as the
+// opener). The field is the INTERMISSION GUARD only: a bin counts solely when the field is
+// still ACTIVE there (>= minActive of the field's own typical), so a phase the field also
+// sits out (boss untargetable) is the boss, not you. The realistic recovery target is your
+// OWN typical (proven elsewhere in the fight). Returns { from, to, youDps, yourTypical,
+// fieldDps, lostFrac } (lostFrac = window deficit vs your typical / your total ~= % gainable).
+export function weakestWindow(youCurve, fieldCurves, { minDrop = 0.4, minActive = 0.5, minPeers = 3 } = {}) {
+  if (!youCurve || !fieldCurves || fieldCurves.length < minPeers) return null;
+  const bins = youCurve.length;
+  const median = (a) => { const x = [...a].sort((p, q) => p - q); return x.length ? x[Math.floor(x.length / 2)] : 0; };
+  const fieldMed = youCurve.map((_, i) => median(fieldCurves.map((c) => (c && c[i]) || 0)));
+  const yourTypical = median(youCurve), fieldTypical = median(fieldMed);
+  if (!(yourTypical > 0) || !(fieldTypical > 0)) return null;
+  // A bin is YOUR hole when you've dropped well below your OWN typical AND the field is still
+  // going (so it's not a shared intermission). Deficit = how far below your typical you are.
+  const def = youCurve.map((y, i) => (y < yourTypical * (1 - minDrop) && fieldMed[i] >= fieldTypical * minActive) ? yourTypical - y : 0);
+  let best = null, bestSum = 0, rs = -1, sum = 0;
+  for (let i = 0; i <= bins; i++) {
+    const pos = i < bins && def[i] > 0;
+    if (pos && rs < 0) { rs = i; sum = 0; }
+    if (pos) sum += def[i];
+    if (!pos && rs >= 0) {
+      if (!best || sum > bestSum) {
+        let yd = 0, fd = 0; for (let j = rs; j < i; j++) { yd += youCurve[j]; fd += fieldMed[j]; }
+        best = { from: rs / bins, to: i / bins, youDps: yd / (i - rs), yourTypical, fieldDps: fd / (i - rs) };
+        bestSum = sum;
+      }
+      rs = -1;
+    }
+  }
+  if (!best) return null;
+  const youTot = youCurve.reduce((a, b) => a + b, 0);
+  return { ...best, lostFrac: youTot > 0 ? bestSum / youTot : 0 };   // deficit vs your typical / your total ~= % gainable
+}
+
 // --- data layer: everything reads from the shared core loader (reportCore,
 // fightWindow, fightEvents, paginateEvents) so a kill's tables/events are fetched
 // once across rotation, diagnose, and analyze. -------------------------------
@@ -285,8 +341,11 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
     const dotUp = (opts.dotIds && opts.dotIds.length) ? await dotUptimes(code, fight, m.sourceID, opts.dotIds, e - s) : {};
     const petDmg = await petDamage(code, fight, m.sourceID);
     const petShare = (m.total + petDmg) > 0 ? petDmg / (m.total + petDmg) : 0;
+    // Damage distribution over fight progress (for the weak-window comparison) -- ALL this
+    // peer's damage events, bucketed by % of the fight. One unfiltered fetch (deduped).
+    const dmgCurve = damageCurve(await paginateEvents(code, fight, m.sourceID, eventTable(), null, s, e), s, e - s);
     return { opener: openerSequence(casts), procPerMin, empShare, castRate, allCastRate, name2id, castTimesById,
-             dmgBy: m.dmgBy, total: m.total, dur, sourceID: m.sourceID, dotUp, petShare };
+             dmgBy: m.dmgBy, total: m.total, dur, sourceID: m.sourceID, dotUp, petShare, dmgCurve };
   }
 
   // You: per-hit detail for the top damage abilities (bounded for API cost).
@@ -348,8 +407,11 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
       rotTotal = dmgSum;
     }
   }
+  // Your damage distribution over fight progress, for the weak-window comparison vs the
+  // field. ALL your damage events (one unfiltered fetch, deduped), bucketed by % of fight.
+  const dmgCurve = damageCurve(await paginateEvents(code, fight, m.sourceID, eventTable(), null, s, e), s, e - s);
   return { opener: openerSequence(casts), hits, dur, castRate: rotCastRate, allCastRate, dmgTotals: rotDmgTotals, total: rotTotal,
-           sourceID: m.sourceID, name2id, dots, dotUp, petShare, castTimesById, dmgTimeline, atonement, dmgId2Name };
+           sourceID: m.sourceID, name2id, dots, dotUp, petShare, castTimesById, dmgTimeline, atonement, dmgId2Name, dmgCurve };
 }
 
 // Median casts/min per ability across the field's kills (absent in a kill = 0),
@@ -1003,9 +1065,19 @@ export async function rotationFindings(name, server, region, className, specName
     const fieldCdRates = peers.map((p) => majorCooldownIds(p.allCastRate || {}).reduce((s, id) => s + ((p.allCastRate || {})[id] || 0), 0));
     if (cooldownUseComparable(youCdRate, fieldCdRates)) cdAlign = cooldownStackGap(youStack, fieldStacks);
   }
+  // WEAK WINDOW: the stretch of the fight where your DPS trails the field's the most -- the
+  // SHAPE of your damage curve, which every rate/share/uptime aggregate misses. NOT gated on
+  // being behind overall (unlike opener/CD-align): it compares ABSOLUTE rate with an
+  // intermission guard, so an ahead player who just front-loads never trips it, but a real
+  // dip below the field surfaces even for someone ahead on totals (the whole point -- finding
+  // where an otherwise-good player still bleeds). Hero-matched + not a pure healer (curve of
+  // a different build / a reactive healer isn't comparable).
+  const weakWindow = (heroSafe && (!runIsHealer() || you.atonement))
+    ? weakestWindow(you.dmgCurve, peers.map((p) => p.dmgCurve).filter(Boolean))
+    : null;
   return {
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener, atonement: !!you.atonement,
-    usage, cooldowns, cdUsage, buffCds, perCast, dotGaps, dotCount: (you.dots || []).length, petGap, castGap, fieldPeers: peers.length, talent, abilityIds, openerGap, cdAlign,
+    usage, cooldowns, cdUsage, buffCds, perCast, dotGaps, dotCount: (you.dots || []).length, petGap, castGap, fieldPeers: peers.length, talent, abilityIds, openerGap, cdAlign, weakWindow,
     yourHero: yourHero || null,
     heroMatched,
     proc: { name: empCand ? empCand.name : null, isReal, youPerMin: empCand ? empCand.procPerMin : 0, fieldPerMin: fieldProc, youEmp, fieldEmp,
@@ -1064,6 +1136,17 @@ export async function run(log, name, server, region, className = "Monk",
   log("=== OPENER ===");
   log(`  your opener:  ${fnd.opener.join(" > ")}`);
   if (fnd.fieldOpener) log(`  peers' opener: ${fnd.fieldOpener.join(" > ")}`);
+
+  // DAMAGE OVER TIME: the shape of your damage vs the field. The weak window (if any) is
+  // the stretch you trail them most, intermissions excluded -- the thing aggregates miss.
+  if (!runIsHealer() && fnd.weakWindow) {
+    const w = fnd.weakWindow;
+    log("");
+    log("=== DAMAGE OVER TIME (vs field) ===");
+    log(`  weakest stretch: ${Math.round(w.from * 100)}-${Math.round(w.to * 100)}% of the fight -- ` +
+        `your ${throughputWord()} drops to ~${Math.round(w.youDps / 1000)}k vs your usual ~${Math.round(w.yourTypical / 1000)}k (field still ~${Math.round(w.fieldDps / 1000)}k, so not an intermission).`);
+    log(`  -> holding your normal output there is ~${Math.max(1, Math.round(w.lostFrac * 100))}% of your total; find what stops you and keep uptime through it.`);
+  }
 
   const u = fnd.usage || { under: [], over: [] };
   // Only recommend pressing abilities you can actually cast -- the peer pool can
@@ -1330,6 +1413,23 @@ function cdAlignLever(rot) {
     "measured", KIND.CD_ALIGN)];
 }
 
+// WEAK WINDOW: the stretch of the fight where your damage SHARE trails the field the most
+// -- the SHAPE of your damage curve, which every rate/share/uptime aggregate misses (you
+// can match the field on totals yet bleed one specific window). Field-measured, with the
+// intermission guard built in (weakestWindow only counts bins where the field KEPT dealing
+// damage), so a shared phase where the boss is untargetable never reads as your mistake.
+// Sized as the share you'd recover by keeping pace there (a fraction of your own output).
+function weakWindowLever(rot) {
+  const w = rot && rot.weakWindow;
+  if (!w) return [];
+  const pct = Math.max(1, Math.round(w.lostFrac * 100));
+  const fromP = Math.round(w.from * 100), toP = Math.round(w.to * 100);
+  const k = (n) => `${Math.round(n / 1000)}k`;
+  return [finding(DIM.ROTATION, DPS(pct),
+    `DAMAGE TIMELINE: in the ${fromP}-${toP}% stretch of the fight your ${throughputWord()} falls to ~${k(w.youDps)} vs your own ~${k(w.yourTypical)} the rest of the fight -- and it is NOT a shared intermission (the field keeps dealing ~${k(w.fieldDps)} there). Holding your normal output through that window is ~${pct}% of your total: find what stops you (movement, a mechanic you fully disengage for, waiting on a cooldown) and keep your uptime there.`,
+    "measured", KIND.WEAK_WINDOW)];
+}
+
 // Assemble all rotation levers into the shared { dim, impact, label, text } currency.
 // Each kind is its own pure (rot, link) -> Finding[] above; this just concatenates in
 // priority order. Only a GENUINE under-used proc is actionable -- crit-driven big hits
@@ -1346,5 +1446,6 @@ export function rotationLevers(rot) {
     ...empowermentLever(rot, link),
     ...openerLever(rot, link),
     ...cdAlignLever(rot),
+    ...weakWindowLever(rot),
   ];
 }
