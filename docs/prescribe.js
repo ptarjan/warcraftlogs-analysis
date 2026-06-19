@@ -824,8 +824,16 @@ function renderChangeList(log, d, peerGap, outpaces) {
     // explain the gap -- it must NEVER be relabeled "press faster" (you can't
     // attribute 17% to a press-faster lever that's worth 4%). Only a small remainder
     // with a real cast deficit is credibly "press a bit faster".
-    const underPress = (rot && rot.castGap && rot.castGap.field > rot.castGap.you)
-      || (execd && execd.pressExcess >= 1 && !outpaces);
+    // A ~99%-active player (or one who out-casts the field) is NOT idling -- their cast
+    // deficit is ability MIX (harder-hitting / defensive GCDs), not press-faster. Framing
+    // their remainder as "GCD uptime / press on more pulls" contradicts their own ✓ UPTIME
+    // (and the press-faster lever, suppressed by the same >=98 bar). At/above that bar the
+    // remainder is per-cast (stats/variance), so let it fall through to "small". (Andaarius:
+    // 94th %ile, ~99% active, was told the gap is "GCD uptime" next to "barely idling".)
+    const activePct = (execd && execd.activePct != null) ? execd.activePct : (d.you && d.you.activePct);
+    const noIdle = (activePct != null && activePct >= 98) || outpaces;
+    const underPress = !noIdle && ((rot && rot.castGap && rot.castGap.field > rot.castGap.you)
+      || (execd && execd.pressExcess >= 1));
     residualKind = remainderKind(residual, { elite: isEliteParse(d.medP), healer: runIsHealer(), support: runIsSupport(), underPress });
     const rtext = residualText(residualKind, r, d, rot, rx);
     renderYou.push({ dim: DIM.EXECUTION, impact: residual, label: pctLabel(residual), text: rtext, basis: "measured" });
