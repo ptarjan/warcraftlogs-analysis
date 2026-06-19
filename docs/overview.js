@@ -2,7 +2,7 @@
 // Overview + item-level / duration-controlled comparison vs the field.
 import {
   DIFFICULTY, characterZone, characterEncounter, topRankings, playerMetrics,
-  secondaryStats, gearSummary, median, topN, f, padL, padR, collectUpTo, bestRank,
+  median, f, padL, padR, collectUpTo, bestRank,
   ilvlPeers, PEER_SAMPLE, metricUnit, recentKills, runIsHealer, mapLimit, BOSS_FANOUT,
   kfmt, head, subhead, arrow, flag,
 } from "./core.js";
@@ -22,7 +22,7 @@ export async function overview(log, name, server, region, difficulty) {
   const c = await characterZone(name, server, region, difficulty);
   const zr = c.zoneRankings;
   log("");
-  log(head(`${name}-${server} (${region}) · ${DIFFICULTY[difficulty] || difficulty}`));
+  log(head(`Your parses this tier`));
   log(`Best-avg %ile: ${f(zr.bestPerformanceAverage, 1)}   Median %ile: ${f(zr.medianPerformanceAverage, 1)}`);
   const killed = [];
   for (const r of (zr.rankings || [])) {
@@ -97,28 +97,8 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
       : gap < -3 ? `you're ~${Math.abs(gap)}% ahead of the ilvl-matched field here -- chase the top parses.`
       : `you're about even with the ilvl-matched field here.`));
   }
-
-  const youStats = await secondaryStats(code, fight, you.sourceID, className);
-  if (youStats) {
-    const keys = ["crit", "haste", "mastery", "vers"];
-    const sec = keys.reduce((s, k) => s + (youStats[k] || 0), 0) || 1;
-    log("    secondary allocation (you): " + keys.map((k) => `${k} ${f(100 * (youStats[k] || 0) / sec, 0)}%`).join("  "));
-  }
-
-  const g = gearSummary(you.gear);
-  // Field-aware, like the prescription's enchant lever: only list a missing enchant the
-  // peer FIELD reliably runs (>= half). The raw ENCHANTABLE_SLOTS list flags slots the
-  // field doesn't bother with (a Shadow Priest's Back/Wrist) as if an elite skipped
-  // something meta -- which then contradicts the prescription (no enchant lever there).
-  const fieldEnch = new Map();
-  for (const p of peers) for (const s of gearSummary(p.gear).enchanted) fieldEnch.set(s, (fieldEnch.get(s) || 0) + 1);
-  const miss = [...g.missing].filter((s) => (fieldEnch.get(s) || 0) >= peers.length / 2).sort();
-  log(`    enchants missing (the field runs): ${miss.length ? "[" + miss.map((x) => `'${x}'`).join(", ") + "]" : "none -- you run every enchant the field does"}`);
-  log(`    trinkets: [${g.trinkets.map((t) => `'${t}'`).join(", ")}]`);
-  const peerTrinkets = new Map();
-  for (const p of peers) for (const t of gearSummary(p.gear).trinkets) peerTrinkets.set(t, (peerTrinkets.get(t) || 0) + 1);
-  const top4 = topN(peerTrinkets, 4).map((e) => e[0]);
-  log(`    peer trinkets: [${top4.map((t) => `'${t}'`).join(", ")}]`);
+  // (Gear / enchants / trinkets / secondary-stat allocation are NOT shown here -- the
+  // Gear audit card owns them. This card stays the parse-standing + peer head-to-head.)
 }
 
 // Quantify how much higher people parse on `low` vs `high` difficulty.

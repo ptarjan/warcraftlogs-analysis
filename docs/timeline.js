@@ -170,7 +170,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
     (r) => (r.totalKills || 0) > 0 && r.rankPercent !== null && r.rankPercent !== undefined);
   if (boss) ranks = ranks.filter((r) => r.encounter.name.toLowerCase().includes(boss.toLowerCase()));
   log("");
-  log(head(`Comparative timeline diagnosis: ${name} (vs ilvl-matched peers, intermissions cancel out)`));
+  log(head(`Comparative timeline diagnosis (vs ilvl-matched peers, intermissions cancel out)`));
   const agg = { lostPerMin: [], rangeLostPerMin: [], pressLostPerMin: [], autoDownPct: [] };
   // Fan the bosses out -- each is an independent peer-fetch wave (timelineFindings is
   // pure compute), so run them concurrently and the gql() batcher coalesces the misses.

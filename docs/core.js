@@ -943,18 +943,3 @@ export async function detectPriority(className, specName, difficulty, encounterI
   return n ? keys.reduce((a, b) => (sums[a] >= sums[b] ? a : b)) : "crit";
 }
 
-export function gearSummary(gear, tierSetId = null) {
-  const enchanted = new Set();
-  for (const g of gear) {
-    if (g.slot in ENCHANTABLE_SLOTS && g.permanentEnchant) enchanted.add(ENCHANTABLE_SLOTS[g.slot]);
-  }
-  const missing = new Set();
-  for (const s of Object.keys(ENCHANTABLE_SLOTS)) {
-    const nm = ENCHANTABLE_SLOTS[s];
-    if (!enchanted.has(nm)) missing.add(nm);
-  }
-  const trinkets = gear.filter((g) => g.slot === 12 || g.slot === 13).map((g) => g.name);
-  let tier = 0;
-  for (const g of gear) if (tierSetId && g.setID === tierSetId) tier++;
-  return { enchanted, missing, trinkets, tier };
-}
