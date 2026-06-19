@@ -71,6 +71,20 @@ test("graphLevers: a cooldown-cause dip is a sized DPS lever, idle is a 0-impact
   assert.match(idle[0].text, /idle|coast|quiet|rotation going/i);
 });
 
+test("graphLevers: names the culprit ability, or identifies the amp when the drop is uniform", () => {
+  const base = { boss: "Boss", unit: "DPS", isHealer: false };
+  const wBase = { deficit: 0.3, gainPct: 4, phase: 5, center: 0.8, youTypical: 60000, youWindow: 42000, fieldWindow: 50000, cause: "cooldown" };
+  // One ability dominates the drop -> name it ("press THAT").
+  const named = graphLevers({ ...base, worst: { ...wBase, culprit: { name: "Rising Sun Kick", normalK: 12, windowK: 3 } } });
+  assert.match(named[0].text, /Rising Sun Kick/);
+  assert.match(named[0].text, /3k vs ~12k/);
+  // Drop spread evenly -> it's an amp, not a button.
+  const amp = graphLevers({ ...base, worst: { ...wBase, uniform: true, uniformPct: 30 } });
+  assert.match(amp[0].text, /not one button|every ability/i);
+  assert.match(amp[0].text, /30% softer/);
+  assert.match(amp[0].text, /cooldown|amp/i);
+});
+
 test("graphLevers: nothing to add when there's no real dip, or for healers/skips", () => {
   assert.deepEqual(graphLevers({ boss: "B", worst: { deficit: 0.05, gainPct: 0 } }), []);
   assert.deepEqual(graphLevers({ boss: "B", isHealer: true, worst: { deficit: 0.3, gainPct: 4, cause: "cooldown" } }), []);

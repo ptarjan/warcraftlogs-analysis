@@ -7,7 +7,7 @@
 import {
   characterZone, characterEncounter, playerMetrics, ilvlPeers, PEER_SAMPLE,
   median, collectUpTo, mapLimit, bestRank, dpsOverTime, metricUnit, runIsHealer, isSupport,
-  fightWindow, fightEvents, finding, DIM, DPS, INFO, KIND,
+  fightWindow, fightEvents, abilityCurvesOverTime, finding, DIM, DPS, INFO, KIND,
 } from "./core.js";
 import { pickBenchmarkKill } from "./prescribe.js";
 
@@ -138,13 +138,31 @@ export async function graphFindings(name, server, region, className, specName, d
       const durMs = fE - fS;
       const { casts } = await fightEvents(code, fight, you.sourceID, fS, fE);
       const ts = casts.map((e) => e.timestamp);
+      const winMin = Math.max(0.05, ((w.fracEnd || 1) - (w.fracStart || 0)) * durMs / 60000), fightMin = Math.max(0.05, durMs / 60000);
       const aMs = fS + (w.fracStart || 0) * durMs, bMs = fS + (w.fracEnd || 1) * durMs;
-      const winMin = Math.max(0.05, (bMs - aMs) / 60000), fightMin = Math.max(0.05, durMs / 60000);
       const cpmWin = ts.filter((t) => t >= aMs && t <= bMs).length / winMin;
       const cpmAll = ts.length / fightMin;
       w.cpmRatio = cpmAll > 0 ? cpmWin / cpmAll : 1;
       w.cause = w.cpmRatio < 0.78 ? "idle" : "cooldown";
-    } catch (e) { /* no cast data -> leave cause unset (run() degrades to a generic read) */ }
+      // Cast rate normal but damage down -> ATTRIBUTE the drop to a button. Per-ability
+      // damage curves: is ONE ability way down (press THAT), or is every ability down ~the
+      // same % (a flat amp/cooldown landing earlier -- NOT one button, it's timing)?
+      if (w.cause === "cooldown") {
+        const curves = await abilityCurvesOverTime(code, fight, you.sourceID);
+        const winMean = (d) => { let s2 = 0, n2 = 0; for (let i = 0; i < d.length; i++) { const f = d.length <= 1 ? 0 : i / (d.length - 1); if (f >= (w.fracStart || 0) && f <= (w.fracEnd || 1)) { s2 += d[i]; n2++; } } return n2 ? s2 / n2 : 0; };
+        const allMean = (d) => d.reduce((a, b) => a + b, 0) / (d.length || 1);
+        const rows = curves.map((c) => { const fm = allMean(c.data), wm = winMean(c.data); return { name: c.name, fm, wm, drop: Math.max(0, fm - wm), pct: fm > 0 ? (fm - wm) / fm : 0 }; })
+          .filter((r) => r.fm > 0).sort((a, b) => b.drop - a.drop);
+        const totalDrop = rows.reduce((a, b) => a + b.drop, 0) || 1;
+        const top = rows[0];
+        if (top && top.drop / totalDrop >= 0.4 && (!rows[1] || top.drop >= rows[1].drop * 1.5)) {
+          w.culprit = { name: top.name, normalK: Math.round(top.fm / 1000), windowK: Math.round(top.wm / 1000) };
+        } else if (rows.length >= 3) {
+          w.uniform = true;                                  // drop spread evenly -> an amp, not a button
+          w.uniformPct = Math.round(100 * median(rows.slice(0, 5).map((r) => r.pct)));
+        }
+      }
+    } catch (e) { /* no cast/ability data -> leave cause/culprit unset (run() degrades to a generic read) */ }
   }
 
   return {
@@ -177,12 +195,15 @@ export function graphLevers(d) {
       `${head}: your cast rate falls to ${Math.round(100 * (w.cpmRatio || 0))}% of normal, so you go quiet here (the lost-GCD time above, in one window). Keep your rotation going through ${where}'s mechanics instead of coasting.`,
       "measured", KIND.PHASE_DIP)];
   }
-  // Cast rate normal but output down -> your damage PER cast is lower here, which usually
-  // means your big hits (a burst cooldown / amp) landed earlier. Stated as the likely
-  // lever, not a measured fact about others' cooldown timing.
-  const tail = w.cause === "cooldown"
-    ? `. You press just as much there (cast rate normal), so your hits land softer -- likely a burst cooldown that fired earlier. Try saving one for ${where}.`
-    : `. Keep your uptime and cooldowns lined up through it.`;
+  // Cast rate normal but output down -> attribute it to a button: one ability way down
+  // (press THAT) vs every ability down ~evenly (a flat amp/cooldown landing earlier --
+  // timing, not a button). Stated from what's measured; the amp case names the lever
+  // (cooldown timing) without inventing a specific spell.
+  let tail;
+  if (w.cause !== "cooldown") tail = `. Keep your uptime and cooldowns lined up through it.`;
+  else if (w.culprit) tail = `. You press just as much there, but your ${w.culprit.name} is way down (~${w.culprit.windowK}k vs ~${w.culprit.normalK}k the rest of the kill) -- make sure you're landing it in ${where}.`;
+  else if (w.uniform) tail = `. You press just as much there, but EVERY ability hits ~${w.uniformPct}% softer -- so it's not one button, it's a damage cooldown/amp landing earlier in the fight. Shift your strongest damage cooldown to cover ${where}.`;
+  else tail = `. You press just as much there (cast rate normal), so your hits land softer -- likely a damage cooldown that fired earlier. Try lining one up for ${where}.`;
   return [finding(DIM.EXECUTION, DPS(w.gainPct), head + tail, "measured", KIND.PHASE_DIP)];
 }
 
@@ -254,7 +275,7 @@ export function buildCurveComparison(yc, peers) {
   const yourTypical = liveYou.length ? median(liveYou) : (median(you48) || 1);
   const fieldTypical = liveFld.length ? median(liveFld) : (median(pmed) || 1);
   const W = Math.max(4, Math.round(N * 0.18));
-  /** @type {{start:number,end:number,deficit:number,center:number,phase?:number,nPhases?:number,gainPct?:number,fracStart?:number,fracEnd?:number,cause?:string,cpmRatio?:number,youTypical?:number,youWindow?:number,fieldWindow?:number}|null} */
+  /** @type {{start:number,end:number,deficit:number,center:number,phase?:number,nPhases?:number,gainPct?:number,fracStart?:number,fracEnd?:number,cause?:string,cpmRatio?:number,youTypical?:number,youWindow?:number,fieldWindow?:number,culprit?:{name:string,normalK:number,windowK:number},uniform?:boolean,uniformPct?:number}|null} */
   let worst = null;
   for (let i = 0; i + W <= N; i++) {
     let youSum = 0, fldDrop = 0, fldSum = 0, n = 0;
@@ -366,9 +387,15 @@ export async function run(log, name, server, region, className = "Monk", specNam
     if (w.cause === "idle") {
       log(`  -> ${drop} — and your cast rate falls to ${Math.round(100 * (w.cpmRatio || 0))}% of normal, so you go quiet here.`);
       log(`     Keep your rotation going through ${where}'s movement/mechanics instead of coasting. (~${w.gainPct}% ${unit})`);
+    } else if (w.cause === "cooldown" && w.culprit) {
+      log(`  -> ${drop} — you press just as much, but your ${w.culprit.name} is way down (~${w.culprit.windowK}k vs ~${w.culprit.normalK}k normally).`);
+      log(`     Make sure you're landing ${w.culprit.name} in ${where}. (~${w.gainPct}% ${unit})`);
+    } else if (w.cause === "cooldown" && w.uniform) {
+      log(`  -> ${drop} — you press just as much, but EVERY ability hits ~${w.uniformPct}% softer, so it's not one button.`);
+      log(`     A damage cooldown/amp is landing earlier — shift your strongest one to cover ${where}. (~${w.gainPct}% ${unit})`);
     } else if (w.cause === "cooldown") {
       log(`  -> ${drop} — but you press just as much (cast rate normal), so your hits land softer there.`);
-      log(`     Likely a burst cooldown that fired earlier; try saving one for ${where}. (~${w.gainPct}% ${unit})`);
+      log(`     Likely a damage cooldown that fired earlier; line one up for ${where}. (~${w.gainPct}% ${unit})`);
     } else {
       log(`  -> ${drop}. Keep your uptime and cooldowns lined up through it. (~${w.gainPct}% ${unit})`);
     }

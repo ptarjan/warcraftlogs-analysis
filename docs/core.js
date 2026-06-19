@@ -383,6 +383,24 @@ export async function dpsOverTime(code, fight, sourceId) {
   return { dur: (e - s) / 1000, dps, phases };
 }
 
+// Rolling DPS over a fight PER ABILITY for one actor (the named damage series), from the
+// same `graph` view but WITHOUT viewBy:Source -- with a sourceID filter the default view
+// is BY ABILITY, so each series is one of the actor's abilities ({name, guid, data:[…]}).
+// Lets a consumer attribute a damage dip in a time window to the SPECIFIC button that
+// dropped (the actionable "press THIS"), or detect that the drop is uniform across all
+// abilities (an amp/cooldown, not one button). One cheap binned request, your kill only.
+export async function abilityCurvesOverTime(code, fight, sourceId) {
+  const [s, e] = await fightWindow(code, fight);
+  if (!(e > s)) return [];
+  const q = `query { reportData { report(code:"${code}") { graph(
+    fightIDs:${fight}, sourceID:${sourceId}, dataType:${eventTable()}, startTime:${s}, endTime:${e}) } } }`;
+  const g = (await gql(q)).reportData.report.graph;
+  const series = (g && g.data && g.data.series) || [];
+  return series
+    .filter((x) => x.name && x.name !== "Total" && (x.data || []).length >= 3)
+    .map((x) => ({ name: x.name, guid: x.guid, data: (x.data || []).map((v) => +v || 0) }));
+}
+
 // --------------------------------------------------------------------- //
 // Pull/progression fetchers (the raid-night flow -- see progression.js)
 // --------------------------------------------------------------------- //
