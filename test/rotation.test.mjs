@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, empoweredStats, empowermentCandidate, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, rotationLevers, medianCastRates, consensusOpener, openerDivergence, majorCooldownIds, cooldownStackFraction, cooldownStackGap } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, empoweredStats, empowermentCandidate, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, rotationLevers, medianCastRates, consensusOpener, openerDivergence, majorCooldownIds, cooldownStackFraction, cooldownStackGap, cooldownUseComparable } = await import("../docs/rotation.js");
 const { setRunMetric } = await import("../docs/core.js");
 
 // Run a body with the run metric forced, always restoring "dps" so it never leaks.
@@ -630,4 +630,14 @@ test("cdAlignLever (via rotationLevers): INFO diagnostic from cdAlign, none with
   assert.equal(lev[0].kind, "CD_ALIGN");
   assert.match(lev[0].text, /20% of your major-cooldown casts.*vs the field's 80%/);
   assert.equal(rotationLevers({ abilityIds: {} }).filter((l) => /^CD ALIGNMENT:/.test(l.text)).length, 0);
+});
+
+test("cooldownUseComparable: the CD-align guard -- press them as often as the field, else suppress", () => {
+  // You press cooldowns about as often as the field median (5.0 vs ~5.0) -> trust scatter.
+  assert.equal(cooldownUseComparable(5.0, [5.0, 4.8, 5.2, 5.1]), true);
+  // You press them FAR less (1.0 vs ~5.0) -> the low stack rate is under-use, not alignment.
+  assert.equal(cooldownUseComparable(1.0, [5.0, 4.8, 5.2, 5.1]), false);
+  // Too few peers / no casts -> can't judge -> false (never fire on a guess).
+  assert.equal(cooldownUseComparable(5.0, [5.0]), false);
+  assert.equal(cooldownUseComparable(0, [5.0, 5.0, 5.0]), false);
 });

@@ -134,6 +134,16 @@ export function cooldownStackGap(youFrac, fieldFracs, { minGap = 0.2, minPeers =
   return { you: youFrac, field };
 }
 
+// Guard for CD-ALIGNMENT: only trust the SCATTER signal when you press your cooldowns about
+// as OFTEN as the field. If you cast far fewer, a low stack fraction is a mechanical artifact
+// of having fewer casts to co-occur -- that's the cooldown-USAGE lever's story (use it more),
+// not alignment (bunch them). Aggregate major-cooldown cast rate, you vs field median. Pure.
+export function cooldownUseComparable(youRate, fieldRates, { minRatio = 0.6, minPeers = 3 } = {}) {
+  const fs = (fieldRates || []).filter((x) => x > 0);
+  if (fs.length < minPeers || !(youRate > 0)) return false;
+  return youRate >= minRatio * median(fs);
+}
+
 // What FRACTION of an ability's casts land "empowered" -- the high-damage version
 // of a bimodal hit (a Tiger Palm set up by its combo vs a bare one). Each player is
 // measured against their OWN median, so it's comparable across gear: the empowered
@@ -984,9 +994,14 @@ export async function rotationFindings(name, server, region, className, specName
   // field's), but surfaced as a NAMED diagnostic only (no DPS size until live-validated).
   let cdAlign = null;
   if (rotationSafe) {
-    const youStack = cooldownStackFraction(you.castTimesById || {}, majorCooldownIds(you.allCastRate || {}));
+    const youCdIds = majorCooldownIds(you.allCastRate || {});
+    const youStack = cooldownStackFraction(you.castTimesById || {}, youCdIds);
     const fieldStacks = peers.map((p) => cooldownStackFraction(p.castTimesById || {}, majorCooldownIds(p.allCastRate || {})));
-    cdAlign = cooldownStackGap(youStack, fieldStacks);
+    // Aggregate cooldown cast RATE, you vs field -- the guard so "you scatter" can't be a
+    // mere artifact of under-using them (that's the cooldown-USAGE lever, not alignment).
+    const youCdRate = youCdIds.reduce((s, id) => s + ((you.allCastRate || {})[id] || 0), 0);
+    const fieldCdRates = peers.map((p) => majorCooldownIds(p.allCastRate || {}).reduce((s, id) => s + ((p.allCastRate || {})[id] || 0), 0));
+    if (cooldownUseComparable(youCdRate, fieldCdRates)) cdAlign = cooldownStackGap(youStack, fieldStacks);
   }
   return {
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener, atonement: !!you.atonement,
