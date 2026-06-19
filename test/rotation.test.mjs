@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, empoweredStats, empowermentCandidate, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, rotationLevers, medianCastRates, consensusOpener, openerDivergence } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, empoweredStats, empowermentCandidate, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, rotationLevers, medianCastRates, consensusOpener, openerDivergence, majorCooldownIds, cooldownStackFraction, cooldownStackGap } = await import("../docs/rotation.js");
 const { setRunMetric } = await import("../docs/core.js");
 
 // Run a body with the run metric forced, always restoring "dps" so it never leaks.
@@ -581,4 +581,48 @@ test("openerLever (via rotationLevers): renders an INFO diagnostic from openerGa
   assert.match(omit.find((l) => /^OPENER:/.test(l.text)).text, /isn't in your opener at all/);
   // No openerGap (the gates suppressed it) -> no opener line.
   assert.equal(rotationLevers({ abilityIds: {} }).filter((l) => /^OPENER:/.test(l.text)).length, 0);
+});
+
+// --- CD ALIGNMENT (cooldown stacking) diagnostic -------------------------------
+
+test("majorCooldownIds: the low-frequency band, by ability id (fillers excluded)", () => {
+  const rate = { 100: 30, 200: 0.5, 300: 1.0, 400: 0.05, 500: 2.0 };
+  const ids = majorCooldownIds(rate);   // keep 0.15..1.5/min -> 200, 300
+  assert.deepEqual(ids.sort(), ["200", "300"]);
+  assert.deepEqual(majorCooldownIds({}), []);
+});
+
+test("cooldownStackFraction: stacked cooldowns score high, scattered score low", () => {
+  // Two CDs (ids 1,2) cast in tight pairs -> every cast is within 10s of the other CD.
+  const stacked = { 1: [0, 60000, 120000], 2: [2000, 62000, 122000] };
+  assert.equal(cooldownStackFraction(stacked, ["1", "2"]), 1, "all 6 casts stacked");
+  // Same casts pushed far apart -> none within 10s of a DIFFERENT cd.
+  const scattered = { 1: [0, 60000, 120000], 2: [30000, 90000, 150000] };
+  assert.equal(cooldownStackFraction(scattered, ["1", "2"]), 0, "none stacked");
+  // A lone cooldown can't stack -> null; too few casts -> null.
+  assert.equal(cooldownStackFraction({ 1: [0, 60000, 120000, 180000] }, ["1"]), null);
+  assert.equal(cooldownStackFraction({ 1: [0], 2: [1000] }, ["1", "2"]), null);
+});
+
+test("cooldownStackGap: fires only when you trail the field's stack rate by the margin", () => {
+  // You stack 20%, the field medians ~80% -> a real gap.
+  const g = cooldownStackGap(0.2, [0.8, 0.7, 0.9, 0.8]);
+  assert.ok(g); assert.equal(g.you, 0.2); assert.equal(g.field, 0.8);
+  // You stack about as much as the field -> silent.
+  assert.equal(cooldownStackGap(0.7, [0.8, 0.7, 0.75]), null);
+  // The field ALSO spreads (low field fraction) -> spreading is correct here, silent.
+  assert.equal(cooldownStackGap(0.1, [0.2, 0.15, 0.25]), null);
+  // No field baseline / no your-fraction -> null (never guess).
+  assert.equal(cooldownStackGap(0.1, [0.8]), null);
+  assert.equal(cooldownStackGap(null, [0.8, 0.8, 0.8]), null);
+});
+
+test("cdAlignLever (via rotationLevers): INFO diagnostic from cdAlign, none without", () => {
+  const lev = rotationLevers({ abilityIds: {}, cdAlign: { you: 0.2, field: 0.8 } })
+    .filter((l) => /^CD ALIGNMENT:/.test(l.text));
+  assert.equal(lev.length, 1);
+  assert.equal(lev[0].impact, 0, "diagnostic: no DPS claim");
+  assert.equal(lev[0].kind, "CD_ALIGN");
+  assert.match(lev[0].text, /20% of your major-cooldown casts.*vs the field's 80%/);
+  assert.equal(rotationLevers({ abilityIds: {} }).filter((l) => /^CD ALIGNMENT:/.test(l.text)).length, 0);
 });

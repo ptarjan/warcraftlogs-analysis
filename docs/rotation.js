@@ -83,6 +83,57 @@ export function openerDivergence(youOpener, peerOpeners, { minShare = 0.6, minPo
   return { ability: lead, peerShare: share, peerPos: 0, youPos: omitted ? null : at, omitted, delay: omitted ? Infinity : at };
 }
 
+// An actor's MAJOR cooldowns from its all-casts rate: the low-frequency band (a cooldown
+// is pressed ~0.15-1.5x/min; fillers are many/min). Class-agnostic -- the set comes
+// entirely from the cast rates, no hard-coded ability names. Keyed by ability id (so it
+// includes the buff/pet cooldowns the damage table can't see). Pure -> testable.
+export function majorCooldownIds(allCastRate, { lo = 0.15, hi = 1.5 } = {}) {
+  const out = [];
+  for (const [id, r] of Object.entries(allCastRate || {})) if (r >= lo && r <= hi) out.push(id);
+  return out;
+}
+
+// What fraction of an actor's major-cooldown CASTS are STACKED -- fired within `window`
+// seconds of a DIFFERENT major cooldown, so their buffs overlap into one multiplicative
+// burst. The within-actor signal the cast-COUNT levers (usage/cooldownGaps) can't see:
+// you can press every cooldown the right NUMBER of times yet scatter them so they never
+// compound. castTimesById: id -> [ms]; cdIds: this actor's major cooldowns. null when
+// there are too few cooldowns or casts to judge (a lone cooldown can't stack; a handful
+// of casts gives a coarse, noisy fraction). Pure -> testable.
+export function cooldownStackFraction(castTimesById, cdIds, { window = 10, minCds = 2, minCasts = 4 } = {}) {
+  const ids = (cdIds || []).filter((id) => ((castTimesById || {})[id] || []).length);
+  if (ids.length < minCds) return null;
+  const winMs = window * 1000;
+  const casts = [];
+  for (const id of ids) for (const t of castTimesById[id]) casts.push({ t, id });
+  casts.sort((a, b) => a.t - b.t);
+  if (casts.length < minCasts) return null;
+  let stacked = 0;
+  for (let i = 0; i < casts.length; i++) {
+    const c = casts[i];
+    let near = false;
+    for (let j = i - 1; j >= 0 && c.t - casts[j].t <= winMs; j--) if (casts[j].id !== c.id) { near = true; break; }
+    if (!near) for (let j = i + 1; j < casts.length && casts[j].t - c.t <= winMs; j++) if (casts[j].id !== c.id) { near = true; break; }
+    if (near) stacked++;
+  }
+  return stacked / casts.length;
+}
+
+// CD-ALIGNMENT gap: you stack your major cooldowns LESS than the field does. The field
+// baseline is the causal protection -- a spec where spreading cooldowns is correct shows a
+// LOW field fraction too, so we only fire when same-spec, same-hero peers genuinely bunch
+// theirs and you don't. The caller gates on being BEHIND + hero-matched and surfaces it as
+// a NAMED diagnostic (no DPS size -- a sim won't price burst alignment, and the sized
+// version awaits live-validation on a behind-field char). Pure -> testable.
+export function cooldownStackGap(youFrac, fieldFracs, { minGap = 0.2, minPeers = 3 } = {}) {
+  if (youFrac == null) return null;
+  const fs = (fieldFracs || []).filter((x) => x != null);
+  if (fs.length < minPeers) return null;
+  const field = median(fs);
+  if (field - youFrac < minGap) return null;          // you stack ~as much (or more) -> fine
+  return { you: youFrac, field };
+}
+
 // What FRACTION of an ability's casts land "empowered" -- the high-damage version
 // of a bimodal hit (a Tiger Palm set up by its combo vs a bare one). Each player is
 // measured against their OWN median, so it's comparable across gear: the empowered
@@ -179,9 +230,10 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
   const allCastRate = {};
   for (const x of rawCasts) allCastRate[x.abilityGameID] = (allCastRate[x.abilityGameID] || 0) + 1;
   for (const k of Object.keys(allCastRate)) allCastRate[k] *= cpm;
-  // Fight-relative cast timestamps per ability id -- kept (only for the "you" path)
-  // so the buff-cooldown lever can size the damage uplift in the window after each
-  // cast of an under-pressed buff WITHOUT re-fetching casts (they're already here).
+  // Fight-relative cast timestamps per ability id -- so the buff-cooldown lever can size
+  // the damage uplift in the window after each under-pressed buff WITHOUT re-fetching
+  // casts (they're already here), and the CD-ALIGNMENT diagnostic can measure how stacked
+  // your (and each peer's) major cooldowns are. Returned on both the you + onlyAbility paths.
   const castTimesById = {};
   for (const x of rawCasts) (castTimesById[x.abilityGameID] ||= []).push(x.timestamp - s);
 
@@ -220,7 +272,7 @@ async function analyzeKill(name, code, fight, specName, className, opts = {}) {
     const dotUp = (opts.dotIds && opts.dotIds.length) ? await dotUptimes(code, fight, m.sourceID, opts.dotIds, e - s) : {};
     const petDmg = await petDamage(code, fight, m.sourceID);
     const petShare = (m.total + petDmg) > 0 ? petDmg / (m.total + petDmg) : 0;
-    return { opener: openerSequence(casts), procPerMin, empShare, castRate, allCastRate, name2id,
+    return { opener: openerSequence(casts), procPerMin, empShare, castRate, allCastRate, name2id, castTimesById,
              dmgBy: m.dmgBy, total: m.total, dur, sourceID: m.sourceID, dotUp, petShare };
   }
 
@@ -917,14 +969,25 @@ export async function rotationFindings(name, server, region, className, specName
   const fieldMedDps = peerDpss.length >= 3 ? median(peerDpss) : null;
   const behindField = fieldMedDps != null && yourDps > 0 && yourDps < fieldMedDps * 0.97;
   const heroSafe = !yourHero || !!heroMatched;       // unknown hero = best-effort; known = require a match
+  const rotationSafe = behindField && heroSafe && (!runIsHealer() || you.atonement);
   let openerGap = null;
-  if (behindField && heroSafe && (!runIsHealer() || you.atonement)) {
+  if (rotationSafe) {
     const og = openerDivergence(you.opener, peers.map((p) => p.opener));
     if (og && castable(og.ability, talent)) openerGap = og;
   }
+  // CD ALIGNMENT: do you fire your major cooldowns STACKED (one multiplicative burst) like
+  // the field, or scattered? The cast-count levers can't see it -- you can press each the
+  // right NUMBER of times yet never overlap them. Measured (your stack fraction vs the
+  // field's), but surfaced as a NAMED diagnostic only (no DPS size until live-validated).
+  let cdAlign = null;
+  if (rotationSafe) {
+    const youStack = cooldownStackFraction(you.castTimesById || {}, majorCooldownIds(you.allCastRate || {}));
+    const fieldStacks = peers.map((p) => cooldownStackFraction(p.castTimesById || {}, majorCooldownIds(p.allCastRate || {})));
+    cdAlign = cooldownStackGap(youStack, fieldStacks);
+  }
   return {
     boss: boss.name, hits: you.hits, biggest, opener: you.opener, fieldOpener, atonement: !!you.atonement,
-    usage, cooldowns, cdUsage, buffCds, perCast, dotGaps, dotCount: (you.dots || []).length, petGap, castGap, fieldPeers: peers.length, talent, abilityIds, openerGap,
+    usage, cooldowns, cdUsage, buffCds, perCast, dotGaps, dotCount: (you.dots || []).length, petGap, castGap, fieldPeers: peers.length, talent, abilityIds, openerGap, cdAlign,
     yourHero: yourHero || null,
     heroMatched,
     proc: { name: empCand ? empCand.name : null, isReal, youPerMin: empCand ? empCand.procPerMin : 0, fieldPerMin: fieldProc, youEmp, fieldEmp,
@@ -1233,6 +1296,22 @@ function openerLever(rot, link) {
     `(Pull up a rank-1 opener of this fight and diff the first ~10s against yours.)`, "measured", KIND.OPENER)];
 }
 
+// CD ALIGNMENT: you fire your major cooldowns scattered while the field stacks them into
+// one multiplicative burst. A NAMED diagnostic, not a sized lever -- a sim won't price
+// burst alignment and we haven't validated a DPS size on a behind-field character, so it
+// carries INFO (impact 0). rotationFindings gated it to BEHIND-the-field, hero-matched
+// peers, with a field stack-rate baseline (so a spec that correctly spreads its cooldowns
+// never trips it), so a good player who bursts fine never reaches here. The fix is
+// concrete: bunch your damage cooldowns into the same window.
+function cdAlignLever(rot) {
+  const a = rot && rot.cdAlign;
+  if (!a) return [];
+  return [finding(DIM.ROTATION, INFO,
+    `CD ALIGNMENT: ${Math.round(a.you * 100)}% of your major-cooldown casts land within ~10s of another (vs the field's ${Math.round(a.field * 100)}%) -- the field bunches its cooldowns so the buffs overlap into one big burst; you spread yours out. ` +
+    `Line your damage cooldowns up into the same window (and onto Bloodlust, if your group brings it) instead of pressing them whenever they come up.`,
+    "measured", KIND.CD_ALIGN)];
+}
+
 // Assemble all rotation levers into the shared { dim, impact, label, text } currency.
 // Each kind is its own pure (rot, link) -> Finding[] above; this just concatenates in
 // priority order. Only a GENUINE under-used proc is actionable -- crit-driven big hits
@@ -1248,5 +1327,6 @@ export function rotationLevers(rot) {
     ...dotLevers(rot),
     ...empowermentLever(rot, link),
     ...openerLever(rot, link),
+    ...cdAlignLever(rot),
   ];
 }
