@@ -209,7 +209,7 @@ export async function analyzeBoss(name, server, region, encounter, difficulty, c
 
   return {
     boss: encounter.name, unit: metricUnit(), isHealer: runIsHealer(),
-    ...cmp, yourOverall: you.dps, peerOverall: median(peers.map((p) => p.overall)), peers: peers.length,
+    ...cmp, peers: peers.length,
   };
 }
 
@@ -380,7 +380,7 @@ export function buildCurveComparison(yc, peers) {
 
   return {
     n: N, you: you48, pmed, plo, phi, worst, bounds, aligned,
-    bandBelow: below / liveN, bandAbove: above / liveN, bandIn: (liveN - below - above) / liveN,
+    bandBelow: below / liveN, bandAbove: above / liveN,
   };
 }
 
