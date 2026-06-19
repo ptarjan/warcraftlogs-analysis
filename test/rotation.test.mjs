@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, empoweredStats, empowermentCandidate, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, rotationLevers, medianCastRates, consensusOpener, openerDivergence, majorCooldownIds, cooldownStackFraction, cooldownStackGap, cooldownUseComparable, damageCurve, weakestWindow } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, empoweredStats, empowermentCandidate, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, rotationLevers, mergeRotationRecurrence, medianCastRates, consensusOpener, openerDivergence, majorCooldownIds, cooldownStackFraction, cooldownStackGap, cooldownUseComparable, damageCurve, weakestWindow } = await import("../docs/rotation.js");
 const { setRunMetric } = await import("../docs/core.js");
 
 // Run a body with the run metric forced, always restoring "dps" so it never leaks.
@@ -710,4 +710,64 @@ test("cooldownUseComparable: the CD-align guard -- press them as often as the fi
   // Too few peers / no casts -> can't judge -> false (never fire on a guess).
   assert.equal(cooldownUseComparable(5.0, [5.0]), false);
   assert.equal(cooldownUseComparable(0, [5.0, 5.0, 5.0]), false);
+});
+
+// --- cross-boss recurrence (mergeRotationRecurrence) -------------------------
+// A keyed lever recurs across bosses = a CONSISTENT habit, not one pull's noise.
+const lever = (recurKey, text, impact = 5) => ({ dim: "Rotation", impact, label: `~${impact}% DPS`, text, recurKey });
+
+test("recurrence: a benchmark lever that ALSO fires on another boss is annotated as a habit", () => {
+  const main = [lever("cd:Storm", "COOLDOWN: you cast Storm too little.")];
+  const others = [
+    { name: "BossB", levers: [lever("cd:Storm", "COOLDOWN: same on BossB.")] },
+    { name: "BossC", levers: [lever("press:Bolt", "ROTATION: press Bolt more.")] },
+  ];
+  const { levers, infos } = mergeRotationRecurrence(main, others);
+  assert.equal(levers.length, 1, "main levers pass through (count preserved)");
+  assert.match(levers[0].text, /2 of your last 3 bosses/, "fired on bench + 1 other of 2 -> 2 of 3");
+  assert.equal(levers[0].impact, 5, "annotation does NOT change impact (reconcile owns the gap)");
+  assert.equal(infos.length, 0, "the BossC-only lever fired once -> not a recurring INFO");
+});
+
+test("recurrence: a benchmark-only lever is left untouched (no false habit claim)", () => {
+  const main = [lever("cd:Storm", "COOLDOWN: you cast Storm too little.")];
+  const others = [{ name: "BossB", levers: [lever("press:Bolt", "ROTATION: press Bolt more.")] }];
+  const { levers } = mergeRotationRecurrence(main, others);
+  assert.doesNotMatch(levers[0].text, /consistent habit|of your last/, "fired only on benchmark -> no recurrence note");
+});
+
+test("recurrence: a habit on >=2 OTHER bosses but not the benchmark surfaces as an INFO note (impact 0)", () => {
+  const main = [lever("cd:Storm", "COOLDOWN: you cast Storm too little.")];
+  const others = [
+    { name: "BossB", levers: [lever("press:Bolt", "ROTATION: press Bolt more.")] },
+    { name: "BossC", levers: [lever("press:Bolt", "ROTATION: press Bolt more.")] },
+  ];
+  const { levers, infos } = mergeRotationRecurrence(main, others);
+  assert.equal(levers.length, 1, "the benchmark list is unchanged in size");
+  assert.equal(infos.length, 1, "Bolt recurs on 2 other bosses, absent on bench -> one INFO note");
+  assert.equal(infos[0].impact, 0, "INFO note carries NO impact (never disturbs gap reconciliation)");
+  assert.match(infos[0].text, /BossB & BossC/, "names the bosses it recurs on");
+});
+
+test("recurrence: a lever on exactly ONE other boss is fight-specific noise -> no INFO", () => {
+  const main = [lever("cd:Storm", "COOLDOWN: you cast Storm too little.")];
+  const others = [{ name: "BossB", levers: [lever("press:Bolt", "ROTATION: press Bolt more.")] }];
+  const { infos } = mergeRotationRecurrence(main, others);
+  assert.equal(infos.length, 0, "one other boss only -> not surfaced");
+});
+
+test("recurrence: unkeyed levers (talents/build) pass through untouched and never recur", () => {
+  const talent = { dim: "Rotation", impact: 7, label: "~7% DPS", text: "TALENTS/BUILD: respec." }; // no recurKey
+  const main = [talent];
+  const others = [{ name: "BossB", levers: [{ ...talent }] }];
+  const { levers, infos } = mergeRotationRecurrence(main, others);
+  assert.equal(levers[0].text, "TALENTS/BUILD: respec.", "unkeyed lever text unchanged");
+  assert.equal(infos.length, 0, "unkeyed never produces a recurrence INFO");
+});
+
+test("recurrence: no other bosses loaded -> degrades to the plain benchmark levers", () => {
+  const main = [lever("cd:Storm", "COOLDOWN: you cast Storm too little.")];
+  const { levers, infos } = mergeRotationRecurrence(main, []);
+  assert.deepEqual(levers, main, "with no other bosses, levers are returned as-is");
+  assert.equal(infos.length, 0);
 });

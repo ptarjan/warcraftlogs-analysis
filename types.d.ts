@@ -27,6 +27,10 @@ interface Finding extends Score {
   /** Stable machine tag (KIND.*) for kinds prescribe special-cases, so it keys off this
    *  instead of regex-matching `text`. Absent for ordinary levers. */
   kind?: string;
+  /** Boss-independent lever identity (kind + ability) for the cross-boss recurrence
+   *  merge -- the same key on several of your recent bosses means a CONSISTENT habit,
+   *  not a one-fight artifact. Rotation levers only; absent elsewhere. */
+  recurKey?: string;
 }
 
 /** A measured value from the ilvl-matched field: median DPS of peers who HAVE a thing

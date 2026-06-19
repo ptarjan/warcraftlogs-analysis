@@ -13,7 +13,7 @@ import {
 import { timelineFindings } from "./timeline.js";
 import { gearFindings, gearLevers, itemInstance, sourceText } from "./gear.js";
 import { wowheadSpell, wowheadItem, wclReport } from "./links.js";
-import { rotationFindings, rotationLevers, castable } from "./rotation.js";
+import { rotationFindings, rotationLevers, mergeRotationRecurrence, castable } from "./rotation.js";
 import { talentFindings, talentLevers } from "./talents.js";
 import { topParseFindings, topParseLevers, RAID_DAMAGE } from "./topparse.js";
 import { healingLevers } from "./healing.js";
@@ -1225,6 +1225,31 @@ export async function run(log, name, server, region, className = "Monk", specNam
   } catch (e) { /* aggregation is a bonus -- benchmark-only on any failure */ }
   try { rot = await rotationFindings(name, server, region, className, specName, difficulty, benchKill, recentKills); }
   catch (e) { skipped.push("rotation"); }
+  // CROSS-BOSS: analyze your rotation on up to 2 OTHER recent bosses (each vs ITS OWN
+  // field) so the prescription can tell a CONSISTENT habit from a one-fight artifact --
+  // the "teach me over all my playing, not one kill" axis. A lever that recurs across
+  // bosses is a confirmed habit to prioritize; one that only shows on the benchmark kill
+  // may be fight-specific. We reuse the per-boss representative kill already in `kills`
+  // (bestIlvlKill -- no new ranking fetch); only re-analyzing the OTHER bosses costs (~1
+  // report read each, the peer field). Bounded to 2 and fully fail-soft: any boss that
+  // doesn't load just doesn't contribute recurrence, and the benchmark levers stand alone.
+  const otherRot = [];
+  const otherBossKills = kills
+    .filter((k) => k.boss.encounter.id !== gearBoss.encounter.id)   // a DIFFERENT boss
+    .filter((k) => (k.ilvl || 0) >= curIlvl - 1)                    // current-gear band
+    .sort((a, b) => (b.startTime || 0) - (a.startTime || 0))        // most recent first
+    .slice(0, 2);
+  // SILENT degrade (NOT soft()): recurrence is a bonus on top of a complete prescription,
+  // so a throttled cross-boss read must NOT push to `skipped` -- that would mislabel the
+  // core list as "partial / not the full picture". Any boss that doesn't load just drops
+  // its recurrence vote; the benchmark levers stand exactly as before.
+  for (const k of otherBossKills) {
+    try {
+      const ro = await rotationFindings(name, server, region, className, specName, difficulty,
+        { code: k.code, fight: k.fight, encounter: k.boss.encounter }, []);
+      if (ro) otherRot.push({ name: k.boss.encounter.name, findings: ro });
+    } catch (e) { /* bonus only -- benchmark levers stand alone */ }
+  }
   try { tp = await topParseFindings(name, server, region, difficulty, className, specName); }
   catch (e) { skipped.push("top-parse comparison"); }
   try { tal = await talentFindings(name, server, region, className, specName, difficulty); }
@@ -1265,6 +1290,13 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // the confounded field-delta levers get a tighter cap (GEAR_LEVER_CAP_AHEAD). 5pp margin so
   // a roughly-even player keeps the normal sizing.
   const outputAhead = peerGapPct != null && peerGapPct <= -5;
+  // Cross-boss recurrence: the benchmark levers carry the (gap-sized) impact; a habit that
+  // recurs on your other recent bosses gets annotated, and a habit that recurs ONLY on them
+  // becomes an INFO note (impact 0, so the gap reconciliation -- sized on the benchmark kill
+  // -- is untouched). Degrades to the plain benchmark levers when no other boss loaded.
+  const rotMerged = mergeRotationRecurrence(
+    rotationLevers(rot),
+    otherRot.map((o) => ({ name: o.name, levers: rotationLevers(o.findings) })));
   /** @type {Finding[]} */
   const rx = [
     ...executionLevers(execd, rot, peerGapPct, (execd && execd.activePct != null) ? execd.activePct : (you && you.activePct)),
@@ -1276,7 +1308,8 @@ export async function run(log, name, server, region, className = "Monk", specNam
     // Healer-specific efficiency levers (overhealing, mana) -- self-silent for a
     // damage run (runIsHealer false, overheal 0). Measured from your benchmark kill.
     ...healingLevers(you, field),
-    ...rotationLevers(rot),
+    ...rotMerged.levers,
+    ...rotMerged.infos,
     ...talentLevers(tal),
     ...topParseLevers(tp, field && field.compDeltas),
   ];

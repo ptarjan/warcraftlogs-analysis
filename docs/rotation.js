@@ -1203,6 +1203,14 @@ export async function run(log, name, server, region, className = "Monk",
 // the wrong button (over-use one, never press the field's) or skipping a cooldown is
 // usually the largest gap for an underperformer. A never-pressed talent is a respec
 // (flat estimate); under-pressed damage abilities are sized from real damage.
+// Tag a rotation lever with a BOSS-INDEPENDENT identity (its kind + the ability it
+// names), so prescribe can tell a CONSISTENT habit -- the same lever firing across
+// several of your recent bosses -- from a one-fight artifact. The spec is the same on
+// every boss, so "press Blackout Kick more" keys identically on any fight; only the
+// boss-specific numbers in the text differ. Talent/build levers stay UNKEYED on purpose:
+// a skipped talent is constant across bosses, so "recurrence" there is meaningless.
+const withKey = (f, key) => ({ ...f, recurKey: key });
+
 function usageLevers(rot, link) {
   const out = [];
   // HEALERS: usageLevers is built ENTIRELY from DAMAGE-cast divergence -- for a PURE healer
@@ -1270,9 +1278,9 @@ function usageLevers(rot, link) {
       const over = (i === 0 && realOver.length)
         ? ` You're spending those globals on ${link(realOver[0].name)} (your ${f(realOver[0].you, 1)}/min vs peers ${f(realOver[0].field, 1)}) -- swap them.`
         : "";
-      out.push(finding(DIM.ROTATION, DPS(a.dmgPct),
+      out.push(withKey(finding(DIM.ROTATION, DPS(a.dmgPct),
         `ROTATION: press ${link(a.name)} more -- peers cast it ${f(a.field, 1)}/min vs your ${f(a.you, 1)}; ` +
-        `the casts you're missing are ~${a.dmgPct}% of your ${throughputWord()}.${over}${buildCaveat}`, "measured"));
+        `the casts you're missing are ~${a.dmgPct}% of your ${throughputWord()}.${over}${buildCaveat}`, "measured"), `press:${a.name}`));
     });
     // Fallback: when NONE could be measured (no peers, or too few of your own casts to
     // get a per-cast), keep the old lumped flat estimate so the lever still surfaces.
@@ -1301,19 +1309,19 @@ function cooldownLevers(rot, link) {
   for (const cd of ((rot && rot.cooldowns) || []).slice(0, 2)) {
     if (cd.pct && cd.pct >= 1) {
       seenCd.add(cd.name);
-      out.push(finding(DIM.ROTATION, DPS(cd.pct),
+      out.push(withKey(finding(DIM.ROTATION, DPS(cd.pct),
         `COOLDOWN: you cast ${link(cd.name)} ${cd.youCasts.toFixed(1)}x this fight (${f(cd.you, 1)}/min) vs the field's ` +
         `${cd.fieldCasts.toFixed(1)}x (${f(cd.field, 1)}/min) -- ~${cd.pct}% of your ${throughputWord()}. Use it on cooldown ` +
-        `(or line it up with your burst); it's a button you're skipping, not gear.`, "measured", KIND.COOLDOWN));
+        `(or line it up with your burst); it's a button you're skipping, not gear.`, "measured", KIND.COOLDOWN), `cd:${cd.name}`));
     }
   }
   for (const cd of ((rot && rot.cdUsage) || [])) {
     if (cd.pct && cd.pct >= 1 && !seenCd.has(cd.name)) {
       seenCd.add(cd.name);
-      out.push(finding(DIM.ROTATION, DPS(cd.pct),
+      out.push(withKey(finding(DIM.ROTATION, DPS(cd.pct),
         `COOLDOWN: you cast ${wowheadSpell(cd.id, cd.name)} ${cd.youPerFight.toFixed(0)}x/kill vs the field's ` +
         `${cd.fieldPerFight.toFixed(0)}x -- ~${cd.pct}% of your ${throughputWord()}. Use it on cooldown; it's a button you're ` +
-        `skipping, not gear.`, "measured", KIND.COOLDOWN));
+        `skipping, not gear.`, "measured", KIND.COOLDOWN), `cd:${cd.name}`));
     }
   }
   return out;
@@ -1330,11 +1338,11 @@ function buffCdLevers(rot) {
   const out = [];
   for (const b of ((rot && rot.buffCds) || [])) {
     if (b.pct && b.pct >= 1) {
-      out.push(finding(DIM.ROTATION, DPS(b.pct),
+      out.push(withKey(finding(DIM.ROTATION, DPS(b.pct),
         `BUFF COOLDOWN: you cast ${wowheadSpell(b.id, b.name)} ${b.youPerFight.toFixed(0)}x/kill vs the field's ` +
         `${b.fieldPerFight.toFixed(0)}x -- it buffs you, and your ${throughputWord()} rises ~${Math.round(b.uplift * 100)}% in the window after each cast, ` +
         `so missing it costs ~${b.pct}% of your ${throughputWord()}. Use it on cooldown (line it up with your burst); ` +
-        `it's a buff you're skipping, not gear.`, "measured"));
+        `it's a buff you're skipping, not gear.`, "measured"), `buffcd:${b.name}`));
     }
   }
   return out;
@@ -1346,10 +1354,10 @@ function petLever(rot) {
   const out = [];
   if (rot && rot.petGap) {
     const g = rot.petGap;
-    out.push(finding(DIM.ROTATION, DPS(g.pct),
+    out.push(withKey(finding(DIM.ROTATION, DPS(g.pct),
       `PET ${throughputWord().toUpperCase()}: your pets do ${g.you}% of your ${throughputWord()} vs the field's ${g.field}% -- ~${g.pct}% behind. ` +
       `Use your pet cooldowns more: summon it on cooldown, keep it active, and line up its burst cooldowns ` +
-      `with your damage windows. It's a major damage source you're under-using, not gear.`, "measured"));
+      `with your damage windows. It's a major damage source you're under-using, not gear.`, "measured"), "pet"));
   }
   return out;
 }
@@ -1365,10 +1373,10 @@ function dotLevers(rot) {
     // than hardcast (Rip, Moonfire), so "refresh it / you have the buttons" is wrong for
     // those. Phrase the FIX to fit both -- keep its uptime up; it drops when you clip it,
     // let it lapse in movement, or slow the casts that apply it -- the gain is the same.
-    out.push(finding(DIM.ROTATION, DPS(d.pct),
+    out.push(withKey(finding(DIM.ROTATION, DPS(d.pct),
       `DOT UPTIME: your ${wowheadSpell(d.guid, d.name)} is up ${d.you}% on the boss vs the field's ${d.field}% ` +
       `-- ~${d.pct}% of your ${throughputWord()}. Keep its uptime up: refresh it before it falls off (or, if it's ` +
-      `auto-applied by your other casts/crits, keep those flowing), and don't let it lapse in movement -- that uptime is ~free ${throughputWord()}.`, "measured"));
+      `auto-applied by your other casts/crits, keep those flowing), and don't let it lapse in movement -- that uptime is ~free ${throughputWord()}.`, "measured"), `dot:${d.guid}`));
   }
   return out;
 }
@@ -1397,11 +1405,11 @@ function empowermentLever(rot, link) {
     const count = (emp.youEmpCount != null && emp.youEmpN)
       ? ` (you land ${emp.youEmpCount}/${emp.youEmpN}; the field lands ~${Math.round(emp.fieldEmp * emp.youEmpN)}/${emp.youEmpN} of the same casts)`
       : "";
-    out.push(finding(DIM.ROTATION, DPS(emp.pct),
+    out.push(withKey(finding(DIM.ROTATION, DPS(emp.pct),
       `EMPOWERMENT: ${Math.round(emp.youEmp * 100)}% of your ${link(emp.name)} casts land in its high-damage window ` +
       `vs the field's ${Math.round(emp.fieldEmp * 100)}%${count} -- your weak casts hit for roughly half. ` +
       `Line ${link(emp.name)} up with its empower window (its combo/buff/proc, or the boss's damage-taken window) every time.`,
-      "measured", KIND.EMPOWERMENT));
+      "measured", KIND.EMPOWERMENT), `emp:${emp.name}`));
   }
   return out;
 }
@@ -1481,4 +1489,62 @@ export function rotationLevers(rot) {
     ...cdAlignLever(rot),
     ...weakWindowLever(rot),
   ];
+}
+
+// CROSS-BOSS RECURRENCE. The tool's job is to teach you to play better across ALL your
+// raiding, not to grade one kill. So we analyze your rotation on your benchmark boss AND
+// up to a couple of OTHER recent bosses (each vs ITS OWN field -- cast rates aren't
+// comparable across different fights, so we never average them; we compare LEVERS), then:
+//   - a keyed lever that fires on the benchmark AND another boss is a CONSISTENT habit:
+//     we annotate it so the player knows fixing it lifts every fight, not just this kill.
+//   - a keyed lever that recurs on the OTHER bosses but NOT the benchmark is a habit the
+//     benchmark kill happened to dodge: we surface it as an INFO note (impact 0) so it
+//     NEVER disturbs the gap reconciliation (which is sized on the benchmark kill alone),
+//     yet the player still sees the habit.
+// `mainLevers` = rotationLevers(benchmark findings); `otherBosses` = [{ name, levers }]
+// for each extra boss. Pure -> unit-testable; fail-soft callers pass only the bosses that
+// loaded. Returns { levers, infos }: annotated main levers + the cross-boss-only INFO notes.
+export function mergeRotationRecurrence(mainLevers, otherBosses = []) {
+  const main = mainLevers || [];
+  const others = (otherBosses || []).filter((o) => o && o.levers && o.levers.length);
+  const totalBosses = 1 + others.length;
+  // key -> set of bosses it fired on (the benchmark counts as "__bench__").
+  const firedOn = new Map();
+  const mark = (key, boss) => {
+    if (!key) return;
+    if (!firedOn.has(key)) firedOn.set(key, new Set());
+    firedOn.get(key).add(boss);
+  };
+  for (const fnd of main) mark(fnd.recurKey, "__bench__");
+  for (const o of others) for (const fnd of o.levers) mark(fnd.recurKey, o.name);
+
+  // Annotate the benchmark levers that ALSO fire on >=1 other boss (a confirmed habit).
+  const levers = main.map((fnd) => {
+    if (!fnd.recurKey) return fnd;
+    const on = firedOn.get(fnd.recurKey);
+    const count = on ? on.size : 1;
+    if (count < 2) return fnd;   // only the benchmark kill -> no recurrence claim
+    return { ...fnd, text: fnd.text +
+      ` You do this on ${count} of your last ${totalBosses} bosses -- a consistent habit, so fixing it lifts every fight, not just this kill.` };
+  });
+
+  // INFO notes for keyed habits that recur on the OTHER bosses (>=2 of them) but never
+  // showed on the benchmark kill. One per ability is fight-specific noise; >=2 is a habit.
+  const mainKeys = new Set(main.map((fnd) => fnd.recurKey).filter(Boolean));
+  const infos = [];
+  const emitted = new Set();
+  for (const o of others) {
+    for (const fnd of o.levers) {
+      const key = fnd.recurKey;
+      if (!key || mainKeys.has(key) || emitted.has(key)) continue;
+      const on = firedOn.get(key);
+      const bosses = on ? [...on].filter((b) => b !== "__bench__") : [];
+      if (bosses.length < 2) continue;
+      emitted.add(key);
+      infos.push(finding(DIM.ROTATION, INFO,
+        `ROTATION HABIT (other fights): you also do this on ${bosses.join(" & ")} -- ${fnd.text} ` +
+        `This isn't in the % list above (it didn't show on the kill we sized your gap on), but it's a recurring habit worth fixing across your raid.`));
+    }
+  }
+  return { levers, infos };
 }
