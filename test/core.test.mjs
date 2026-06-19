@@ -8,7 +8,8 @@ import { installLocalStorage, mockFetch } from "./helpers.mjs";
 process.env.WCL_CLIENT_ID = "x";
 process.env.WCL_CLIENT_SECRET = "y";
 installLocalStorage();
-const { bestRank, isHealer, metricForSpec, setRunMetric, runMetric, metricUnit, runIsHealer, eventTable, DPS, collectUpTo, detectContext, isAtonement, alwaysAtonement, atonementIfDamaging, FISTWEAVE_DAMAGE_SHARE, ordinal } = await import("../docs/core.js");
+const { bestRank, isHealer, metricForSpec, setRunMetric, runMetric, metricUnit, runIsHealer, eventTable, DPS, collectUpTo, detectContext, isAtonement, alwaysAtonement, atonementIfDamaging, FISTWEAVE_DAMAGE_SHARE, ordinal, collectPeers } = await import("../docs/core.js");
+const { clearGqlCache } = await import("../docs/wcl.js");
 
 test("ordinal: correct English suffix (no more '62th'/'91th' percentile)", () => {
   // The bug this guards: prescribe printed `${p}th` blindly -> "62th percentile".
@@ -209,4 +210,34 @@ test("bestRank: specName restricts to that spec's kills; graceful when spec data
   assert.equal(bestRank(ranks, "Unholy").report.code, "U1", "Unholy filter skips the more-recent Frost kills");
   const noSpec = ranks.map(({ spec, ...r }) => r);
   assert.equal(bestRank(noSpec, "Unholy").report.code, "F2", "no spec data -> unfiltered (graceful)");
+});
+
+test("collectPeers: an out-of-band ranking on one boss doesn't block the same player's in-band ranking on another", async () => {
+  // The bug: a player was added to the dedupe `seen` set BEFORE the ilvl-band filter, so an
+  // out-of-band kill on encounter 1 marked them seen and skipped their in-band kill on
+  // encounter 2 -- thinning the peer sample. Fix: filter by ilvl, THEN dedupe.
+  process.env.WCL_ALLOW_FETCH = "1";
+  clearGqlCache();
+  globalThis.fetch = mockFetch([
+    ["oauth/token", { json: { access_token: "t", expires_in: 3600 } }],
+    ["/api/v2/", (u, opts) => {
+      const q = JSON.parse(opts.body).query || "";
+      const eid = (q.match(/encounter\(id:(\d+)\)/) || [])[1];
+      // "Dup" is OUT of band on enc 1 (ilvl 500 vs target 480) but IN band on enc 2 (481).
+      // "InbandOnly" is in band on enc 1 (sanity: a normal in-band peer is collected).
+      const rankings = eid === "1"
+        ? [{ name: "Dup", server: { name: "S" }, bracketData: 500 },
+           { name: "InbandOnly", server: { name: "S" }, bracketData: 480 }]
+        : [{ name: "Dup", server: { name: "S" }, bracketData: 481 }];
+      return { json: { data: { worldData: { encounter: { characterRankings: { rankings } } } } } };
+    }],
+  ]);
+  const peers = await collectPeers({
+    encounters: [1, 2], difficulty: 5, className: "Monk", specName: "Brewmaster",
+    limit: 10, pages: 1, ilvl: 480, window: 3, dedupe: true,
+  });
+  const names = peers.map((p) => p.name);
+  assert.ok(names.includes("Dup"), "in-band kill on enc 2 is collected despite the out-of-band enc-1 kill");
+  assert.ok(names.includes("InbandOnly"), "the normal in-band peer is collected");
+  assert.equal(names.filter((n) => n === "Dup").length, 1, "deduped to one entry, not duplicated");
 });
