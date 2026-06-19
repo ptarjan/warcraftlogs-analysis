@@ -1469,8 +1469,17 @@ function weakWindowLever(rot) {
   const pct = Math.max(1, Math.round(w.lostFrac * 100));
   const fromP = Math.round(w.from * 100), toP = Math.round(w.to * 100);
   const k = (n) => `${Math.round(n / 1000)}k`;
+  // NAME the phase. The curve is bucketed by fight TIME, so a window near 0% is your
+  // OPENER and one near 100% is the EXECUTE/finish -- telling the player WHERE to look (and
+  // the most likely cause there) turns a "20-40% stretch" riddle into an actionable fix.
+  const phase = toP <= 33 ? "your opener" : fromP >= 66 ? "the fight's final stretch" : "the middle of the fight";
+  const hint = toP <= 33
+    ? "ramp up faster -- pre-pull your opener and get your cooldowns rolling from the first GCD"
+    : fromP >= 66
+    ? "don't coast to the finish -- you may be dumping resources/cooldowns too early or repositioning for the kill; keep pressing through the execute"
+    : "find what stops you there (movement, a mechanic you disengage for, or a cooldown you're holding) and keep your uptime up";
   return [finding(DIM.ROTATION, DPS(pct),
-    `DAMAGE TIMELINE: in the ${fromP}-${toP}% stretch your ${throughputWord()} falls to ~${k(w.youDps)} vs your own ~${k(w.yourTypical)} the rest of the fight -- not a shared intermission (the field keeps dealing ~${k(w.fieldDps)}). Holding pace there is ~${pct}% of your total: find what stops you (movement, a mechanic you disengage for, a cooldown you wait on) and keep your uptime up.`,
+    `DAMAGE TIMELINE: your ${throughputWord()} craters during ${phase} (${fromP}-${toP}% of the fight) -- ~${k(w.youDps)} vs your own ~${k(w.yourTypical)} across the rest of it, and it's not a shared break (the field holds ~${k(w.fieldDps)} there). Closing that one window is ~${pct}% of your total: ${hint}.`,
     "measured", KIND.WEAK_WINDOW)];
 }
 
@@ -1528,11 +1537,24 @@ export function mergeRotationRecurrence(mainLevers, otherBosses = []) {
     const count = on ? on.size : 1;
     if (count < 2) return fnd;   // only the benchmark kill -> no recurrence claim
     return { ...fnd, text: fnd.text +
-      ` You do this on ${count} of your last ${totalBosses} bosses -- a consistent habit, so fixing it lifts every fight, not just this kill.` };
+      ` You do this on ${count === totalBosses ? `all ${count} recent bosses I checked` : `${count} of the ${totalBosses} recent bosses I checked`} -- a consistent habit, so fixing it lifts every fight, not just this kill.` };
   });
+
+  // The lever KINDS that recur across >=2 of the analyzed bosses (benchmark or not). A
+  // benchmark-based "you do X well" strength (PRIORITY/COOLDOWNS/DOTS) is a CONTRADICTION
+  // when the same kind recurs elsewhere -- prescribe uses this to suppress the false praise
+  // (the benchmark can be your BEST-played boss). Prefix = the part before ":" (or the whole
+  // key for singletons like "pet").
+  const recurringKinds = new Set();
+  for (const [key, on] of firedOn) {
+    if (on.size < 2) continue;
+    recurringKinds.add(key.includes(":") ? key.slice(0, key.indexOf(":")) : key);
+  }
 
   // INFO notes for keyed habits that recur on the OTHER bosses (>=2 of them) but never
   // showed on the benchmark kill. One per ability is fight-specific noise; >=2 is a habit.
+  // The KEY insight to convey: we sized your gap on a kill where this DIDN'T show (often
+  // your best-played boss), so the habit is real but lives off that fight -- not a footnote.
   const mainKeys = new Set(main.map((fnd) => fnd.recurKey).filter(Boolean));
   const infos = [];
   const emitted = new Set();
@@ -1545,9 +1567,9 @@ export function mergeRotationRecurrence(mainLevers, otherBosses = []) {
       if (bosses.length < 2) continue;
       emitted.add(key);
       infos.push(finding(DIM.ROTATION, INFO,
-        `ROTATION HABIT (other fights): you also do this on ${bosses.join(" & ")} -- ${fnd.text} ` +
-        `This isn't in the % list above (it didn't show on the kill we sized your gap on), but it's a recurring habit worth fixing across your raid.`));
+        `HABIT ACROSS FIGHTS: this didn't show on the kill we sized your gap on (so it's not in the % list above), ` +
+        `but on ${bosses.join(" and ")} the same slip recurs -- ${fnd.text} Worth fixing raid-wide.`));
     }
   }
-  return { levers, infos };
+  return { levers, infos, recurringKinds };
 }

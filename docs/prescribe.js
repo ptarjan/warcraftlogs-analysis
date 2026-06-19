@@ -17,6 +17,7 @@ import { rotationFindings, rotationLevers, mergeRotationRecurrence, castable } f
 import { talentFindings, talentLevers } from "./talents.js";
 import { topParseFindings, topParseLevers, RAID_DAMAGE } from "./topparse.js";
 import { healingLevers } from "./healing.js";
+import { cacheOnly } from "./wcl.js";
 
 const SLOT_NAME = ENCHANTABLE_SLOTS;
 
@@ -688,16 +689,23 @@ export function strengths(d) {
   if (execd && execd.activePct != null && execd.activePct >= 98) {
     out.push(`UPTIME: ~${P(execd.activePct)} active -- near-perfect GCD uptime, you're barely idling.`);
   }
-  // Priority: you press the field's buttons (no under-used ability).
-  if (!heal && peers && rot.usage && (rot.usage.under || []).length === 0) {
+  // A benchmark-kill "you do X well" claim is a CONTRADICTION (and erodes trust) when the
+  // SAME slip recurs on your OTHER recent bosses -- the benchmark can be your best-played
+  // fight. recurKinds (cross-boss) gates the praise so we never say "you skip nothing" next
+  // to a HABIT-ACROSS-FIGHTS note that you skip exactly that. (Darckense: ✓ PRIORITY on the
+  // one kill where he pressed his rotation, while 2/3 of his bosses spam Death Strike.)
+  const recurs = (kind) => !!(d.recurKinds && d.recurKinds.has(kind));
+  // Priority: you press the field's buttons (no under-used ability) -- here AND elsewhere.
+  if (!heal && peers && rot.usage && (rot.usage.under || []).length === 0 && !recurs("press")) {
     out.push(`PRIORITY: you press the field's priority abilities -- nothing the field casts that you're skipping.`);
   }
-  // Cooldowns: none skipped vs the field.
-  if (peers && !(rot.cooldowns || []).length && !(rot.cdUsage || []).length && !(rot.buffCds || []).length) {
+  // Cooldowns: none skipped vs the field (on this kill or your other recent ones).
+  if (peers && !(rot.cooldowns || []).length && !(rot.cdUsage || []).length && !(rot.buffCds || []).length
+      && !recurs("cd") && !recurs("buffcd")) {
     out.push(`COOLDOWNS: you use your ${W} cooldowns on cooldown -- nothing the field gets that you skip.`);
   }
   // DoTs: maintained at field-level uptime (only when you actually run DoTs).
-  if (!heal && rot && rot.dotCount > 0 && (rot.dotGaps || []).length === 0) {
+  if (!heal && rot && rot.dotCount > 0 && (rot.dotGaps || []).length === 0 && !recurs("dot")) {
     out.push(`DOTS: your damage-over-time effects are kept up at field-level uptime -- no clipping.`);
   }
   // Targeting: you funnel/cleave the adds about as much as the top parses.
@@ -790,7 +798,17 @@ export function residualText(kind, r, d, rot, rx) {
     // field). If yours trails -> point at it; if it matches, say so -- the gap is per-cast
     // damage, not a button. Only cite castable under-pressed abilities (a respec lever
     // otherwise). Never hand-wave "sequencing".
-    const under = ((rot && rot.usage && rot.usage.under) || []).filter((a) => castable(a.name, rot && rot.talent));
+    // Cite ONLY under-pressed abilities that AREN'T already their own concrete line item.
+    // An ability promoted to a sized "press X more" lever (recurKey `press:<name>`) is part
+    // of the EXPLAINED gap, not the residual -- re-citing it here read as double-counting
+    // ("press Raging Blow more" as item #5, then "your playstyle gap is pressing Raging Blow
+    // less"). Excluding them leaves only the genuinely-unlisted ones; if none remain, the
+    // cite falls through to "the measurable gaps are listed above".
+    const listedPress = new Set((rx || [])
+      .filter((x) => typeof x.recurKey === "string" && x.recurKey.startsWith("press:"))
+      .map((x) => x.recurKey.slice(6)));
+    const under = ((rot && rot.usage && rot.usage.under) || [])
+      .filter((a) => castable(a.name, rot && rot.talent) && !listedPress.has(a.name));
     const pr = rot && rot.proc;
     const ep = (n) => `${Math.round(n * 100)}%`;
     // Only cite empowered shares when the ability HAS a meaningful empowered version in
@@ -883,7 +901,14 @@ function renderHeader(log, d, you, field, peerGap, topGap) {
   const gearBossLink = wclReport(d.code, d.fight, d.gearBoss.encounter.name);
   if (d.medP != null) log(`You parse ${ordinal(d.medP)} percentile on ${d.difficultyName} (median of the ${d.nBosses} current-tier ${d.difficultyName} boss${d.nBosses === 1 ? "" : "es"} you've killed; best ${ordinal(d.bestP)} on ${bestBoss}).`);
   if (d.skipped && d.skipped.length) {
-    log(`NOTE: partial list -- couldn't load ${d.skipped.join(", ")} (likely the WCL rate limit). This isn't the full picture; re-run when the budget resets for the rest.`);
+    // Name the REAL cause. On a cache-only CLI run an uncached section throws CacheMiss
+    // (we didn't fetch) -- calling that "the WCL rate limit" sent me chasing a budget
+    // problem that didn't exist. Only when we ARE fetching (the browser, or --allow-fetch)
+    // is a skip actually a throttle / private log. cacheOnly() distinguishes them.
+    const why = cacheOnly()
+      ? "not in the local cache and this run didn't fetch (cache-only) -- re-run with --allow-fetch to pull it"
+      : "likely the WCL rate limit, or a private log";
+    log(`NOTE: partial list -- couldn't load ${d.skipped.join(", ")} (${why}). This isn't the full picture; re-run for the rest.`);
   }
   // Staleness: gear/enchant/gem/consumable findings are read off your most recent
   // kill. If that's not actually recent, the setup findings may already be fixed.
@@ -1328,5 +1353,6 @@ export async function run(log, name, server, region, className = "Monk", specNam
     difficultyName: DIFFICULTY[difficulty] || `difficulty ${difficulty}`,
     medP, bestP, topParse, nBosses: ranks.length, gearAgeDays, hist, histBoss,
     you, field, execd, rot, tp, gf, my, priority, rx, skipped, aboveField,
+    recurKinds: rotMerged.recurringKinds,
   });
 }

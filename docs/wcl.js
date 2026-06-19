@@ -398,7 +398,7 @@ const diskEnabled = () => IS_NODE && typeof process !== "undefined" && process.e
 // an explicit `--allow-fetch` fetches. WCL_CACHE_ONLY=1 forces read-only even when
 // fetching is allowed (a hard override). The BROWSER is unaffected (not IS_NODE): the
 // user spends their OWN token there and the app must fetch.
-const cacheOnly = () => IS_NODE && typeof process !== "undefined" &&
+export const cacheOnly = () => IS_NODE && typeof process !== "undefined" &&
   (process.env.WCL_CACHE_ONLY === "1" || process.env.WCL_ALLOW_FETCH !== "1");
 export class CacheMiss extends Error {
   constructor(q) {

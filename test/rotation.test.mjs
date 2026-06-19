@@ -263,10 +263,17 @@ test("weakWindowLever: surfaces the field-validated weak stretch as a measured, 
   const lev = rotationLevers(rot).find((f) => /DAMAGE TIMELINE/.test(f.text));
   assert.ok(lev, "fires when there's a weak window");
   assert.equal(lev.basis, "measured");
-  assert.match(lev.text, /20-40% stretch/);
-  assert.match(lev.text, /falls to ~12k vs your own ~60k/);
-  assert.match(lev.text, /field keeps dealing ~55k/);
+  assert.match(lev.text, /the middle of the fight \(20-40% of the fight/);   // 20-40% time -> mid-fight, named
+  assert.match(lev.text, /~12k vs your own ~60k/);
+  assert.match(lev.text, /field holds ~55k/);
   assert.equal(lev.impact, 8);                           // sized from lostFrac
+  // Phase NAMING: a window at the START reads as the opener; one at the END as the execute.
+  const opener = rotationLevers({ weakWindow: { from: 0, to: 0.2, youDps: 1e4, yourTypical: 6e4, fieldDps: 5e4, lostFrac: 0.07 }, usage: { under: [], over: [] }, abilityIds: {} }).find((f) => /DAMAGE TIMELINE/.test(f.text));
+  assert.match(opener.text, /your opener/);
+  assert.match(opener.text, /ramp up faster/);
+  const execute = rotationLevers({ weakWindow: { from: 0.9, to: 1.0, youDps: 1e4, yourTypical: 6e4, fieldDps: 5e4, lostFrac: 0.05 }, usage: { under: [], over: [] }, abilityIds: {} }).find((f) => /DAMAGE TIMELINE/.test(f.text));
+  assert.match(execute.text, /the fight's final stretch/);
+  assert.match(execute.text, /coast to the finish/);
   // No weak window -> silent.
   assert.equal(rotationLevers({ usage: { under: [], over: [] }, abilityIds: {} }).filter((f) => /DAMAGE TIMELINE/.test(f.text)).length, 0);
 });
@@ -727,7 +734,7 @@ test("recurrence: a benchmark lever that ALSO fires on another boss is annotated
   ];
   const { levers, infos } = mergeRotationRecurrence(main, others);
   assert.equal(levers.length, 1, "main levers pass through (count preserved)");
-  assert.match(levers[0].text, /2 of your last 3 bosses/, "fired on bench + 1 other of 2 -> 2 of 3");
+  assert.match(levers[0].text, /\b2 of the 3 recent bosses I checked/, "fired on bench + 1 other of 2 -> 2 of 3");
   assert.equal(levers[0].impact, 5, "annotation does NOT change impact (reconcile owns the gap)");
   assert.equal(infos.length, 0, "the BossC-only lever fired once -> not a recurring INFO");
 });
@@ -745,11 +752,14 @@ test("recurrence: a habit on >=2 OTHER bosses but not the benchmark surfaces as 
     { name: "BossB", levers: [lever("press:Bolt", "ROTATION: press Bolt more.")] },
     { name: "BossC", levers: [lever("press:Bolt", "ROTATION: press Bolt more.")] },
   ];
-  const { levers, infos } = mergeRotationRecurrence(main, others);
+  const { levers, infos, recurringKinds } = mergeRotationRecurrence(main, others);
   assert.equal(levers.length, 1, "the benchmark list is unchanged in size");
   assert.equal(infos.length, 1, "Bolt recurs on 2 other bosses, absent on bench -> one INFO note");
   assert.equal(infos[0].impact, 0, "INFO note carries NO impact (never disturbs gap reconciliation)");
-  assert.match(infos[0].text, /BossB & BossC/, "names the bosses it recurs on");
+  assert.match(infos[0].text, /BossB and BossC/, "names the bosses it recurs on");
+  // The recurring KIND is reported so prescribe can suppress a contradicting "✓ PRIORITY".
+  assert.ok(recurringKinds.has("press"), "press recurs across 2 bosses -> kind reported");
+  assert.ok(!recurringKinds.has("cd"), "cd fired only on the benchmark -> not a cross-boss recurring kind");
 });
 
 test("recurrence: a lever on exactly ONE other boss is fight-specific noise -> no INFO", () => {
