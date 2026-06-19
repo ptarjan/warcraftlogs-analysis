@@ -1406,22 +1406,28 @@ function empowermentLever(rot, link) {
   return out;
 }
 
-// OPENER: a cooldown the field reliably opens with that you delay or skip. A NAMED
-// rotation DIAGNOSTIC, not a sized lever -- a single opening window is hard to price in
-// DPS and a sim won't value it, so it carries INFO (impact 0) and never inflates the
-// list. rotationFindings already gated it to BEHIND-the-field, hero-matched, castable
-// players, so a good player who opens differently-but-fine never reaches here. The fix
-// is concrete: front-load that button so your first burst lines up with the field's.
+// OPENER: your opening SEQUENCE diverges from the field's. A NAMED rotation DIAGNOSTIC,
+// not a sized lever -- the opening window is hard to price in DPS and a sim won't value it,
+// so it carries INFO (impact 0) and never inflates the list. The TRIGGER is the field's
+// consensus FIRST cast (their opening cooldown) that you delay/skip -- the highest-confidence
+// divergence -- but we SHOW both full opening sequences (like the rotation card) so it's a
+// real sequence comparison, not one spell. rotationFindings already gated it to BEHIND-the-
+// field, hero-matched, castable players, so a good player who opens fine never reaches here.
 function openerLever(rot, link) {
   const og = rot && rot.openerGap;
   if (!og) return [];
   const share = Math.round(og.peerShare * 100);
+  const fo = (rot.fieldOpener || []).slice(0, 7);
+  const yo = (rot.opener || []).slice(0, 7);
   const lead = og.omitted
-    ? `the field opens with ${link(og.ability)} (${share}% of peers) but it isn't in your opener at all`
-    : `the field opens with ${link(og.ability)} (${share}% of peers) but you delay it ~${og.delay} global${og.delay === 1 ? "" : "s"} (you cast it ${og.youPos + 1}th)`;
+    ? `you never open with ${link(og.ability)} -- the field leads with it (${share}% of peers)`
+    : `you push ${link(og.ability)} back ${og.delay} global${og.delay === 1 ? "" : "s"} -- the field leads with it (${share}% of peers)`;
+  const seqs = (fo.length && yo.length)
+    ? ` Field opens: ${fo.join(" > ")}. You open: ${yo.join(" > ")}.`
+    : "";
   return [finding(DIM.ROTATION, INFO,
-    `OPENER: ${lead}. Open with ${link(og.ability)} -- front-loading it lines your first burst window up with the field's. ` +
-    `(Pull up a rank-1 opener of this fight and diff the first ~10s against yours.)`, "measured", KIND.OPENER)];
+    `OPENER: ${lead}.${seqs} Match the field's opening sequence -- it sets up your whole first burst window.`,
+    "measured", KIND.OPENER)];
 }
 
 // CD ALIGNMENT: you fire your major cooldowns scattered while the field stacks them into

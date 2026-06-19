@@ -637,17 +637,23 @@ test("openerDivergence: silent when you open about as early, on a split field, o
   assert.equal(openerDivergence([], peers), null);
 });
 
-test("openerLever (via rotationLevers): renders an INFO diagnostic from openerGap, none without", () => {
+test("openerLever (via rotationLevers): shows BOTH opening sequences + the lead divergence", () => {
   const rot = { abilityIds: { Niuzao: 132578 },
+    fieldOpener: ["Niuzao", "Breath of Fire", "Keg Smash"],
+    opener: ["Blackout Kick", "Tiger Palm", "Niuzao", "Breath of Fire"],
     openerGap: { ability: "Niuzao", peerShare: 0.8, peerPos: 0, youPos: 2, omitted: false, delay: 2 } };
   const lev = rotationLevers(rot).filter((l) => /^OPENER:/.test(l.text));
   assert.equal(lev.length, 1);
   assert.equal(lev[0].impact, 0, "diagnostic: no DPS claim");
   assert.equal(lev[0].kind, "OPENER");
-  assert.match(lev[0].text, /delay it ~2 globals/);
-  // Omitted variant reads "isn't in your opener at all".
-  const omit = rotationLevers({ abilityIds: {}, openerGap: { ability: "Niuzao", peerShare: 0.8, peerPos: 0, youPos: null, omitted: true, delay: Infinity } });
-  assert.match(omit.find((l) => /^OPENER:/.test(l.text)).text, /isn't in your opener at all/);
+  assert.match(lev[0].text, /push .*Niuzao.* back 2 globals/);
+  // The full sequence comparison is shown (not just one spell).
+  assert.match(lev[0].text, /Field opens: Niuzao > Breath of Fire > Keg Smash/);
+  assert.match(lev[0].text, /You open: Blackout Kick > Tiger Palm > Niuzao > Breath of Fire/);
+  // Omitted variant reads "you never open with".
+  const omit = rotationLevers({ abilityIds: {}, fieldOpener: ["Niuzao"], opener: ["Tiger Palm"],
+    openerGap: { ability: "Niuzao", peerShare: 0.8, peerPos: 0, youPos: null, omitted: true, delay: Infinity } });
+  assert.match(omit.find((l) => /^OPENER:/.test(l.text)).text, /never open with .*Niuzao/);
   // No openerGap (the gates suppressed it) -> no opener line.
   assert.equal(rotationLevers({ abilityIds: {} }).filter((l) => /^OPENER:/.test(l.text)).length, 0);
 });
