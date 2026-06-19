@@ -5,7 +5,7 @@
 // text Timeline diagnosis can't draw; it points at the window, the Timeline /
 // Rotation cards size the lever. Same compute/render split as every other module.
 import {
-  characterZone, characterEncounter, playerMetrics, ilvlPeers, PEER_SAMPLE,
+  characterZone, characterEncounter, playerMetrics, ilvlPeers, PEER_SAMPLE, BOSS_FANOUT,
   median, collectUpTo, mapLimit, bestRank, dpsOverTime, metricUnit, runIsHealer, isSupport,
   fightWindow, fightEvents, abilityCurvesOverTime, selfBuffIntervals, finding, DIM, DPS, INFO, KIND,
 } from "./core.js";
@@ -107,7 +107,21 @@ export async function graphFindings(name, server, region, className, specName, d
   if (!kills.length) return null;
   const bench = pickBenchmarkKill(kills);
   if (!bench) return null;
-  const { code, fight, boss } = bench;
+  // The prescription lever is sized on the BENCHMARK boss, with the full (deep) dip
+  // diagnosis. The CARD shows every boss (analyzeBoss, deep:false) -- see run().
+  return analyzeBoss(name, server, region, bench.boss, difficulty, className, specName, { deep: true });
+}
+
+// Per-BOSS worker: your representative kill of THIS boss vs the ilvl-matched field band
+// (phase-aligned), plus the dip diagnosis. `deep` gates the EXPENSIVE attribution
+// (per-ability curves + self-buff events) -- ON for the prescription's one benchmark boss,
+// OFF for the per-boss CARD that fans out over every boss (only the cheap cause read, off
+// cached casts, runs there). Returns the per-boss result, a {skip} marker, or null.
+export async function analyzeBoss(name, server, region, encounter, difficulty, className, specName, { deep = false } = {}) {
+  const er = await characterEncounter(name, server, region, encounter.id, difficulty);
+  const best = bestRank(er && er.ranks, specName);
+  if (!best) return null;
+  const code = best.report.code, fight = best.report.fightID;
   const you = await playerMetrics(code, fight, name, specName, className);
   if (!you) return null;
   const yc = await dpsOverTime(code, fight, you.sourceID);
@@ -115,7 +129,7 @@ export async function graphFindings(name, server, region, className, specName, d
 
   // The SAME ilvl-matched field every other comparison uses (shared selection -> the
   // per-peer reportCore reads dedupe with timeline/prescribe; only the graph query is new).
-  const cands = await ilvlPeers(name, server, region, boss, difficulty, className, specName);
+  const cands = await ilvlPeers(name, server, region, encounter, difficulty, className, specName);
   const peers = await collectUpTo(cands, PEER_SAMPLE, 4, async (r) => {
     const m = await playerMetrics(r.report.code, r.report.fightID, r.name, specName, className);
     if (!m) return null;
@@ -123,14 +137,11 @@ export async function graphFindings(name, server, region, className, specName, d
     return cc ? { dps: cc.dps, phases: cc.phases, overall: m.dps } : null;
   });
   const cmp = buildCurveComparison(yc, peers);
-  if (!cmp) return { skip: "fewpeers", boss: boss.name };
+  if (!cmp) return { skip: "fewpeers", boss: encounter.name };
 
-  // DIAGNOSE the dip so the advice is concrete (the user's two questions: am I idle, or
-  // pressing the wrong things?). Re-read YOUR casts on the SAME kill (cached -- the
-  // timeline already fetched them) and compare your cast rate DURING the dip window to
-  // your whole-fight rate. Cast rate collapses -> you go passive there (movement/coast).
-  // Cast rate holds but damage is down -> you keep pressing but your big cooldowns landed
-  // ELSEWHERE (filler in the window) -- a cooldown-alignment problem, not idling.
+  // DIAGNOSE the dip. Cast rate DURING the dip window vs the whole fight (cached casts):
+  // collapses -> you go passive (movement/coast); holds but damage is down -> cooldown/amp
+  // timing. The deep attribution (which ability / which cooldown) only runs when asked.
   const w = cmp.worst;
   if (w && w.deficit >= DIP_FLOOR && !runIsHealer()) {
     try {
@@ -147,7 +158,7 @@ export async function graphFindings(name, server, region, className, specName, d
       // Cast rate normal but damage down -> ATTRIBUTE the drop to a button. Per-ability
       // damage curves: is ONE ability way down (press THAT), or is every ability down ~the
       // same % (a flat amp/cooldown landing earlier -- NOT one button, it's timing)?
-      if (w.cause === "cooldown") {
+      if (deep && w.cause === "cooldown") {
         const curves = await abilityCurvesOverTime(code, fight, you.sourceID);
         const winMean = (d) => { let s2 = 0, n2 = 0; for (let i = 0; i < d.length; i++) { const f = d.length <= 1 ? 0 : i / (d.length - 1); if (f >= (w.fracStart || 0) && f <= (w.fracEnd || 1)) { s2 += d[i]; n2++; } } return n2 ? s2 / n2 : 0; };
         const allMean = (d) => d.reduce((a, b) => a + b, 0) / (d.length || 1);
@@ -194,7 +205,7 @@ export async function graphFindings(name, server, region, className, specName, d
   }
 
   return {
-    boss: boss.name, unit: metricUnit(), isHealer: runIsHealer(),
+    boss: encounter.name, unit: metricUnit(), isHealer: runIsHealer(),
     ...cmp, yourOverall: you.dps, peerOverall: median(peers.map((p) => p.overall)), peers: peers.length,
   };
 }
@@ -397,68 +408,53 @@ function asciiChart(log, d) {
   }
 }
 
+// Render ONE boss's chart + dip line (the card fans this out over every boss). The deep
+// attribution (culprit / named cooldown / cdsCover) only appears on the prescription's
+// benchmark boss; the card is deep:false, so here the dip reads cause-only -- still the
+// where + own-baseline drop + field-holds, just deferring the exact cooldown to the list.
+function renderBoss(log, d, unit) {
+  const g = /** @type {any} */ (d);
+  log("");
+  if (typeof document !== "undefined") log(CHART_PREFIX + JSON.stringify(chartData(g)));
+  else asciiChart(log, g);
+  log(`  ${g.boss} · your kill vs ${g.peers} peers at your item level${g.aligned ? " · aligned by phase" : ""}.`);
+  if (g.isHealer) { log("  HPS tracks incoming raid damage (reactive) — see the Healing card for overhealing/mana."); return; }
+  const w = g.worst;
+  const kk = (n) => `${Math.round((n || 0) / 1000)}k`;
+  if (!(w && w.deficit >= DIP_FLOOR)) { log("  -> You hold your level wherever the field does — no soft spot here."); return; }
+  const where = w.phase ? `Phase ${w.phase}` : w.center < 1 / 3 ? "your opener" : w.center < 2 / 3 ? "the middle" : "the execute";
+  const drop = `${where}: your ${unit} drops to ~${kk(w.youWindow)} vs your own ~${kk(w.youTypical)} the rest of the kill, while the field holds ~${kk(w.fieldWindow)}`;
+  if (w.cause === "idle") log(`  -> ${drop} — your cast rate falls to ${Math.round(100 * (w.cpmRatio || 0))}% of normal, so you go quiet there. Keep pressing through it. (~${w.gainPct}%)`);
+  else if (w.culprit) log(`  -> ${drop} — your ${w.culprit.name} is way down (~${w.culprit.windowK}k vs ~${w.culprit.normalK}k); land it in ${where}. (~${w.gainPct}%)`);
+  else if (w.cooldown && w.cooldown.name) log(`  -> ${drop} — your ${w.cooldown.name} covers only ${w.cooldown.inPct}% of ${where} vs ${w.cooldown.outPct}% elsewhere; shift it. (~${w.gainPct}%)`);
+  else if (w.cdsCover) log(`  -> ${drop} — but your cooldowns cover ${where}, so it's likely target count / a raid cooldown, not a personal lever.`);
+  else log(`  -> ${drop} — you press just as much, so your hits land softer there (a cooldown/amp timing thing). (~${w.gainPct}%)`);
+}
+
 export async function run(log, name, server, region, className = "Monk", specName = "Brewmaster", difficulty = 5) {
   const unit = metricUnit();
   log("");
-  log(`=== ${unit} over the fight: ${name} vs the ilvl-matched field ===`);
-  let d;
-  try { d = await graphFindings(name, server, region, className, specName, difficulty); }
-  catch (e) { log(`  (couldn't build the curve: ${e.message || e})`); return; }
-  if (!d) { log("  (no ranked kills with a peer field to chart.)"); return; }
-  if (d.skip === "support") { log("  Support spec -- personal damage isn't the lever; see the Support buffs card for your ally value."); return; }
-  if (d.skip === "fewpeers") { log(`  ${d.boss}: too few ilvl-matched peers loaded to draw a field band.`); return; }
-
-  // Past the skip/null guards d is the full comparison object; cast once so the rich
-  // fields (band %, worst, bounds) read cleanly (the union still carries the skip shapes).
-  const g = /** @type {any} */ (d);
-  if (typeof document !== "undefined") log(CHART_PREFIX + JSON.stringify(chartData(g)));
-  else asciiChart(log, g);
-
-  log("");
-  log(`  ${g.boss} · your median kill vs ${g.peers} peers at your item level${g.aligned ? " · aligned by phase" : ""}.`);
-
-  // Healers: HPS shape tracks INCOMING raid damage, not a rotation hole -- so don't
-  // tell them to "push more HPS here". Show the curve, defer the real levers to Healing.
-  if (g.isHealer) {
-    log("  Your HPS curve tracks when the raid took damage (it's reactive), so the shape isn't a rotation hole. See the Healing card for what you control: overhealing and mana.");
-    return;
+  log(`=== ${unit} over the fight: ${name} vs the ilvl-matched field (one chart per boss) ===`);
+  if (isSupport(specName)) { log("  Support spec -- personal damage isn't the lever; see the Support buffs card for your ally value."); return; }
+  let ranks;
+  try {
+    const c = await characterZone(name, server, region, difficulty);
+    ranks = (c.zoneRankings.rankings || []).filter((r) => (r.totalKills || 0) > 0 && r.rankPercent != null);
+  } catch (e) { log(`  (couldn't load your kills: ${e.message || e})`); return; }
+  if (!ranks.length) { log("  (no ranked kills with a peer field to chart.)"); return; }
+  // One chart per boss you've killed -- fan the bosses out (each an independent peer-fetch
+  // wave; analyzeBoss is deep:false so the card stays cheap -- only the cause read per boss,
+  // off cached casts). The deep cooldown diagnosis lives in the prescription (benchmark boss).
+  const results = await mapLimit(ranks, BOSS_FANOUT, async (r) => {
+    try { return await analyzeBoss(name, server, region, r.encounter, difficulty, className, specName, { deep: false }); }
+    catch (e) { return { boss: r.encounter.name, err: e.message || String(e) }; }
+  });
+  let shown = 0;
+  for (const d of results) {
+    if (!d) continue;
+    if (d.err) { log(""); log(`  ${d.boss}: (couldn't chart — ${d.err})`); continue; }
+    if (d.skip === "fewpeers") { log(""); log(`  ${d.boss}: too few ilvl-matched peers loaded to draw a field band.`); continue; }
+    renderBoss(log, d, unit); shown++;
   }
-
-  // One human sentence on the shape, then the soft spot + what to do about it.
-  if ((g.bandBelow || 0) >= 0.4) log("  You run under the field most of the kill — the gap is spread across the fight, not one spot.");
-  else if ((g.bandAbove || 0) >= 0.5) log("  You're ahead of the field most of the kill. One soft spot:");
-  else log("  You ride with the field most of the kill. Your soft spot:");
-
-  // The dip is OWN-BASELINE (you vs your OWN typical) -- gainable and consistent even when
-  // you're ahead of the field. The field band above is just the visual context.
-  const w = g.worst;
-  const kk = (n) => `${Math.round((n || 0) / 1000)}k`;
-  if (w && w.deficit >= DIP_FLOOR) {
-    const where = w.phase ? `Phase ${w.phase}` : w.center < 1 / 3 ? "your opener" : w.center < 2 / 3 ? "the middle" : "the execute";
-    // your-own-typical drop + the measured "others hold here" (so it's a real, gainable hole).
-    const drop = `${where}: your ${unit} drops to ~${kk(w.youWindow)} vs your own ~${kk(w.youTypical)} the rest of the kill, while the field holds ~${kk(w.fieldWindow)}`;
-    if (w.cause === "idle") {
-      log(`  -> ${drop} — and your cast rate falls to ${Math.round(100 * (w.cpmRatio || 0))}% of normal, so you go quiet here.`);
-      log(`     Keep your rotation going through ${where}'s movement/mechanics instead of coasting. (~${w.gainPct}% ${unit})`);
-    } else if (w.culprit) {
-      log(`  -> ${drop} — you press just as much, but your ${w.culprit.name} is way down (~${w.culprit.windowK}k vs ~${w.culprit.normalK}k normally).`);
-      log(`     Make sure you're landing ${w.culprit.name} in ${where}. (~${w.gainPct}% ${unit})`);
-    } else if (w.cooldown && w.cooldown.name) {
-      log(`  -> ${drop} — and your ${w.cooldown.name} covers only ${w.cooldown.inPct}% of ${where} vs ${w.cooldown.outPct}% elsewhere.`);
-      log(`     Shift ${w.cooldown.name} to cover ${where}. (~${w.gainPct}% ${unit})`);
-    } else if (w.cooldown) {
-      log(`  -> ${drop} — a damage buff of yours is less active here (~${w.cooldown.inPct}% vs ${w.cooldown.outPct}%), but I can't name it from the log.`);
-      log(`     Check that your damage cooldowns line up with ${where} (could also be a proc or raid cooldown).`);
-    } else if (w.cdsCover) {
-      log(`  -> ${drop} — but your cooldowns DO cover ${where}, so it's not timing. Every ability just hits ~${w.uniformPct || 0}% softer.`);
-      log(`     Likely fewer targets (less cleave) or a raid cooldown (e.g. Bloodlust) used earlier — probably not a personal lever.`);
-    } else if (w.cause === "cooldown") {
-      log(`  -> ${drop} — but you press just as much (cast rate normal), so your hits land softer there.`);
-      log(`     A damage cooldown is landing earlier; check that your cooldowns cover ${where}. (~${w.gainPct}% ${unit})`);
-    } else {
-      log(`  -> ${drop}. Keep your uptime and cooldowns lined up through it. (~${w.gainPct}% ${unit})`);
-    }
-  } else {
-    log("  -> No one stretch stands out — you hold your level wherever the field does.");
-  }
+  if (!shown) log("  (no boss had enough ilvl-matched peers to chart.)");
 }
