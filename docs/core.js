@@ -121,7 +121,14 @@ function entry(tableData, name, specName) {
   const entries = tableData.entries || [];
   const lc = String(name || "").toLowerCase();
   let hit = entries.filter((e) => String(e.name || "").toLowerCase() === lc);
-  if (!hit.length) hit = entries.filter((e) => specName && String(e.icon || "").includes(specName));
+  // Name miss (private log / rename / encoding): fall back to the spec icon ONLY when it
+  // identifies exactly ONE actor. With two of the same spec in the raid (two Brewmasters,
+  // two Frost Mages), hit[0] would silently bind every metric -- DPS, gear, sourceID -- to
+  // the wrong player; better to return null and degrade than to show another player's data.
+  if (!hit.length) {
+    const byIcon = entries.filter((e) => specName && String(e.icon || "").includes(specName));
+    hit = byIcon.length === 1 ? byIcon : [];
+  }
   return hit.length ? hit[0] : null;
 }
 
@@ -439,7 +446,8 @@ export async function petDamage(code, fight, ownerSourceId) {
   const r = (await gql(`query { reportData { report(code:"${code}") { ${aliases} } } }`)).reportData.report;
   let total = 0;
   petIds.forEach((id, i) => {
-    total += (((r[`p${i}`] && r[`p${i}`].data.entries) || []).reduce((s, e) => s + (e.total || 0), 0));
+    const node = r[`p${i}`];
+    total += (((node && node.data && node.data.entries) || []).reduce((s, e) => s + (e.total || 0), 0));
   });
   return total;
 }
@@ -658,12 +666,15 @@ export async function collectPeers({
     for (let page = 1; page <= pages; page++) {
       if (cands.length >= limit) break;
       for (const r of await topRankings(eid, difficulty, className, specName, page)) {
+        // Filter by ilvl band BEFORE marking the player seen: bracketData is per-kill, so a
+        // player out-of-band on this encounter may be in-band on another. Marking them seen
+        // here (the old order) skipped that in-band kill and thinned the sample below PEER_SAMPLE.
+        if (ilvl != null && !(r.bracketData && Math.abs(r.bracketData - ilvl) <= window)) continue;
         if (dedupe) {
           const k = `${r.name}|${(r.server || {}).name}`;
           if (seen.has(k)) continue;
           seen.add(k);
         }
-        if (ilvl != null && !(r.bracketData && Math.abs(r.bracketData - ilvl) <= window)) continue;
         cands.push(r);
         if (cands.length >= limit) break;
       }
