@@ -364,8 +364,8 @@ const ABOVE_FIELD_MARGIN = 5;
 export function latencyLever(execd) {
   if (!execd || !(execd.overshootExcess >= LATENCY_MS)) return [];
   return [finding(DIM.EXECUTION, DPS(1, 3),
-    `INPUT LATENCY: your cast fires ~${f(execd.overshootExcess, 0)}ms later than peers after every GCD -- a delay on each global that compounds over a fight. ` +
-    `Make sure your spell-queue window is at its 400ms max (/console SpellQueueWindow 400 -- that's the default and the cap, so never lower it) and cut world latency (closer realm/region, wired connection); then pre-press your next ability so it queues the instant the GCD ends.`)];
+    `INPUT LATENCY: your cast fires ~${f(execd.overshootExcess, 0)}ms later than peers after every GCD -- a delay that compounds over a fight. ` +
+    `Set your spell-queue window to its max (/console SpellQueueWindow 400 -- the default and the cap, never lower it), cut world latency (closer realm, wired connection), and pre-press your next ability so it queues the instant the GCD ends.`)];
 }
 
 /** @param {any} execd @param {any} rot @param {number|null} [peerGapPct] @param {number|null} [activePct] */
@@ -451,8 +451,8 @@ export function executionLevers(execd, rot, peerGapPct = null, activePct = null)
     // (pressExcess ~0), the gap is micro-gaps between GCDs, not big pauses -- say that
     // instead of printing a ~0s/min (or contradictory negative) idle figure.
     const headline = execd.pressExcess >= 0.5
-      ? `PRESS FASTER (every boss): you idle ~${f(execd.pressExcess, 1)}s/min MORE than peers while in range and not moving -- ${cause}${cite} Always queue your next ability so a GCD never sits empty.`
-      : `PRESS FASTER (every boss): your damaging-cast rate trails the field even though your in-range idle matches theirs -- ${cause}${cite} Tighten the gaps between GCDs so each global fires the moment it's ready.`;
+      ? `PRESS FASTER (every boss): you idle ~${f(execd.pressExcess, 1)}s/min MORE than peers while in range and not moving -- ${cause}${cite} Queue your next ability so no GCD sits empty.`
+      : `PRESS FASTER (every boss): your damaging-cast rate trails the field even though your in-range idle matches theirs -- ${cause}${cite} Tighten the gaps so each global fires the moment it's ready.`;
     out.push(finding(DIM.EXECUTION, DPS(pct), headline, "measured", KIND.PRESS_FASTER));
   }
   out.push(...latencyLever(execd));
@@ -468,7 +468,7 @@ export function executionLevers(execd, rot, peerGapPct = null, activePct = null)
     // ("out of melee", "gap-closers to stay on target") -- it's wrong for a ranged
     // healer, whom this lever also fires for.
     out.push(finding(DIM.EXECUTION, DPS(Math.round(Math.max(execd.rangeExcess, 0.1) / 60 * 100)),
-      `MOVEMENT uptime on specific fights: you lose ~${f(execd.rangeExcess, 1)}s/min of casting to moving / being out of range more than peers (intermissions excluded).${where} Pre-position and cut avoidable movement so your GCD keeps rolling through mechanics.`, "measured", KIND.MOVEMENT));
+      `MOVEMENT (specific fights): you lose ~${f(execd.rangeExcess, 1)}s/min of casting to movement / being out of range vs peers (intermissions excluded).${where} Pre-position and cut avoidable movement to keep your GCD rolling.`, "measured", KIND.MOVEMENT));
   }
   return out;
 }
@@ -569,7 +569,7 @@ export async function trinketLevers(field, my) {
   }
   const yours = my.trinkets && my.trinkets.length ? my.trinkets.join(" + ") : "your current trinkets";
   return [finding(DIM.GEAR, DPS(pct),
-    `TRINKETS: the field favors ${parts.join(" and ")} -- you run ${yours}. Trinkets are effect-based (proc/on-use), not a stat swap -- SIM it (Droptimizer) before committing, but a trinket most of your peers run and you don't is a common hidden upgrade.`)];
+    `TRINKETS: the field favors ${parts.join(" and ")} -- you run ${yours}. Trinkets are effect-based, so SIM it (Droptimizer) before committing, but a trinket most peers run and you don't is a common hidden upgrade.`)];
 }
 
 // Your secondary % trails the field but there's no lever to close it -- either
@@ -585,7 +585,7 @@ function statGapLever(gf, my, field, priority) {
     // peers do. Cite it when we have it; it's context (no swap exists to act on).
     const sd = field && field.statDelta;
     const worth = sd ? ` Measured: peers in the top half of ${priority} do ${Math.round(sd.pct)}% more (n=${sd.nHave}/${sd.nNot}).` : "";
-    return [finding(DIM.GEAR, INFO, `${PRI}: yours (${f(my.statPct, 0)}%) is below your peers (${f(field.statPct, 0)}%), but NOT actionable now -- every item you own is already ${priority}-maxed and no ${priority}-itemized upgrade exists to swap to.${worth} It only rises when ${priority}-itemized drops come.`, sd ? "measured" : "est")];
+    return [finding(DIM.GEAR, INFO, `${PRI}: yours (${f(my.statPct, 0)}%) is below peers (${f(field.statPct, 0)}%), but NOT actionable -- every item you own is already ${priority}-maxed, no ${priority}-itemized swap exists.${worth} It rises only when ${priority}-itemized drops come.`, sd ? "measured" : "est")];
   }
   if (gf && !gf.swaps.length && !gf.restats.length && statGap < 4) {
     return [finding(DIM.GEAR, INFO, "GEAR/STATS: optimal for what you own -- no lever; gains are future drops + a sim (Droptimizer).")];
@@ -770,18 +770,18 @@ export function residualText(kind, r, d, rot, rx) {
   if (kind === "elite") {
     // Already top-decile: the remainder is the distance to the BEST parses at your ilvl,
     // not a setup/rotation you're getting wrong. Don't manufacture a "playstyle" problem.
-    return `GAP TO TOP PARSES (~${r}%): you already parse ${ordinal(d.medP)} percentile -- the "field" here is the BEST players at your item level, and this is the distance to them. The concrete levers above are small because there isn't much on your character to fix; the rest is raid comp + executing on optimal pulls (lust/cooldown windows, perfect target swaps), not gear or a rotation you're getting wrong.`;
+    return `GAP TO TOP PARSES (~${r}%): you already parse ${ordinal(d.medP)} percentile, so the "field" is the BEST players at your item level and this is the distance to them -- raid comp + optimal-pull execution (lust/cooldown windows, target swaps), not gear or a rotation you're getting wrong.`;
   }
   if (kind === "healer") {
     // HPS is bounded by the damage the raid TAKES + your assignment -- a big HPS remainder
     // is mostly the encounter/healer comp/overheal, NOT a personal playstyle gap.
-    return `HEALING IS DAMAGE-BOUND (~${r}%): HPS measures healing DONE, which is capped by the damage your raid takes and your healing assignment -- you can't out-heal damage that didn't happen. Most of this gap is the encounter (how much went out), the healer comp, and overheal differences, not how you play. The concrete levers above are what you actually control; chase effective throughput on a fixed kill, not the raw HPS number.`;
+    return `HEALING IS DAMAGE-BOUND (~${r}%): HPS is capped by the damage your raid takes and your assignment -- you can't out-heal damage that didn't happen. Most of this gap is the encounter, healer comp, and overheal, not how you play. The levers above are what you control; chase effective throughput, not raw HPS.`;
   }
   if (kind === "support") {
     // A support's personal DPS is a fraction of their value: Ebon Might / Prescience amp
     // ALLIES, credited to THEIR parses. A big personal-DPS remainder is buff value the
     // comparison can't see; what they control is buff UPTIME, not personal damage.
-    return `SUPPORT VALUE IS OFF YOUR SHEET (~${r}%): your throughput is mostly the amps you keep on allies (Ebon Might / Prescience / Breath of Eons), which WCL credits to THEIR parses, not your personal DPS. So most of this gap isn't personal DPS you can add -- it's buff value a personal-DPS comparison can't see. What you DO control is buff UPTIME (keep your amps rolling -- see the Support buffs card) and your own cooldown/gear use above; chase those, not the raw personal-DPS number.`;
+    return `SUPPORT VALUE IS OFF YOUR SHEET (~${r}%): your throughput is mostly the amps you keep on allies (Ebon Might / Prescience / Breath of Eons), which WCL credits to THEIR parses -- so this gap is buff value a personal-DPS comparison can't see, not DPS you can add. What you control is buff UPTIME (see the Support buffs card) and your cooldown/gear use above.`;
   }
   if (kind === "playstyle") {
     // A big remainder at matched ilvl is NOT gear/sim and NOT "press faster" -- it's
@@ -808,8 +808,8 @@ export function residualText(kind, r, d, rot, rx) {
     // sequencing, uptime through movement) + the concrete next step. Only a SMALL
     // remainder is genuinely just stat variance.
     const big = r >= 25;
-    const frontier = ` A gap this size isn't just stat variance -- it's execution we can't itemize from one log: lining your cooldowns up with Bloodlust and your burst windows, ability sequencing, and holding uptime/DoTs/buffs through movement (plus some you don't fully control -- comp re-attribution, fight-amp windows). The fastest read is to pull up a rank-1 parse of this exact fight and diff its timeline against yours.`;
-    const perCastTail = ` The gap is per-cast ${throughputWord()} (crit/stat scaling, plus comp re-attribution and fight amp windows you don't fully control).`;
+    const frontier = ` A gap this size isn't just stat variance -- it's execution: aligning cooldowns with Bloodlust/burst windows, sequencing, and uptime/DoTs/buffs through movement (plus comp re-attribution + fight-amp windows you don't fully control). Pull up a rank-1 parse of this exact fight and diff its timeline against yours.`;
+    const perCastTail = ` The gap is per-cast ${throughputWord()} (crit/stats, plus comp re-attribution + fight-amp windows you don't fully control).`;
     // Empowered-share band -- only reached when the EMPOWERMENT lever DIDN'T fire (gap
     // < 12pp). Ahead or within 5pp => timing ISN'T the culprit. But 5-12pp BEHIND (e.g.
     // a Feral at 11% vs 21% -- half the field's rate) means timing/snapshotting likely
@@ -819,16 +819,16 @@ export function residualText(kind, r, d, rot, rx) {
     const empWord = !hasEmp ? "" : pr.youEmp - pr.fieldEmp >= 0.05 ? "more often than"
       : pr.youEmp >= pr.fieldEmp - 0.05 ? "about as often as" : "less often than";
     const cite = hasEmp && pr.fieldEmp - pr.youEmp >= 0.12
-      ? ` We can see the biggest piece: only ${ep(pr.youEmp)} of your ${pr.name} casts land empowered vs the field's ${ep(pr.fieldEmp)}${hasEmpItem ? " (see the EMPOWERMENT item)" : ""} -- the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps).`
+      ? ` The biggest piece: only ${ep(pr.youEmp)} of your ${pr.name} casts land empowered vs the field's ${ep(pr.fieldEmp)}${hasEmpItem ? " (see the EMPOWERMENT item)" : ""} -- the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps).`
       : hasEmp && !empBehind
-      ? ` We checked the obvious culprit: your ${pr.name} lands empowered ${empWord} the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}), so it's NOT timing.${big ? frontier : perCastTail}`
+      ? ` Your ${pr.name} lands empowered ${empWord} the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}), so it's NOT timing.${big ? frontier : perCastTail}`
       : hasEmp
-      ? ` We checked the obvious culprit: your ${pr.name} lands empowered ${empWord} the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}) -- so part of this likely IS timing (just under the bar where we'd name it a lever): land your hardest hit in its high-damage window more often.${big ? frontier : ""}`
+      ? ` Your ${pr.name} lands empowered ${empWord} the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}) -- so part of this likely IS timing (under the bar where we'd name it a lever): land your hardest hit in its high-damage window more often.${big ? frontier : ""}`
       : under.length
-      ? ` We can see part of it: you press ${under.slice(0, 2).map((a) => `${a.name} ${f(a.you, 1)}/min vs ${f(a.field, 1)}`).join(", ")}.${big ? frontier : ""}`
+      ? ` Part of it: you press ${under.slice(0, 2).map((a) => `${a.name} ${f(a.you, 1)}/min vs ${f(a.field, 1)}`).join(", ")}.${big ? frontier : ""}`
       : big
-      ? ` The cooldown/ability gaps we could measure are listed above.${frontier}`
-      : ` The cooldown/ability gaps we could measure are listed above; the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps) we can't pin to one ability.`;
+      ? ` The measurable cooldown/ability gaps are listed above.${frontier}`
+      : ` The measurable cooldown/ability gaps are listed above; the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps) we can't pin to one ability.`;
     // Off-meta build: no same-hero peers to compare against, so a big part of the
     // remainder is the build itself (HERO TREE + TALENTS items), not "how you play".
     // Don't say "NOT press faster" when a PRESS FASTER lever is ALREADY in the list
@@ -841,11 +841,11 @@ export function residualText(kind, r, d, rot, rx) {
       ? `${notGear} and -- beyond the idle gap listed above -- NOT just pressing faster either; it's how you play the same gear the field plays`
       : `${notGear} and NOT "press faster" -- it's how you play the same gear the field plays`;
     return isOffMetaBuild(rx)
-      ? `OFF-META BUILD + PLAYSTYLE (~${r}%): the biggest chunk, and a large part is your BUILD -- you run a hero tree (and talents) the field doesn't (see the HERO TREE + TALENTS items), so we can't compare your rotation to theirs button-for-button and a sim would value the build swap well above the small estimate above. Switch to the meta build and re-run first.${cite}`
-      : `PLAYSTYLE (~${r}%): the biggest chunk, and ${playstyleBody}.${cite}`;
+      ? `OFF-META BUILD + PLAYSTYLE (~${r}%): a large part is your BUILD -- you run a hero tree (and talents) the field doesn't (see the HERO TREE + TALENTS items), so your rotation can't be compared button-for-button and a sim would value the swap well above the estimate above. Switch to the meta build and re-run first.${cite}`
+      : `PLAYSTYLE (~${r}%): the biggest chunk -- ${playstyleBody}.${cite}`;
   }
   if (kind === "underpress") {
-    return `THE REMAINDER (~${r}%): not a setup item -- it's GCD uptime and hitting your priority on more pulls (see the measured cast/idle gaps above). That's where the rest of your gap lives.`;
+    return `THE REMAINDER (~${r}%): not a setup item -- it's GCD uptime and hitting your priority on more pulls (see the cast/idle gaps above).`;
   }
   return `THE REMAINDER (~${r}%): small and unattributed -- sim-only tuning (exact trinket/stat effect sizes) and kill-to-kill variance. No single button.`;
 }

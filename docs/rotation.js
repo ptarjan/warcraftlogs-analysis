@@ -1459,7 +1459,7 @@ function weakWindowLever(rot) {
   const fromP = Math.round(w.from * 100), toP = Math.round(w.to * 100);
   const k = (n) => `${Math.round(n / 1000)}k`;
   return [finding(DIM.ROTATION, DPS(pct),
-    `DAMAGE TIMELINE: in the ${fromP}-${toP}% stretch of the fight your ${throughputWord()} falls to ~${k(w.youDps)} vs your own ~${k(w.yourTypical)} the rest of the fight -- and it is NOT a shared intermission (the field keeps dealing ~${k(w.fieldDps)} there). Holding your normal output through that window is ~${pct}% of your total: find what stops you (movement, a mechanic you fully disengage for, waiting on a cooldown) and keep your uptime there.`,
+    `DAMAGE TIMELINE: in the ${fromP}-${toP}% stretch your ${throughputWord()} falls to ~${k(w.youDps)} vs your own ~${k(w.yourTypical)} the rest of the fight -- not a shared intermission (the field keeps dealing ~${k(w.fieldDps)}). Holding pace there is ~${pct}% of your total: find what stops you (movement, a mechanic you disengage for, a cooldown you wait on) and keep your uptime up.`,
     "measured", KIND.WEAK_WINDOW)];
 }
 

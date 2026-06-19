@@ -563,7 +563,7 @@ export function gearLevers(gf, priority, statValue = null, gemDelta = null, abov
   const swaps = gf.swaps || [];
   // Cite the field-measured stat value once (so each swap line stays terse).
   const mcite = statValue && statValue.perRating > 0
-    ? ` -- at your item level, peers who stack ${priority} do ${Math.round(statValue.pct)}% more (n=${statValue.nHave}/${statValue.nNot}), but that's mostly them being better players, so this is sized as gear alone`
+    ? ` -- peers who stack ${priority} do ${Math.round(statValue.pct)}% more (n=${statValue.nHave}/${statValue.nNot}), mostly because they're better players, so sized as gear alone`
     : "";
   const measured = !!(statValue && statValue.perRating > 0);
   // HONESTY: if the field MEASURES no benefit from stacking this stat at your ilvl
@@ -593,13 +593,15 @@ export function gearLevers(gf, priority, statValue = null, gemDelta = null, abov
       `${PRI}: re-itemize ${swaps.length} slots toward ${priority} (+${gain} ${priority} total${measured ? "" : " -- sim to confirm"})${measured ? mcite : ""} -- ${items}.`,
       measured ? "measured" : "est"));
   } else {
-    for (const sw of swaps) {
+    // Cite the field-measured stat value only ONCE (on the first swap line) so a
+    // pair of "<STAT> via <slot>" lines doesn't repeat the same paragraph verbatim.
+    swaps.forEach((sw, i) => {
       const from = sourceText(sw.source, sw.instance, sw.dropChance);
       const mv = statValueScore(sw.gain, statValue);
       out.push(finding(DIM.GEAR, mv || statScore(sw.gain),
-        `${PRI} via ${sw.slot}: replace ${wowheadItem(sw.fromId, sw.fromName)} with ${wowheadItem(sw.toId, sw.toName)} (+${sw.gain} ${priority}${from}${mv ? "" : " -- sim to confirm"})${mv ? mcite : ""}.`,
+        `${PRI} via ${sw.slot}: replace ${wowheadItem(sw.fromId, sw.fromName)} with ${wowheadItem(sw.toId, sw.toName)} (+${sw.gain} ${priority}${from}${mv ? "" : " -- sim to confirm"})${mv && i === 0 ? mcite : ""}.`,
         mv ? "measured" : "est"));
-    }
+    });
   }
   // Suppress recrafts toward MORE priority stat when you already out-stack the field
   // (aboveField): they'd push you further past what good players at your ilvl run.
