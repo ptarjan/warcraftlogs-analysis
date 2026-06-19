@@ -102,7 +102,12 @@ export function looksLikeDpsTalent(tooltipText) {
   // EXCEPTION: a talent that grants a throughput BUFF (a stat/%-damage increase or a
   // proc) is a real DPS pick whose CC is incidental, so keep it.
   const cc = /\bknock(s|ed|ing)?\b|knockback|knocks? (back|up|down)|\bstun(s|ned|ning)?\b|\bdisorient|incapacitat|\bfear(s|ed|ing)?\b|horrif|\bsilenc(e|es|ed|ing)/.test(t);
-  const throughputBuff = /(increased|additional|extra|bonus) (damage|critical|haste|mastery|versat|attack power|spell power)|increases?\b[^.]{0,40}(damage (done|dealt)|critical strike|\bcrit\b|\bhaste\b|mastery|versatil|attack power|spell power)|\bgrants?\b|\bproc/.test(off);
+  // "[a target] takes N% increased damage" is the ABILITY amplifying its OWN hit (Supernova
+  // self-amps its primary target: "...will take 100% increased damage") -- a target debuff,
+  // NOT a player throughput buff -- so it must not rescue a CC ability from the veto. Strip
+  // it before the throughput check; a real throughput talent says "your X deals more".
+  const buff = off.replace(/tak(e|es|ing)\b[^.]{0,25}increased damage/g, " ");
+  const throughputBuff = /(increased|additional|extra|bonus) (damage|critical|haste|mastery|versat|attack power|spell power)|increases?\b[^.]{0,40}(damage (done|dealt)|critical strike|\bcrit\b|\bhaste\b|mastery|versatil|attack power|spell power)|\bgrants?\b|\bproc/.test(buff);
   if (cc && !throughputBuff) return false;
   // HEALING/absorb effects scale with Spell Power too ("231% of Spell Power" of HEALING),
   // so the "% of spell power" / stat cues above misfire on them -- Chain Heal and Earth
@@ -121,7 +126,7 @@ const _dpsCache = new Map();
 async function isDpsTalent(spellId) {
   if (!spellId) return false;
   if (_dpsCache.has(spellId)) return _dpsCache.get(spellId);
-  const ck = "taldps4:" + spellId; // "4" re-classifies past entries: CC/displacement (Supernova, Dragon's Breath) that ALSO deals damage is utility, not a DPS respec
+  const ck = "taldps5:" + spellId; // "5" re-classifies CC self-amps: Supernova's "take 100% increased damage" no longer reads as a throughput buff that rescues it from the CC veto
   try { const c = localStorage.getItem(ck); if (c !== null && c !== undefined) { const v = c === "1"; _dpsCache.set(spellId, v); return v; } } catch (e) { /* ignore */ }
   let dps = false;
   try { const d = await spellTooltip(spellId); dps = looksLikeDpsTalent(d && d.tooltip); } catch (e) { dps = false; }

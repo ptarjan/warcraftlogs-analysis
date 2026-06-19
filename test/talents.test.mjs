@@ -90,7 +90,9 @@ test("looksLikeDpsTalent keeps damage talents, even hybrids that ALSO heal/shiel
 test("looksLikeDpsTalent drops CC/displacement even when it ALSO deals damage (a 'stop', not a respec)", () => {
   // Real tooltips: a knock-up / disorient that also hits reads as DPS off the damage
   // clause alone, so it got recommended as a respec -- but a player runs it for the STOP.
-  assert.equal(looksLikeDpsTalent("Pulses arcane energy around the target enemy, dealing (34.5% of Spell Power) Arcane damage to all enemies within 8 yds, and knocking them upward."), false); // Supernova
+  // REAL Supernova tooltip -- note the trailing self-amp "take 100% increased damage", which
+  // must NOT read as a throughput buff that rescues it from the CC veto (it's a target debuff).
+  assert.equal(looksLikeDpsTalent("Pulses arcane energy around the target enemy or ally, dealing (34.5% of Spell Power) Arcane damage to all enemies within 8 yds, and knocking them upward. A primary enemy target will take 100% increased damage."), false); // Supernova
   assert.equal(looksLikeDpsTalent("Enemies in a cone in front of you take (90% of Spell Power) Fire damage and are Disoriented for 4 sec."), false); // Dragon's Breath
   assert.equal(looksLikeDpsTalent("Roars, dealing (50% of Attack Power) damage and stunning all nearby enemies for 4 sec."), false); // a damage+stun (e.g. Shockwave-like)
   // GUARD: a real throughput talent whose CC is incidental (it also buffs damage/a stat
