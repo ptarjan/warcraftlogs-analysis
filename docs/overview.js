@@ -82,7 +82,7 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
     log(`    ${padR(metricUnit() + ":", 13)} you ${padL(f(you.dps, 0), 9)}   peer med ${padL(f(pmed("dps"), 0), 9)}`);
     log(`    casts/min:    you ${padL(f(you.castsPerMin, 1), 9)}   peer med ${padL(f(pmed("castsPerMin"), 1), 9)}`);
     log(`    active %:     you ${padL(f(you.activePct, 1), 9)}   peer med ${padL(f(pmed("activePct"), 1), 9)}`);
-    log(`    ${runIsHealer() ? "healed:      " : "targets hit:  "}you ${padL(you.targets, 9)}   peer med ${padL(f(pmed("targets"), 1), 9)}`);
+    log(`    ${runIsHealer() ? "healed:      " : "targets hit:  "}you ${padL(f(you.targets, 1), 9)}   peer med ${padL(f(pmed("targets"), 1), 9)}`);
 
     // Duration-controlled cut: peers whose kill time is within 40s of yours. Only
     // worth showing with a few of them -- a "median" of 1-2 just repeats the headline.

@@ -52,7 +52,9 @@ async function fightMetrics(code, fight, sourceId, className = "Monk", { autoFal
   }
 
   const overGaps = gaps.filter((g) => g >= gcd && g <= gcd + 600).map((g) => g - gcd);
-  const overshoot = gaps.length ? median(overGaps) : 0;
+  // Guard on overGaps (not gaps): gaps can be non-empty while NONE fall in the overshoot
+  // band, where median([]) is NaN. (Today masked by `overshootMs: overshoot || 0` below.)
+  const overshoot = overGaps.length ? median(overGaps) : 0;
   let autoDown = 0;
   if (autoTs.length > 1) {
     for (let i = 0; i < autoTs.length - 1; i++) {
