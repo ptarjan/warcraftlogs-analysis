@@ -150,6 +150,15 @@ none); compare uptime/range to peers on the SAME fight (intermissions).
   swaps; `trinketLevers` flags a field-favored trinket you lack, sized by
   CONSENSUS (silent on a split field, where "lots of people run different
   trinkets" is itself the signal).
+- **OLD-EXPANSION ITEM IDs ARE LEGIT — never "fix" them (made this mistake TWICE).**
+  Old dungeons cycle into the **current M+ rotation**, so their items (old IDs like
+  `193716` Algeth'ar Hedgecleaver, low wowhead BASE ilvl 53) drop at **current ilvl**
+  when run at current keys. Judge a swap ONLY by EQUIPPED itemLevel (CombatantInfo
+  `g.itemLevel`, ~290), NEVER the wowhead base ilvl. "Swap to [old-id item] (dropped
+  in [old dungeon])" is a CORRECT, actionable how (farm it in M+); the base-form link
+  is fine. Do NOT add a base-ilvl filter or a "scaled/misleading" suppression — base
+  ilvl also reads low for legit crafted current items, so it can't distinguish them.
+  (Cost me a reverted commit `aece787` → `3197d23`, then nearly a second.)
 - **Immutable report data is cached forever** (`_isImmutable`: `report(code:…)`),
   rankings/world/character queries expire weekly — don't assume a cold cost for a
   character analyzed within the tier.
