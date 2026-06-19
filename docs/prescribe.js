@@ -522,6 +522,19 @@ function renderChangeList(log, d, peerGap, outpaces) {
   // actually have a measured gap -- otherwise leave the honest sim ranges as-is.
   const gap = (peerGap != null && peerGap > 0) ? peerGap : 0;
   const compImpact = compList.reduce((s, r) => s + (r.impact || 0), 0);
+  // Comp is part of the gap accounting too (gap = comp + your fixes + remainder), so it must
+  // ADD UP to it. The raw with/without field-deltas can sum to MORE than your whole gap -- the
+  // split is confounded (peers WITH the buff are also better players / in better comps), so
+  // "15% + 6% comp" printed on a 7% gap doesn't add up. Scale the comp findings to the gap (the
+  // same reconcile your fixes get) so the comp list sums to the comp share the breakdown
+  // reports. Comp still comes off the top; your fixes fill only what's left. (Don't mutate the
+  // shared rx objects -- render off copies.)
+  const renderComp = compList.map((r) => ({ ...r }));
+  if (gap > 0 && compImpact > gap) {
+    const sized = renderComp.filter((r) => r.impact > 0);   // leave unsized "info" comp items alone
+    const { scaled } = reconcileImpacts(sized.map((r) => r.impact), gap);
+    sized.forEach((r, i) => { r.impact = scaled[i]; r.label = `~${Math.max(1, Math.round(scaled[i]))}% comp`; });
+  }
   const renderYou = concrete.map((r) => ({ ...r }));
   let residual = 0, fixableTotal = 0;
   if (gap > 0) {
@@ -587,10 +600,10 @@ function renderChangeList(log, d, peerGap, outpaces) {
   }
   youOut.forEach(line);
 
-  if (compList.length) {
+  if (renderComp.length) {
     log("");
     log(`--- Raid comp (real ${metricUnit()}, but a roster/buff gap — NOT something you change on your character) ---`);
-    compList.forEach(line);
+    renderComp.forEach(line);
   }
   // Close on the positives: the checks you PASSED (silent levers = you're at/above the
   // field). So the report isn't all problems, and you can see what to KEEP doing.
