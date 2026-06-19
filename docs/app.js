@@ -7,6 +7,7 @@ import { detectContext, detectPriority, DIFFICULTY, raidTeammates, slug, metricF
 import { isAuthed, beginLogin, handleRedirectCallback, logout } from "./auth.js";
 import { NeedsAuth, myCharacters, primeRateReset, fmtRateWait, pruneStaleCache } from "./wcl.js";
 import { paramsFromSearch, shareSearch, encodeSnapshot, decodeSnapshot, snapshotFromHash } from "./share.js";
+import { tokenizeMarkup } from "./markup.js";
 import * as progression from "./progression.js";
 import * as overview from "./overview.js";
 import * as timeline from "./timeline.js";
@@ -408,26 +409,25 @@ function refreshWowhead() {
   _whTimer = setTimeout(() => { try { window.$WowheadPower?.refreshLinks?.(); } catch (e) {} }, 250);
 }
 // Fill `el` with `text`, turning [label](https://…) links and **bold** markdown into
-// safe DOM nodes (anchors / <strong>), never innerHTML. (progression.js emits **bold**
-// headlines; without this they render as literal asterisks.)
+// safe DOM nodes (anchors / <strong>), never innerHTML. The parse lives in markup.js
+// (pure + unit-tested); here we just build nodes from its tokens. (progression.js emits
+// **bold** headlines; without this they render as literal asterisks.)
 function fillText(el, text) {
-  const re = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|\*\*([^*]+)\*\*/g;
-  let last = 0, m, linked = false;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
-    if (m[2]) {
+  let linked = false;
+  for (const t of tokenizeMarkup(text)) {
+    if (t.type === "link") {
       const a = document.createElement("a");
-      a.href = m[2]; a.target = "_blank"; a.rel = "noopener"; a.textContent = m[1];
+      a.href = t.href || ""; a.target = "_blank"; a.rel = "noopener"; a.textContent = t.text;
       el.appendChild(a);
       linked = true;
-    } else {
+    } else if (t.type === "bold") {
       const b = document.createElement("strong");
-      b.textContent = m[3];
+      b.textContent = t.text;
       el.appendChild(b);
+    } else {
+      el.appendChild(document.createTextNode(t.text));
     }
-    last = re.lastIndex;
   }
-  if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
   if (linked) refreshWowhead();
 }
 
