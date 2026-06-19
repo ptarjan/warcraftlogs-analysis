@@ -95,6 +95,14 @@ test("topParseLevers: comp magnitude is MEASURED from the field, never a curated
   assert.equal(topParseLevers(bossTp, {})[0].impact, 0);
 });
 
+test("topParseLevers: POTIONS fires only when you ran SOME (zero is owned by consumableLevers)", () => {
+  const tp = (you) => ({ comp: { missing: [] }, routing: null, potions: { top: 2, you } });
+  // You pre-potted but skipped the combat potion (1 of 2) -> the topparse POTIONS lever fires.
+  assert.ok(topParseLevers(tp(1), {}).some((r) => /POTIONS:/.test(r.text)), "used some-but-fewer -> fires");
+  // You ran ZERO -> consumableLevers' "you used none" owns it; topparse must NOT double-count.
+  assert.ok(!topParseLevers(tp(0), {}).some((r) => /POTIONS:/.test(r.text)), "zero potions -> topparse defers (no double-count)");
+});
+
 test("topParseLevers: damage-ROUTING lever is suppressed for healers (HPS run)", () => {
   // A damage-target-distribution lever told a Mistweaver to "cleave/funnel instead
   // of tunneling the boss" to raise HPS -- nonsense for a healer. It must fire for

@@ -334,8 +334,11 @@ export function topParseLevers(tp, compDeltas = null) {
         `(how much is available depends on the fight, but the target choice is yours).`, "measured"));
     }
   }
-  // Potions: pre-pot + a second combat potion (a setup fix you apply yourself).
-  if (tp.potions && tp.potions.top > tp.potions.you) {
+  // Potions: pre-pot + a second combat potion (a setup fix you apply yourself). Only the
+  // "you ran SOME but fewer than the top" case (e.g. pre-pot only, missing the combat potion)
+  // -- the ZERO-potion case is owned by consumableLevers' "you used none" finding, so gating
+  // on you > 0 avoids double-counting the same missing potion as two separate list items.
+  if (tp.potions && tp.potions.top > tp.potions.you && tp.potions.you > 0) {
     out.push(finding(DIM.SETUP, DPS(2),
       `POTIONS: top parses use ${tp.potions.top}/kill (pre-pot + a combat potion); you used ${tp.potions.you}. Add the missing one.`));
   }

@@ -533,7 +533,9 @@ function renderChangeList(log, d, peerGap, outpaces) {
   if (gap > 0 && compImpact > gap) {
     const sized = renderComp.filter((r) => r.impact > 0);   // leave unsized "info" comp items alone
     const { scaled } = reconcileImpacts(sized.map((r) => r.impact), gap);
-    sized.forEach((r, i) => { r.impact = scaled[i]; r.label = `~${Math.max(1, Math.round(scaled[i]))}% comp`; });
+    // Use the same sub-1% treatment as pctLabel (the yours-list) so several comp items each
+    // scaled below 0.5 don't each print "~1% comp" and visually overshoot the gap they sum to.
+    sized.forEach((r, i) => { r.impact = scaled[i]; r.label = `~${Math.round(scaled[i]) >= 1 ? Math.round(scaled[i]) : "<1"}% comp`; });
   }
   const renderYou = concrete.map((r) => ({ ...r }));
   let residual = 0, fixableTotal = 0;

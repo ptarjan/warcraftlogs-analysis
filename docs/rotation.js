@@ -442,7 +442,15 @@ export async function rotationFindings(name, server, region, className, specName
   const yourDps = (you.total && you.dur) ? you.total / you.dur : 0;
   const peerDpss = peers.map((p) => (p.total && p.dur) ? p.total / p.dur : null).filter((x) => x != null);
   const fieldMedDps = peerDpss.length >= 3 ? median(peerDpss) : null;
-  const behindField = fieldMedDps != null && yourDps > 0 && yourDps < fieldMedDps * 0.97;
+  // "Behind the field" = the gate that stops these diagnostics nagging a player already ahead.
+  // For ATONEMENT the totals are apples-to-oranges -- you.total is DAMAGE but the run metric is
+  // hps, so peers' total is HEALING -- making the total comparison structurally always "behind".
+  // Use the damage CAST-RATE deficit instead: for atonement castGap is built on the SAME damage
+  // basis on both sides (your damage rates vs peers' damage rates via dmgId2Name, no extra fetch),
+  // so "you press your damage abilities less than the field" is the fair, cheap signal.
+  const behindField = you.atonement
+    ? (castGap.field > 0 && castGap.you < castGap.field * 0.97)
+    : (fieldMedDps != null && yourDps > 0 && yourDps < fieldMedDps * 0.97);
   const heroSafe = !yourHero || !!heroMatched;       // unknown hero = best-effort; known = require a match
   const rotationSafe = behindField && heroSafe && (!runIsHealer() || you.atonement);
   let openerGap = null;
