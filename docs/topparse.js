@@ -271,7 +271,7 @@ export function topParseLevers(tp, compDeltas = null) {
         `Missing ${link} (${e.effect}) — bring ${e.who}. (measured: peers with it do ${Math.round(cd.pct)}% more ${metricUnit()}, n=${cd.nHave}/${cd.nNot}).`, "measured"));
     } else {
       out.push(finding(DIM.COMP, INFO,
-        `Missing ${link} (${e.effect}) — bring ${e.who}. (unsized — this field gave no with/without split to measure it).`, "measured"));
+        `Missing ${link} (${e.effect}) — bring ${e.who}. (unsized — this field gave no with/without split to measure it).`, "est"));
     }
   }
   // Damage routing: measured extra cleave/funnel the top parses get. WHO you damage is

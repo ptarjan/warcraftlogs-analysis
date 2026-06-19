@@ -82,6 +82,8 @@ test("topParseLevers: comp magnitude is MEASURED from the field, never a curated
   assert.equal(augLev.impact, 0, "unmeasurable comp claims 0 of the gap, not a guess");
   assert.equal(augLev.label, "info");
   assert.match(augLev.text, /unmeasured|no with\/without split/i);
+  // ...and it must NOT claim [measured] -- its own text says it couldn't be measured.
+  assert.equal(augLev.basis, "est", "unsized comp note is not measured");
 
   // A BOSS debuff (Chaos Brand) is sized the SAME way once measured (prescribe now
   // fetches per-peer boss debuffs on demand and merges the delta into compDeltas).
