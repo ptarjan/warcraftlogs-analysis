@@ -54,8 +54,9 @@ test("fieldDelta measures an attribute's value from the field (have vs not)", ()
   // Too few on one side -> null.
   assert.equal(fieldDelta([110, 100, 100, 100, 100], [true, false, false, false, false]), null);
 });
-const { executionLevers, latencyLever, trinketLevers, pickBenchmarkKill, compCoversGap, killHistory, consumableLevers } = await import("../docs/prescribe.js");
+const { pickBenchmarkKill, compCoversGap, killHistory } = await import("../docs/prescribe.js");
 const { reconcileImpacts, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, verdictBlindSpots, overhaulDisclaimer, strengths, residualText, residualSummary } = await import("../docs/prescribe-helpers.js");
+const { executionLevers, latencyLever, trinketLevers, consumableLevers } = await import("../docs/prescribe-levers.js");
 
 test("killHistory: parse spread (consistency) + recent-vs-old trend (improvement), time-ordered", () => {
   const k = (p, t) => ({ rankPercent: p, startTime: t });

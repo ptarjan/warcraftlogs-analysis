@@ -3,7 +3,7 @@
 // RECONCILIATION math, the remainder classifier, and the verdict / residual / strengths
 // prose builders. No network, no DOM -- unit-tested in test/prescribe.test.mjs. prescribe.js
 // imports what it needs; the tests import the rest from here (single source of truth).
-import { f, ordinal, KIND, DIM, metricUnit, throughputWord, runIsHealer } from "./core.js";
+import { f, ordinal, DPS, KIND, DIM, metricUnit, throughputWord, runIsHealer } from "./core.js";
 import { castable } from "./rotation-helpers.js";
 
 // A single reconciled percent label, e.g. "~11% DPS" (or "~<1% DPS").
@@ -297,3 +297,29 @@ export function residualSummary(kind) {
     default: return "not yet explained";
   }
 }
+
+// Did this consumable's buff land? (Uptime strictly above its floor + name matches.)
+export const consumableHit = (c, lc, b) => b.pct > c.minPct && c.match(lc);
+
+// The curated consumable list: how to detect each (name keyword + uptime floor) and what
+// missing it is worth. Shared by prescribe's field tally and prescribe-levers' consumableLevers.
+export const CONSUMABLES = [
+  { field: "flasks", mine: "flask", label: "FLASK", peerVerb: "run", note: "",
+    match: (lc) => lc.includes("flask"), minPct: 50,
+    none: DPS(2), missText: "you ran none", tail: "Free parse with equal gear.", swap: DPS(2) },
+  { field: "foods", mine: "food", label: "FOOD", peerVerb: "run", note: "",
+    match: (lc) => lc.includes("well fed"), minPct: 50,
+    none: DPS(1, 2), missText: "you ate none", tail: "Free parse.", swap: DPS(1) },
+  { field: "potions", mine: "potion", label: "COMBAT POTION", peerVerb: "pop",
+    note: " (during your burst window)", swapNeedsMeasure: true,
+    match: (lc) => lc.includes("potion") && !lc.includes("healing"), minPct: 0,
+    none: DPS(1, 3), missText: "you used none", tail: "Free parse with equal gear.", swap: DPS(1) },
+  { field: "augRunes", mine: "augrune", label: "AUGMENT RUNE", peerVerb: "use",
+    note: " (a flat primary-stat gain)",
+    match: (lc) => lc.includes("augment rune"), minPct: 50,
+    none: DPS(1, 2), missText: "you ran none", tail: "Free parse.", swap: DPS(1) },
+  { field: "oils", mine: "oil", label: "WEAPON OIL", peerVerb: "apply",
+    note: " (a temporary weapon buff, re-applied like a flask)",
+    match: (lc) => /\boil\b|sharpening|whetstone|weightstone/.test(lc), minPct: 50,
+    none: DPS(1, 2), missText: "you ran none", tail: "Free parse.", swap: DPS(1) },
+];
