@@ -3,7 +3,7 @@
 // vs ilvl-matched peers on the SAME boss (phase/intermission aware).
 import {
   characterZone, characterEncounter, playerMetrics, ilvlPeers, PEER_SAMPLE, median, f, mapLimit, collectUpTo,
-  fightWindow, fightEvents, BOSS_FANOUT,
+  fightWindow, fightEvents, BOSS_FANOUT, head, arrow,
 } from "./core.js";
 
 function estimateGcd(gapsMs) {
@@ -170,7 +170,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
     (r) => (r.totalKills || 0) > 0 && r.rankPercent !== null && r.rankPercent !== undefined);
   if (boss) ranks = ranks.filter((r) => r.encounter.name.toLowerCase().includes(boss.toLowerCase()));
   log("");
-  log(`=== Comparative timeline diagnosis: ${name} (vs ilvl-matched peers, intermissions cancel out) ===`);
+  log(head(`Comparative timeline diagnosis: ${name} (vs ilvl-matched peers, intermissions cancel out)`));
   const agg = { lostPerMin: [], rangeLostPerMin: [], pressLostPerMin: [], autoDownPct: [] };
   // Fan the bosses out -- each is an independent peer-fetch wave (timelineFindings is
   // pure compute), so run them concurrently and the gql() batcher coalesces the misses.
@@ -189,9 +189,10 @@ export async function run(log, name, server, region, className = "Monk", specNam
   }
   if (agg.lostPerMin.length) {
     log("");
-    log(`  === AGGREGATE excess vs peers (median across ${agg.lostPerMin.length} bosses) ===`);
+    log(head(`AGGREGATE excess vs peers (median across ${agg.lostPerMin.length} bosses)`));
     const sgn = (x) => (x >= 0 ? "+" : "") + f(x, 1);
-    log(`    total lost GCD /min over peers: ${sgn(median(agg.lostPerMin))}s`);
+    const totalLost = median(agg.lostPerMin);
+    log(`    total lost GCD /min over peers: ${sgn(totalLost)}s`);
     // Only break out the range/melee components when they carry signal -- a caster's
     // are structurally 0 (see printBossComparison), so don't print +0.0 rows.
     const aggRange = median(agg.rangeLostPerMin), aggMelee = median(agg.autoDownPct);
@@ -200,5 +201,10 @@ export async function run(log, name, server, region, className = "Monk", specNam
       log(`      from not pressing in range:   ${sgn(median(agg.pressLostPerMin))}s`);
     }
     if (Math.abs(aggMelee) >= 0.1) log(`    out-of-melee % over peers:      ${sgn(aggMelee)} pts`);
+    // Close on the one "so what": the dominant GCD leak (or an all-clear).
+    const press = median(agg.pressLostPerMin);
+    log(arrow(totalLost <= 0.5
+      ? `your GCD uptime tracks the field -- no timeline leak to fix.`
+      : `you lose ~${f(totalLost, 1)}s/min of GCDs vs peers, mostly to ${aggRange >= press ? "movement / being out of range" : "idle gaps between casts"} -- the prescription card sizes the fix.`));
   }
 }
