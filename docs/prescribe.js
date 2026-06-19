@@ -892,20 +892,20 @@ function renderHeader(log, d, you, field, peerGap, topGap) {
   }
   if (peerGap == null) return;
   const ahead = peerGap <= 0;
-  const vsField = ahead ? `${Math.abs(peerGap)}% ahead of` : `${peerGap}% behind`;
-  // Spell out what the gap means: same-gear players already do it, so it's
-  // gainable, and the list below is sized to sum to it.
+  const gapPhrase = ahead ? `${Math.abs(peerGap)}% ahead` : `${peerGap}% behind`;
+  const topClause = topGap != null ? `, and ${topGap}% behind the top parses` : "";
+  // What the gap MEANS, as its own sentence (not a dashed aside): same-gear players
+  // already do it, so it's gainable, and the list below is sized to sum to it.
   const tail = ahead
-    ? ". You're already ahead of your item-level bracket -- the top parses are the target."
+    ? ` You're already beating your item-level bracket -- the top parses are the target now.`
     : isEliteParse(d.medP)
-    ? ` -- but the field here is the TOP parses at your item level, and at your ${ordinal(d.medP)} percentile most of that gap is raid comp + execution on optimal pulls, not a setup you're getting wrong. The fixes below are the concrete part you control.`
+    ? ` But the field here is the TOP parses at your item level, and at your ${ordinal(d.medP)} percentile most of that gap is raid comp + execution on optimal pulls, not a setup you're getting wrong. The fixes below are the concrete part you control.`
     : runIsHealer()
-    ? ` -- but ${metricUnit()} is capped by the damage your raid takes and your healing assignment, so most of that gap is the encounter and healer comp, not ${metricUnit()} you can simply add. The fixes below are the concrete part you control.`
+    ? ` But ${metricUnit()} is capped by the damage your raid takes and your healing assignment, so most of that gap is the encounter and healer comp, not ${metricUnit()} you can simply add. The fixes below are the concrete part you control.`
     : runIsSupport()
-    ? ` -- but as a support most of your value is the amps you keep on allies (credited to THEIR parses, not your personal DPS), so this personal-DPS gap mostly measures buff value, not DPS you can simply add. Your real lever is buff uptime (see the Support buffs card); the fixes below are the rest you control.`
-    : ` -- and they have your exact item level, so that ${peerGap}% is ${metricUnit()} you could realistically gain. The fixes below are sized to add up to it.`;
-  log(`Measured on ${gearBossLink}: you (ilvl ~${d.curIlvl}) do ${k(you.dps)} ${metricUnit()} -- ${vsField} the ilvl-matched field (${k(field.dpsMed)})` +
-      (topGap != null ? `, ${topGap}% behind the top parses` : "") + tail);
+    ? ` But as a support, most of your value is the amps you keep on allies (credited to THEIR parses, not your personal DPS), so this personal-DPS gap mostly measures buff value, not DPS you can simply add. Your real lever is buff uptime (see the Support buffs card); the fixes below are the rest you control.`
+    : ` They're at your exact item level, so that ${peerGap}% is realistically yours to gain -- the fixes below are sized to add up to it.`;
+  log(`Measured on ${gearBossLink} (ilvl ~${d.curIlvl}): you do ${k(you.dps)} ${metricUnit()} vs the ilvl-matched field's ${k(field.dpsMed)} -- ${gapPhrase}${topClause}.${tail}`);
   // CONSISTENCY + IMPROVEMENT, from your most-farmed boss's parse history (FREE --
   // cached ranks): are you steady or all over the place kill-to-kill, and are your
   // recent kills better than your older ones? The single-kill deep-dive can't see
