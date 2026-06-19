@@ -2,7 +2,7 @@
 // UI wiring: pick character/region/server, auto-detect the rest, then render
 // the result as a web report -- the prioritized list of changes up top, with
 // the supporting analyses as collapsible cards below.
-import { detectContext, detectPriority, DIFFICULTY, raidTeammates, slug, metricForSpec, setRunContext, isSupport, metricUnit,
+import { detectContext, detectPriority, DIFFICULTY, raidTeammates, slug, metricForSpec, setRunContext, isSupport, metricUnit, runIsHealer,
   parseReportRef, reportFights, recentReportsFor, mapLimit } from "./core.js";
 import { isAuthed, beginLogin, handleRedirectCallback, logout } from "./auth.js";
 import { NeedsAuth, myCharacters, primeRateReset, fmtRateWait, pruneStaleCache } from "./wcl.js";
@@ -573,9 +573,11 @@ function buildHero(name, server, region) {
 }
 function setPills(hero, items) {
   hero.det.remove();
-  for (const [text, muted] of items) {
+  for (const [text, muted, tip] of items) {
     const s = document.createElement("span"); s.className = "pill" + (muted ? " muted" : "");
-    s.textContent = text; hero.pills.appendChild(s);
+    s.textContent = text;
+    if (tip) { s.title = tip; s.classList.add("has-tip"); } // native hover tooltip (e.g. what "DPS" means)
+    hero.pills.appendChild(s);
   }
 }
 
@@ -693,7 +695,7 @@ async function runAnalysis({ name, server, region, serverLabel }) {
   // Record every streamed line so the finished report can be shared (see
   // buildSnapshot / addShareButton) -- a friend opens the link with no login.
   const snap = { v: 1, name, serverLabel: serverLabel || server, region,
-    pills: /** @type {[string, boolean][]} */ ([]), sections: /** @type {any[]} */ ([]) };
+    pills: /** @type {[string, boolean, string?][]} */ ([]), sections: /** @type {any[]} */ ([]) };
   const rxCard = makeCard("What to change", { primary: true });
   setCardState(rxCard, "busy");
   cur = rxCard; note("Crunching your kills and your peers…", "muted");
@@ -717,11 +719,14 @@ async function runAnalysis({ name, server, region, serverLabel }) {
       return { card, title, lines: [] };
     });
     const priority = await detectPriority(ctx.className, ctx.specName, ctx.difficulty, ctx.killed[0].encounter.id);
+    const metricTip = runIsHealer()
+      ? "Measured on HPS (healing per second) — this is a healing spec, so every recommendation's % is a share of your healing."
+      : "Measured on DPS (damage per second) — every recommendation's % is a share of your damage. Healers are graded on HPS instead.";
     snap.pills = [
-      [`${ctx.specName} ${ctx.className}`, false],
-      [DIFFICULTY[ctx.difficulty], true],
-      [`${priority.charAt(0).toUpperCase() + priority.slice(1)} priority`, true],
-      [`${metricUnit()}`, true],
+      [`${ctx.specName} ${ctx.className}`, false, "Class and spec detected from your most recent kill."],
+      [DIFFICULTY[ctx.difficulty], true, "The raid difficulty of the kill being analyzed — percentiles only compare within a difficulty."],
+      [`${priority.charAt(0).toUpperCase() + priority.slice(1)} priority`, true, `Your highest-value secondary stat (${priority}), derived from the field — it drives the gear and gem advice.`],
+      [`${metricUnit()}`, true, metricTip],
     ];
     setPills(hero, snap.pills);
     const p = { name, server, region, cls: ctx.className, spec: ctx.specName, difficulty: ctx.difficulty, priority };
