@@ -3,7 +3,7 @@
 // phase doesn't smear the comparison" behavior is locked in.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildCurveComparison } from "../docs/graph.js";
+import { buildCurveComparison, graphLevers } from "../docs/graph.js";
 
 // A flat-per-phase curve: value `levels[p]` for the fraction-of-fight in phase p.
 function curve(fracs, levels, n = 60) {
@@ -34,6 +34,32 @@ test("phase-aligns curves whose phase boundaries fall at DIFFERENT fight-%", () 
   assert.equal(r.worst.phase, 2, "the dip is correctly attributed to PHASE 2");
   assert.equal(r.worst.nPhases, 3);
   assert.ok(r.worst.deficit > 0.5, `phase-2 deficit should be large, got ${r.worst.deficit}`);
+  assert.ok(r.worst.gainPct >= 1, `the dip should be sized in DPS%, got ${r.worst.gainPct}`);
+  // fracStart/fracEnd map the dip back into YOUR fight (phase 2 is .30-.65 of your kill).
+  assert.ok(r.worst.fracStart >= 0.25 && r.worst.fracEnd <= 0.70, `dip maps to your phase-2 window, got ${r.worst.fracStart}-${r.worst.fracEnd}`);
+});
+
+test("graphLevers: a cooldown-cause dip is a sized DPS lever, idle is a 0-impact locator", () => {
+  const base = { boss: "Boss", isHealer: false };
+  const cd = graphLevers({ ...base, worst: { deficit: 0.3, gainPct: 4, phase: 5, center: 0.8, cause: "cooldown", cpmRatio: 1.0 } });
+  assert.equal(cd.length, 1);
+  assert.equal(cd[0].dim, "Execution");
+  assert.equal(cd[0].kind, "PHASE_DIP");
+  assert.equal(cd[0].impact, 4, "cooldown dip carries the sized DPS impact");
+  assert.match(cd[0].text, /Phase 5/);
+  assert.match(cd[0].text, /cooldown/i);
+
+  const idle = graphLevers({ ...base, worst: { deficit: 0.3, gainPct: 4, phase: 5, center: 0.8, cause: "idle", cpmRatio: 0.4 } });
+  assert.equal(idle.length, 1);
+  assert.equal(idle[0].impact, 0, "an idle dip is INFO (the lost-GCD lever already sizes it)");
+  assert.match(idle[0].text, /idle|coast|quiet|rotation going/i);
+});
+
+test("graphLevers: nothing to add when there's no real dip, or for healers/skips", () => {
+  assert.deepEqual(graphLevers({ boss: "B", worst: { deficit: 0.05, gainPct: 0 } }), []);
+  assert.deepEqual(graphLevers({ boss: "B", isHealer: true, worst: { deficit: 0.3, gainPct: 4, cause: "cooldown" } }), []);
+  assert.deepEqual(graphLevers({ skip: "support" }), []);
+  assert.deepEqual(graphLevers(null), []);
 });
 
 test("falls back to fight-progress overlay when phase counts differ", () => {

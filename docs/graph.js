@@ -7,6 +7,7 @@
 import {
   characterZone, characterEncounter, playerMetrics, ilvlPeers, PEER_SAMPLE,
   median, collectUpTo, mapLimit, bestRank, dpsOverTime, metricUnit, runIsHealer, isSupport,
+  fightWindow, fightEvents, finding, DIM, DPS, INFO, KIND,
 } from "./core.js";
 import { pickBenchmarkKill } from "./prescribe.js";
 
@@ -49,16 +50,22 @@ function phaseWidths(actorFracs, base) {
   return medW.map((w) => Math.max(2, Math.round((base * w) / sum)));
 }
 
-// Resample EACH phase of a curve to its allotted width and concatenate -> a curve whose
-// phase boundaries align with every other curve aligned to the same widths.
-function alignCurve(dps, fracs, widths) {
+// The fraction-of-fight each grid slot samples, given phase boundaries + widths -- the
+// inverse map (grid index -> where in THIS kill it falls) used to align a curve AND to
+// locate a window back in real fight time (for the cast-activity diagnosis).
+function alignFracs(fracs, widths) {
   const out = [];
   for (let p = 0; p < widths.length; p++) {
     const a = fracs[p], b = p + 1 < fracs.length ? fracs[p + 1] : 1;
     const w = widths[p];
-    for (let k = 0; k < w; k++) out.push(at(dps, w === 1 ? (a + b) / 2 : a + (b - a) * (k / (w - 1))));
+    for (let k = 0; k < w; k++) out.push(w === 1 ? (a + b) / 2 : a + (b - a) * (k / (w - 1)));
   }
   return out;
+}
+// Resample EACH phase of a curve to its allotted width -> a curve whose phase boundaries
+// align with every other curve aligned to the same widths.
+function alignCurve(dps, fracs, widths) {
+  return alignFracs(fracs, widths).map((f) => at(dps, f));
 }
 
 // Linear-interpolated quantile of an already-sorted array.
@@ -117,10 +124,57 @@ export async function graphFindings(name, server, region, className, specName, d
   });
   const cmp = buildCurveComparison(yc, peers);
   if (!cmp) return { skip: "fewpeers", boss: boss.name };
+
+  // DIAGNOSE the dip so the advice is concrete (the user's two questions: am I idle, or
+  // pressing the wrong things?). Re-read YOUR casts on the SAME kill (cached -- the
+  // timeline already fetched them) and compare your cast rate DURING the dip window to
+  // your whole-fight rate. Cast rate collapses -> you go passive there (movement/coast).
+  // Cast rate holds but damage is down -> you keep pressing but your big cooldowns landed
+  // ELSEWHERE (filler in the window) -- a cooldown-alignment problem, not idling.
+  const w = cmp.worst;
+  if (w && w.deficit >= DIP_FLOOR && !runIsHealer()) {
+    try {
+      const [fS, fE] = await fightWindow(code, fight);
+      const durMs = fE - fS;
+      const { casts } = await fightEvents(code, fight, you.sourceID, fS, fE);
+      const ts = casts.map((e) => e.timestamp);
+      const aMs = fS + (w.fracStart || 0) * durMs, bMs = fS + (w.fracEnd || 1) * durMs;
+      const winMin = Math.max(0.05, (bMs - aMs) / 60000), fightMin = Math.max(0.05, durMs / 60000);
+      const cpmWin = ts.filter((t) => t >= aMs && t <= bMs).length / winMin;
+      const cpmAll = ts.length / fightMin;
+      w.cpmRatio = cpmAll > 0 ? cpmWin / cpmAll : 1;
+      w.cause = w.cpmRatio < 0.78 ? "idle" : "cooldown";
+    } catch (e) { /* no cast data -> leave cause unset (run() degrades to a generic read) */ }
+  }
+
   return {
     boss: boss.name, unit: metricUnit(), isHealer: runIsHealer(),
     ...cmp, yourOverall: you.dps, peerOverall: median(peers.map((p) => p.overall)), peers: peers.length,
   };
+}
+
+// The prescription lever(s) from the dip -- so this card feeds the one list, not just
+// the card. A COOLDOWN-misalignment dip is a real, sized lever (the field's burst lands
+// in this phase and yours doesn't -- DPS the rotation/timeline aggregates miss because
+// it's about WHEN, not whether, you press). An IDLE dip is the SAME loss the Execution
+// "lost GCDs" lever already sizes, so it's an INFO that LOCATES it (impact 0 -> no
+// double-count). Healers/support: no lever (curve is informational only).
+export function graphLevers(d) {
+  if (!d || d.skip || d.isHealer) return [];
+  const w = d.worst;
+  if (!w || w.deficit < DIP_FLOOR || !(w.gainPct >= 1)) return [];
+  const where = w.phase ? `Phase ${w.phase}` : w.center < 1 / 3 ? "the opener" : w.center < 2 / 3 ? "mid-fight" : "the execute";
+  if (w.cause === "idle") {
+    return [finding(DIM.EXECUTION, INFO,
+      `Your output dip on ${d.boss} is in ${where} -- and it's idle time (your cast rate drops to ${Math.round(100 * (w.cpmRatio || 0))}% of normal there). That's the lost-GCD time above, concentrated in one window: keep your rotation going through the ${where} mechanics instead of coasting.`,
+      "measured", KIND.PHASE_DIP)];
+  }
+  // cooldown / unknown-cause -> a real sized lever
+  const cd = w.cause === "cooldown"
+    ? `you keep pressing there (cast rate normal) but do ${Math.round(100 * w.deficit)}% less than the field -- your burst cooldowns are spent earlier and you run ${where} on filler. Hold/align a burst cooldown for ${where}.`
+    : `you do ${Math.round(100 * w.deficit)}% less than the field in ${where}. Line up your cooldowns and sustain through it.`;
+  return [finding(DIM.EXECUTION, DPS(w.gainPct),
+    `${where} on ${d.boss}: ${cd}`, "measured", KIND.PHASE_DIP)];
 }
 
 // Pure: turn your curve + the peer curves into the aligned band + the worst-dip read.
@@ -137,18 +191,20 @@ export function buildCurveComparison(yc, peers) {
   // are dropped from the band (rare). If too few align, fall back to whole-fight resample.
   const refP = (yc.phases || [0]).length;
   const aligned = refP > 1 && peers.filter((p) => (p.phases || [0]).length === refP).length >= 2;
-  let you48, peer48, bounds = [];
+  let you48, peer48, youFrac, bounds = [];
   if (aligned) {
     const pool = peers.filter((p) => (p.phases || [0]).length === refP);
     const widths = phaseWidths([yc.phases, ...pool.map((p) => p.phases)], G);
     you48 = alignCurve(yc.dps, yc.phases, widths);
     peer48 = pool.map((p) => alignCurve(p.dps, p.phases, widths));
+    youFrac = alignFracs(yc.phases, widths);          // grid -> fraction of YOUR fight
     // grid index where each phase (2..P) begins -> chart dividers + phase labels
     let acc = 0;
     for (let p = 0; p < widths.length - 1; p++) { acc += widths[p]; bounds.push(acc); }
   } else {
     you48 = resample(yc.dps, G);
     peer48 = peers.map((p) => resample(p.dps, G));
+    youFrac = you48.map((_, g) => (you48.length <= 1 ? 0.5 : g / (you48.length - 1)));
   }
   const N = you48.length;
   const pmed = [], plo = [], phi = [];
@@ -175,7 +231,7 @@ export function buildCurveComparison(yc, peers) {
     if (you48[g] < plo[g]) below++; else if (you48[g] > phi[g]) above++;
   }
   const W = Math.max(4, Math.round(N * 0.18));
-  /** @type {{start:number,end:number,deficit:number,center:number,phase?:number,nPhases?:number}|null} */
+  /** @type {{start:number,end:number,deficit:number,center:number,phase?:number,nPhases?:number,gainPct?:number,fracStart?:number,fracEnd?:number,cause?:string,cpmRatio?:number}|null} */
   let worst = null;
   for (let i = 0; i + W <= N; i++) {
     let sum = 0, n = 0;
@@ -186,10 +242,21 @@ export function buildCurveComparison(yc, peers) {
   }
   // Which phase the dip falls in (aligned runs only) -- a far more useful pointer than
   // "late in the fight": bounds[] are the grid indices where phases 2..P begin.
-  if (worst && bounds.length) {
-    const c = (worst.start + worst.end) / 2;
-    worst.phase = bounds.filter((b) => b <= c).length + 1;     // 1-based phase number
-    worst.nPhases = bounds.length + 1;
+  // Plus SIZE the dip in overall-DPS terms: the extra damage if you matched the field
+  // median across the window, as a % of your whole-fight output (grid slots are ~equal
+  // wall-time, so a sum of per-slot deficits / your total output is the overall % gain).
+  if (worst) {
+    if (bounds.length) {
+      const c = (worst.start + worst.end) / 2;
+      worst.phase = bounds.filter((b) => b <= c).length + 1;   // 1-based phase number
+      worst.nPhases = bounds.length + 1;
+    }
+    const youSum = you48.reduce((a, b) => a + b, 0) || 1;
+    let defSum = 0;
+    for (let g = worst.start; g < worst.end; g++) if (live[g]) defSum += Math.max(0, pmed[g] - you48[g]);
+    worst.gainPct = Math.round((100 * defSum) / youSum);
+    worst.fracStart = youFrac[worst.start];
+    worst.fracEnd = youFrac[Math.min(N - 1, worst.end)];
   }
 
   return {
@@ -197,13 +264,6 @@ export function buildCurveComparison(yc, peers) {
     bandBelow: below / liveN, bandAbove: above / liveN, bandIn: (liveN - below - above) / liveN,
   };
 }
-
-// Class/role-agnostic "how" for a dip, keyed by where in the fight it lands.
-const HOW = {
-  opener: "ramp on the pull -- get your opener cooldowns out immediately (pre-cast where you can) and commit burst from the first GCD instead of easing in.",
-  "mid-fight": "a mid-fight sag is usually a cooldown left waiting or movement/mechanic downtime -- use cooldowns the moment they're up and cut dead time in that window.",
-  "execute (late)": "the field pushes harder late -- line up a cooldown for the end and keep pressing once the boss is low instead of coasting to the kill.",
-};
 
 // Compact, rounded payload for the SVG (keeps the shared snapshot small).
 function chartData(d) {
@@ -253,37 +313,34 @@ export async function run(log, name, server, region, className = "Monk", specNam
   else asciiChart(log, g);
 
   log("");
-  const frame = g.aligned
-    ? `aligned by PHASE (${(g.bounds.length + 1)} phases, boundaries matched across kills so a faster phase doesn't smear the comparison)`
-    : "normalized to fight progress";
-  log(`  ${g.boss} -- your benchmark kill, ${unit} over the fight vs the field (line = median, shaded = 25-75%), ${frame} over ${g.peers} peers.`);
+  log(`  ${g.boss} · your median kill vs ${g.peers} peers at your item level${g.aligned ? " · aligned by phase" : ""}.`);
 
   // Healers: HPS shape tracks INCOMING raid damage, not a rotation hole -- so don't
   // tell them to "push more HPS here". Show the curve, defer the real levers to Healing.
   if (g.isHealer) {
-    log("  -> HPS over time mostly mirrors when the raid took damage (reactive), so the shape isn't a rotation gap to close. See the Healing efficiency card for what you control (overhealing, mana).");
+    log("  Your HPS curve tracks when the raid took damage (it's reactive), so the shape isn't a rotation hole. See the Healing card for what you control: overhealing and mana.");
     return;
   }
 
-  const pct = (x) => Math.round(100 * (x || 0));
-  if ((g.bandAbove || 0) >= 0.5) {
-    log(`  -> You track at or above the field for most of the fight (above the band ${pct(g.bandAbove)}% of it) -- strong. Your softest RELATIVE stretch is below.`);
-  } else if ((g.bandBelow || 0) >= 0.4) {
-    log(`  -> You run below the field band for ${pct(g.bandBelow)}% of the fight -- the gap is spread across the kill, not one moment.`);
-  } else {
-    log(`  -> You mostly track inside the field band (${pct(g.bandIn)}% of the fight) -- close to the field, dipping below in spots.`);
-  }
+  // One human sentence on the shape, then the soft spot + what to do about it.
+  if ((g.bandBelow || 0) >= 0.4) log("  You run under the field most of the kill — the gap is spread across the fight, not one spot.");
+  else if ((g.bandAbove || 0) >= 0.5) log("  You're ahead of the field most of the kill. One soft spot:");
+  else log("  You ride with the field most of the kill. Your soft spot:");
 
-  const w = g.worst, dn = g.n;
+  const w = g.worst;
   if (w && w.deficit >= DIP_FLOOR) {
-    const a = Math.round((100 * w.start) / dn), b = Math.round((100 * w.end) / dn);
-    const where = w.center < 1 / 3 ? "opener" : w.center < 2 / 3 ? "mid-fight" : "execute (late)";
-    const loc = w.phase ? `Phase ${w.phase} of ${w.nPhases}` : `~${a}-${b}% in (${where})`;
-    log(`  -> Biggest dip: ${loc}, ~${Math.round(100 * w.deficit)}% under the field median there.`);
-    log(`     How: ${HOW[where]}`);
+    const where = w.phase ? `Phase ${w.phase}` : w.center < 1 / 3 ? "your opener" : w.center < 2 / 3 ? "the middle" : "the execute";
+    const under = Math.round(100 * w.deficit);
+    if (w.cause === "idle") {
+      log(`  -> ${where}: ${under}% under the field, and your cast rate drops to ${Math.round(100 * (w.cpmRatio || 0))}% of normal — you go quiet here.`);
+      log(`     Keep your rotation going through ${where}'s movement/mechanics instead of coasting. (~${w.gainPct}% ${unit})`);
+    } else if (w.cause === "cooldown") {
+      log(`  -> ${where}: ${under}% under the field, but you keep pressing (cast rate normal) — your burst is spent earlier and you run ${where} on filler.`);
+      log(`     Hold a burst cooldown for ${where} so it lands where the field's does. (~${w.gainPct}% ${unit})`);
+    } else {
+      log(`  -> ${where}: ${under}% under the field. Line up your cooldowns and sustain through it. (~${w.gainPct}% ${unit})`);
+    }
   } else {
-    log("  -> No single window stands out -- your curve mostly mirrors the field's shape; the gap (if any) is overall throughput, not one stretch.");
+    log("  -> No one stretch stands out — your shape mirrors the field's. Any gap is overall throughput, not a window.");
   }
-  log("");
-  log("  This card is the picture; the Timeline and Rotation cards size the levers behind these dips (lost GCDs, cooldown use, which buttons and when).");
 }

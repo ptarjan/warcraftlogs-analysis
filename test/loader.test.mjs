@@ -74,7 +74,14 @@ function unitsOf(q) {
       const ab = (a.match(/abilityID:\s*(\d+)/) || [])[1];
       if (fid && dt) units.add(`${code}:${fid}:${dt}${sid ? ":src" + sid : ""}${ab ? ":ab" + ab : ""}`);
     }
-    for (const m of part.matchAll(/fights\s*\(\s*fightIDs:\s*\[?(\d+)/g)) units.add(`${code}:${m[1]}:fights`);
+    // A fights(fightIDs:N) read selecting `phaseTransitions` (the boss phase boundaries,
+    // for the DPS-over-time card's phase alignment) is a DISTINCT sub-resource from the
+    // window read (reportCore's fightWin selects startTime/endTime). Both are fetched once
+    // per fight via their one canonical path, so key them apart -- a SECOND of either is
+    // still caught as a dupe. (reportCore's part never contains phaseTransitions; the graph
+    // query's part always does, and carries exactly one fights read.)
+    for (const m of part.matchAll(/fights\s*\(\s*fightIDs:\s*\[?(\d+)/g))
+      units.add(`${code}:${m[1]}:${/phaseTransitions/.test(part) ? "phases" : "fights"}`);
     // The progression flow's report-wide fight list: fights() with NO fightIDs. One
     // canonical accessor (reportFights), so two of these on a report = a dupe.
     if (/fights\s*\{/.test(part)) units.add(`${code}:all:fights`);

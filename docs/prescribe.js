@@ -11,6 +11,7 @@ import {
   DPS, INFO, finding, KIND, DIM, fieldDelta, metricUnit, runIsHealer, runIsSupport, healingBreakdown, manaStats,
 } from "./core.js";
 import { timelineFindings } from "./timeline.js";
+import { graphFindings, graphLevers } from "./graph.js";
 import { gearFindings, gearLevers, itemInstance, sourceText } from "./gear.js";
 import { wowheadSpell, wowheadItem, wclReport } from "./links.js";
 import { rotationFindings, rotationLevers, mergeRotationRecurrence } from "./rotation.js";
@@ -1041,6 +1042,12 @@ export async function run(log, name, server, region, className = "Monk", specNam
   catch (e) { skipped.push("top-parse comparison"); }
   try { tal = await talentFindings(name, server, region, className, specName, difficulty); }
   catch (e) { skipped.push("talents"); }
+  // DPS-over-time: WHERE in the fight you leak vs the phase-aligned field, diagnosed
+  // (idle vs cooldowns spent elsewhere). Feeds the list -- a cooldown-misalignment dip
+  // is DPS the cast/uptime aggregates miss (it's about WHEN you press, not whether);
+  // an idle dip becomes an INFO that LOCATES the lost-GCD time (no double-count). Cached
+  // after the DPS-over-time card ran, so this re-computes over warm fetches.
+  const graphData = await soft("dps-over-time", graphFindings(name, server, region, className, specName, difficulty));
   // Size the BOSS-debuff comp levers (Chaos Brand / Mystic Touch) from the field too,
   // but only the ones you're actually MISSING (so we pay the per-peer Debuffs fetch
   // only when there's a lever to size -- usually none). Merges into field.compDeltas
@@ -1084,6 +1091,22 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const rotMerged = mergeRotationRecurrence(
     rotationLevers(rot),
     otherRot.map((o) => ({ name: o.name, levers: rotationLevers(o.findings) })));
+  // The rotation's own-baseline WEAK_WINDOW (where you trail YOUR typical) and the
+  // graph's field-relative PHASE_DIP often catch the SAME late slump -- two ~equal items
+  // about one stretch reads as padding. When their fight-fraction windows overlap, keep
+  // the ONE that says more: the graph dip when it diagnosed a cooldown problem (cast rate
+  // normal -> WHEN you press, which the weak window can't tell); otherwise the weak window
+  // (and drop the graph's now-redundant idle locator).
+  let rotLevers = rotMerged.levers, gLevers = graphLevers(graphData);
+  const dip = graphData && /** @type {any} */ (graphData).worst, ww = rot && rot.weakWindow;
+  if (dip && ww && dip.fracStart != null && gLevers.some((l) => l.kind === KIND.PHASE_DIP)) {
+    const inter = Math.max(0, Math.min(dip.fracEnd, ww.to) - Math.max(dip.fracStart, ww.from));
+    const minW = Math.min(dip.fracEnd - dip.fracStart, ww.to - ww.from) || 1;
+    if (inter / minW >= 0.5) {
+      if (dip.cause === "cooldown") rotLevers = rotLevers.filter((l) => l.kind !== KIND.WEAK_WINDOW);
+      else gLevers = gLevers.filter((l) => l.kind !== KIND.PHASE_DIP);
+    }
+  }
   /** @type {Finding[]} */
   const rx = [
     ...executionLevers(execd, rot, peerGapPct, (execd && execd.activePct != null) ? execd.activePct : (you && you.activePct)),
@@ -1095,8 +1118,9 @@ export async function run(log, name, server, region, className = "Monk", specNam
     // Healer-specific efficiency levers (overhealing, mana) -- self-silent for a
     // damage run (runIsHealer false, overheal 0). Measured from your benchmark kill.
     ...healingLevers(you, field),
-    ...rotMerged.levers,
+    ...rotLevers,
     ...rotMerged.infos,
+    ...gLevers,
     ...talentLevers(tal),
     ...topParseLevers(tp, field && field.compDeltas),
   ];
