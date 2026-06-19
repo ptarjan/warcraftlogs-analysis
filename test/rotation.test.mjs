@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, empoweredStats, empowermentCandidate, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, rotationLevers, mergeRotationRecurrence, medianCastRates, consensusOpener, openerDivergence, majorCooldownIds, cooldownStackFraction, cooldownStackGap, cooldownUseComparable, damageCurve, weakestWindow } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, usageDamageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, empoweredStats, empowermentCandidate, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, rotationLevers, mergeRotationRecurrence, medianCastRates, consensusOpener, openerDivergence, majorCooldownIds, cooldownStackFraction, cooldownStackGap, cooldownUseComparable, damageCurve, weakestWindow } = await import("../docs/rotation.js");
 const { setRunMetric } = await import("../docs/core.js");
 
 // Run a body with the run metric forced, always restoring "dps" so it never leaks.
@@ -328,6 +328,16 @@ test("empoweredShare is the gear-robust gate -- two players with the SAME share 
   const lo = [20000, 21000, 22000, 20000, 21000, 22000, 50000, 51000];   // 2/8 empowered
   const hi = [40000, 42000, 44000, 40000, 42000, 44000, 100000, 102000]; // 2/8 empowered
   assert.equal(empoweredShare(lo), empoweredShare(hi));
+});
+
+test("usageDamageGaps sizes per-cast from the BENCHMARK rate, not the cross-kill median", () => {
+  const under = [{ name: "A", you: 5, field: 6 }]; // median 5/min, field 6/min -> 2 missed casts over 2 min
+  const dmgTotals = { A: 1200000 };
+  // No benchmark rate: per-cast = 1.2M / (5*2) = 120k -> 100*2*120k/1.2M = 20%.
+  assert.equal(usageDamageGaps(under, [], dmgTotals, 120, 1200000).A, 20);
+  // With benchRate (you pressed A 10/min on the benchmark kill), per-cast halves to
+  // 1.2M / (10*2) = 60k -> 10%. Benchmark damage must pair with benchmark casts.
+  assert.equal(usageDamageGaps(under, [], dmgTotals, 120, 1200000, { benchRate: { A: 10 } }).A, 10);
 });
 
 test("perCastGaps: flags a hard hit you land WEAK -- ability-specific, beyond the comp/stats edge", () => {

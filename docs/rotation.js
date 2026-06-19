@@ -561,11 +561,15 @@ export function cooldownGaps(youRate, fieldRate, dmgTotals, dur, { band = 1.0, m
 // stays the (sim-priced) missing-talent branch. reconcileImpacts caps the column total
 // at the gap, so a GCD-capped player with no detected over-press can't over-attribute.
 // Returns { abilityName: pct }. Pure -> testable.
-export function usageDamageGaps(under, over, dmgTotals, dur, total, { perCap = 30 } = {}) {
+export function usageDamageGaps(under, over, dmgTotals, dur, total,
+  { perCap = 30, benchRate = /** @type {Record<string,number>|null} */ (null) } = {}) {
   const mins = dur ? dur / 60 : 0;
   if (!mins) return {};
   const totalDmg = total || Object.values(dmgTotals || {}).reduce((a, b) => a + b, 0) || 1;
-  const dpc = (n, rate) => perCastValue(dmgTotals[n], rate * mins);
+  // Per-cast DAMAGE rides on the benchmark kill's own cast count (benchmark damage /
+  // benchmark casts) when given; the `rate` passed in (a cross-kill median) is only the
+  // usage-deficit measure, so falling back to it would mix the two and mis-scale per-cast.
+  const dpc = (n, rate) => perCastValue(dmgTotals[n], (benchRate && benchRate[n] != null ? benchRate[n] : rate) * mins);
   // The cheapest over-pressed button's per-cast damage = what a GCD-capped swap
   // displaces. 0 when you over-press nothing (the extra casts are pure additions into
   // the idle GCDs your cast deficit implies). Subtracting it keeps the estimate
@@ -872,6 +876,11 @@ export async function rotationFindings(name, server, region, className, specName
   // no per-hit detail) and median per ability with the benchmark's. Everything else (per-cast
   // damage sizing, empowerment, dur, allCastRate, peers) stays on the representative benchmark
   // kill. Concurrent so gql() auto-batches the fetches. Degrades to benchmark-only if none load.
+  // The benchmark kill's OWN cast rate, kept before we median across kills below.
+  // Per-cast DAMAGE sizing must pair benchmark damage with benchmark casts (mixing
+  // benchmark damage with a cross-kill-median cast count mis-scales per-cast damage,
+  // which can flip the empowerment gate). The median rate is for the USAGE deficit only.
+  const benchCastRate = you.castRate;
   if (extraKills && extraKills.length) {
     const extra = (await mapLimit(extraKills, 3, async (ek) => {
       try {
@@ -918,7 +927,7 @@ export async function rotationFindings(name, server, region, className, specName
   // Size each under-pressed damage ability by MEASURED damage (not a flat guess), so a
   // core ability you press far less than the field lands as a concrete %, not residual.
   const usageDmg = peers.length
-    ? usageDamageGaps(usage.under, usage.over, you.dmgTotals || {}, you.dur, you.total)
+    ? usageDamageGaps(usage.under, usage.over, you.dmgTotals || {}, you.dur, you.total, { benchRate: /** @type {Record<string,number>} */ (benchCastRate) })
     : {};
   for (const u of usage.under) if (usageDmg[u.name] != null) u.dmgPct = usageDmg[u.name];
   // Under-used damage cooldowns (the band usageDivergence's filler floor misses).
@@ -992,7 +1001,9 @@ export async function rotationFindings(name, server, region, className, specName
     const yourMins = you.dur ? you.dur / 60 : 0;
     const yourAb = {};
     for (const h of (you.hits || [])) {
-      const casts = (you.castRate[h.name] || 0) * yourMins;
+      // Benchmark casts (not the cross-kill median) so per-cast = benchmark damage /
+      // benchmark casts -- the true per-cast value the empowerment gate keys on.
+      const casts = ((benchCastRate || {})[h.name] || 0) * yourMins;
       const total = (you.dmgTotals || {})[h.name] || 0;
       if (casts > 0 && total > 0) yourAb[h.name] = { total, casts };
     }
