@@ -87,6 +87,18 @@ test("looksLikeDpsTalent keeps damage talents, even hybrids that ALSO heal/shiel
   assert.equal(looksLikeDpsTalent("Increases your Haste by 15%."), true);                 // a throughput stat
 });
 
+test("looksLikeDpsTalent drops DEFENSIVES whose only DPS cue is a passive stat", () => {
+  // Diffuse Magic is a REAL Monk defensive (the user's own spec) -- it mitigates AND
+  // grants Versatility, so it slipped through on "increases your Versatility" and got
+  // recommended as a respec. A defensive that mitigates with no hard-offense marker
+  // (coefficient / "increased damage" / "deals N") is taken for the survival, not DPS.
+  assert.equal(looksLikeDpsTalent("Reduces magic damage taken by 60% and increases your Versatility by 10% for 6 sec."), false); // Diffuse Magic
+  assert.equal(looksLikeDpsTalent("Reduces all damage taken by 40% and increases your Haste by 10% for 12 sec."), false);
+  // GUARD: a real DPS talent that ALSO mitigates keeps its hard-offense marker -> stays in.
+  assert.equal(looksLikeDpsTalent("Reduces damage taken by 20% and your attacks deal 15% increased damage while active."), true);
+  assert.equal(looksLikeDpsTalent("Reduces damage taken by 30%; deals (200% of Attack Power) Fire damage to nearby enemies."), true);
+});
+
 test("looksLikeDpsTalent drops CC/displacement even when it ALSO deals damage (a 'stop', not a respec)", () => {
   // Real tooltips: a knock-up / disorient that also hits reads as DPS off the damage
   // clause alone, so it got recommended as a respec -- but a player runs it for the STOP.

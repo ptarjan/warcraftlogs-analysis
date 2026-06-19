@@ -109,6 +109,17 @@ export function looksLikeDpsTalent(tooltipText) {
   const buff = off.replace(/tak(e|es|ing)\b[^.]{0,25}increased damage/g, " ");
   const throughputBuff = /(increased|additional|extra|bonus) (damage|critical|haste|mastery|versat|attack power|spell power)|increases?\b[^.]{0,40}(damage (done|dealt)|critical strike|\bcrit\b|\bhaste\b|mastery|versatil|attack power|spell power)|\bgrants?\b|\bproc/.test(buff);
   if (cc && !throughputBuff) return false;
+  // A DEFENSIVE cooldown that ALSO grants a passive stat reads as DPS off that bare
+  // stat clause alone -- but it's taken for the mitigation, not the throughput, so it
+  // must not be recommended as a respec. Diffuse Magic ("Reduces magic damage taken
+  // by 60% and increases your Versatility by 10%") is a real Monk defensive that slips
+  // through `dpsy` on "increases your Versatility". Veto when the tooltip MITIGATES and
+  // its ONLY offensive cue is a stat bump -- i.e. no hard-offense marker (a damage
+  // coefficient, "increased/additional damage", "damage dealt/done", or a flat "deals N").
+  // A real DPS talent that happens to mitigate keeps a hard-offense marker and stays in.
+  const mitigates = /damage taken|damage reduction|reduces?[^.]{0,40}damage|\bimmun/.test(t);
+  const hardOffense = /% of (attack|spell) power|(increased|additional|extra|bonus) damage|damage (dealt|done)|deals?\s+\d|inflicts?\s+\d/.test(off);
+  if (mitigates && !hardOffense) return false;
   // HEALING/absorb effects scale with Spell Power too ("231% of Spell Power" of HEALING),
   // so the "% of spell power" / stat cues above misfire on them -- Chain Heal and Earth
   // Shield read as DPS talents and got recommended to a DPS player as a respec. A talent
@@ -126,7 +137,7 @@ const _dpsCache = new Map();
 async function isDpsTalent(spellId) {
   if (!spellId) return false;
   if (_dpsCache.has(spellId)) return _dpsCache.get(spellId);
-  const ck = "taldps5:" + spellId; // "5" re-classifies CC self-amps: Supernova's "take 100% increased damage" no longer reads as a throughput buff that rescues it from the CC veto
+  const ck = "taldps6:" + spellId; // "6" vetoes defensives whose only DPS cue is a passive stat (Diffuse Magic's Versatility); "5" re-classified CC self-amps (Supernova's "take 100% increased damage")
   try { const c = localStorage.getItem(ck); if (c !== null && c !== undefined) { const v = c === "1"; _dpsCache.set(spellId, v); return v; } } catch (e) { /* ignore */ }
   let dps = false;
   try { const d = await spellTooltip(spellId); dps = looksLikeDpsTalent(d && d.tooltip); } catch (e) { dps = false; }

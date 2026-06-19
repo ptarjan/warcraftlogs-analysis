@@ -24,7 +24,10 @@ import { spellTooltip } from "./wcl.js";
 export function empoweredCount(amounts, factor = 1.8) {
   if (amounts.length < 4) return 0;
   const s = [...amounts].sort((a, b) => a - b);
-  const med = s[Math.floor(s.length / 2)] || 0;
+  const med = s[Math.floor(s.length / 2)];
+  // A zero median (e.g. half the events are absorbed/immune 0s) would make `med * factor`
+  // 0 and count EVERY positive hit as empowered -- mirror empoweredStats and bail.
+  if (!(med > 0)) return 0;
   return amounts.filter((a) => a > med * factor).length;
 }
 

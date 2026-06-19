@@ -82,7 +82,9 @@ export async function itemStats(itemId, bonusIds) {
     out.name = d.name || String(itemId);
     const m = html.match(/<!--ilvl-->(\d+)/);
     out.ilvl = m ? parseInt(m[1], 10) : null;
-    const re = /(\d+)\s+(Critical Strike|Haste|Mastery|Versatility)/g;
+    // Anchor on the leading "+" of the item's stat block ("+147 Critical Strike") so a
+    // proc/on-use line ("grants 200 Critical Strike for 6 sec") can't inflate the base stat.
+    const re = /\+(\d+)\s+(Critical Strike|Haste|Mastery|Versatility)/g;
     let mm;
     while ((mm = re.exec(html))) out[SHORT[mm[2]]] += parseInt(mm[1], 10);
     out.embellished = html.includes("Embellished");
@@ -535,8 +537,9 @@ export const FIELD_DELTA_CONFOUND = 0.5;
 // SAME item level, so it's an itemization choice not gear) -> a measured DPS %
 // across the stat-rating spread (core.fieldDelta), with `perRating` the slope.
 // Confounded (better players itemize better) -> damped by FIELD_DELTA_CONFOUND so a
-// skewed field can't inflate gear over the rotation levers. Capped at the whole
-// spread's value and at 5% so one swap can't dominate before reconcileImpacts. null
+// skewed field can't inflate gear over the rotation levers. The RAW spread value is
+// capped at 5% before the confound damping, so one swap contributes at most
+// FIELD_DELTA_CONFOUND*5% (~2.5%) before reconcileImpacts. null
 // when the field gave no counterfactual -> caller falls back to statScore (the sim).
 /** @param {number} gain @param {StatValue|null} statValue */
 export function statValueScore(gain, statValue) {

@@ -407,17 +407,25 @@ function refreshWowhead() {
   clearTimeout(_whTimer);
   _whTimer = setTimeout(() => { try { window.$WowheadPower?.refreshLinks?.(); } catch (e) {} }, 250);
 }
-// Fill `el` with `text`, turning [label](https://…) markdown into safe anchors
-// (DOM nodes, never innerHTML).
+// Fill `el` with `text`, turning [label](https://…) links and **bold** markdown into
+// safe DOM nodes (anchors / <strong>), never innerHTML. (progression.js emits **bold**
+// headlines; without this they render as literal asterisks.)
 function fillText(el, text) {
-  const re = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+  const re = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|\*\*([^*]+)\*\*/g;
   let last = 0, m, linked = false;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
-    const a = document.createElement("a");
-    a.href = m[2]; a.target = "_blank"; a.rel = "noopener"; a.textContent = m[1];
-    el.appendChild(a);
-    last = re.lastIndex; linked = true;
+    if (m[2]) {
+      const a = document.createElement("a");
+      a.href = m[2]; a.target = "_blank"; a.rel = "noopener"; a.textContent = m[1];
+      el.appendChild(a);
+      linked = true;
+    } else {
+      const b = document.createElement("strong");
+      b.textContent = m[3];
+      el.appendChild(b);
+    }
+    last = re.lastIndex;
   }
   if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
   if (linked) refreshWowhead();

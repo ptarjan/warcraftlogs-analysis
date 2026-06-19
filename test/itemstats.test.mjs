@@ -73,6 +73,18 @@ test("a plain crit ring: unique but not embellished", async () => {
   assert.equal(s.unique, true);
 });
 
+test("a proc/on-use line does not inflate the item's base secondary stats", async () => {
+  // The base stat block uses "+147 Critical Strike"; a proc line ("grants 200 ...") has
+  // no leading "+", so anchoring on it keeps the temporary buff out of the parsed stat.
+  globalThis.fetch = mockFetch([
+    ["wowhead", () => tooltip("Trinket of Bursts",
+      "<!--ilvl-->289 +147 Critical Strike Use: grants 200 Critical Strike for 6 sec")],
+  ]);
+  const { itemStats } = await import("../docs/gear.js");
+  const s = await itemStats(111111, []);
+  assert.equal(s.crit, 147); // not 347
+});
+
 test("a mastery/vers belt has zero crit", async () => {
   globalThis.fetch = mockFetch([
     ["wowhead", () => tooltip("Twisted Twilight Sash", "+85 Mastery +39 Versatility")],

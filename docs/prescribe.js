@@ -1135,7 +1135,12 @@ export async function run(log, name, server, region, className = "Monk", specNam
     const bk = await bestIlvlKill(name, server, region, r.encounter.id, difficulty, specName);
     if (bk) kills.push({ ilvl: bk[2] || 0, boss: r, code: bk[0], fight: bk[1], startTime: bk[3] || 0, rankPercent: bk[4], dur: bk[5] || 0 });
   }
-  const { ilvl: curIlvl, boss: gearBoss, code, fight } = pickBenchmarkKill(kills);
+  // `ranks` is filtered on kills+rankPercent, NOT spec -- a flexer detected as a spec
+  // they didn't play these bosses on yields no per-spec kills, so `kills` is empty and
+  // pickBenchmarkKill returns null. Fail with a clean message, not a TypeError on the payoff.
+  const bench = pickBenchmarkKill(kills);
+  if (!bench) throw new Error(`No ${specName} kills found.`);
+  const { ilvl: curIlvl, boss: gearBoss, code, fight } = bench;
   // Parse HISTORY for the consistency + improvement signals -- read from your MOST-
   // FARMED boss (the most kills = the most data, and a clean same-boss trend), which
   // is often a different boss than the benchmark (a late boss you've killed once).

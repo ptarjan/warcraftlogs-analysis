@@ -533,6 +533,9 @@ test("empoweredCount finds the high cluster of outsized hits", () => {
   assert.equal(empoweredCount(amts), 3);          // the three ~140k hits
   assert.equal(empoweredCount([1, 2, 3]), 0);     // too few samples -> 0
   assert.equal(empoweredCount([]), 0);
+  // A zero median (half the events are absorbed/immune 0s) must NOT count every
+  // positive hit as empowered -- bail to 0, matching empoweredStats.
+  assert.equal(empoweredCount([0, 0, 0, 0, 5000, 6000]), 0);
 });
 
 test("empoweredCount is class-agnostic (works on any ability's amounts)", () => {
