@@ -167,6 +167,18 @@ test("residualText: playstyle doesn't say 'NOT press faster' when a PRESS FASTER
   assert.match(noPress, /NOT "press faster"/);
 });
 
+test("residualText: a SKIPPED rotation doesn't claim the gaps are 'listed above' (there are none)", () => {
+  // Possumz under a throttle / private log: rotation fail-soft skipped -> `rot` is null and
+  // NO cooldown/ability lines are in the list, so the residual must own that rotation didn't
+  // load rather than point at gaps "listed above" that aren't there.
+  const skipped = residualText("playstyle", 45, { medP: 50, skipped: ["rotation"] }, null, []);
+  assert.match(skipped, /didn't load this run/);
+  assert.doesNotMatch(skipped, /listed above/);
+  // Rotation loaded (nothing skipped) -> the original "listed above" wording stands.
+  const loaded = residualText("playstyle", 45, { medP: 50, skipped: [] }, { proc: null, usage: { under: [] }, talent: null }, []);
+  assert.match(loaded, /listed above/);
+});
+
 test("isOffMetaBuild: true only when a HERO TREE mismatch lever is present", () => {
   // The field runs a hero tree you don't -> the rotation can't be compared, so the
   // playstyle remainder must own up to the off-meta build (Rezaa: Colossus vs Slayer).

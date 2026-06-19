@@ -236,6 +236,9 @@ export function residualText(kind, r, d, rot, rx) {
     // ("press Raging Blow more" as item #5, then "your playstyle gap is pressing Raging Blow
     // less"). Excluding them leaves only the genuinely-unlisted ones; if none remain, the
     // cite falls through to "the measurable gaps are listed above".
+    // Rotation fail-soft skipped (throttle / private log) -> `rot` is null and there are NO
+    // cooldown/ability gaps in the list, so the "listed above" fallbacks below would lie.
+    const rotSkipped = (d.skipped || []).some((s) => /rotation/.test(s));
     const listedPress = new Set((rx || [])
       .filter((x) => typeof x.recurKey === "string" && x.recurKey.startsWith("press:"))
       .map((x) => x.recurKey.slice(6)));
@@ -276,6 +279,10 @@ export function residualText(kind, r, d, rot, rx) {
       ? ` Your ${pr.name} lands empowered ${empWord} the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}) -- so part of this likely IS timing (under the bar where we'd name it a lever): land your hardest hit in its high-damage window more often.${big ? frontier : ""}`
       : under.length
       ? ` Part of it: you press ${under.slice(0, 2).map((a) => `${a.name} ${f(a.you, 1)}/min vs ${f(a.field, 1)}`).join(", ")}.${big ? frontier : ""}`
+      : rotSkipped
+      // Rotation didn't load this run (rate-limited / private log) -- that's the cooldown/
+      // ability breakdown, so DON'T claim it's "listed above" (it isn't). Say so honestly.
+      ? ` Your rotation analysis didn't load this run (rate-limited or a private log) -- that's where the cooldown/ability breakdown lives, so re-run to see what's behind this.${big ? frontier : ""}`
       : big
       ? ` The measurable cooldown/ability gaps are listed above.${frontier}`
       : ` The measurable cooldown/ability gaps are listed above; the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps) we can't pin to one ability.`;
