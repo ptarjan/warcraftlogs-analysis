@@ -29,6 +29,7 @@ const TANK_SPECS = new Set(["Blood", "Vengeance", "Guardian", "Brewmaster", "Pro
 const RECUR_MIN = 2;          // never call out something seen in only ONE pull (noise)
 const MAX_FINDINGS = 5;       // a FEW actionable items, biggest blocker first
 const LAGGARD_FRAC = 0.6;     // a "low contributor" does < this fraction of the raid median
+const MIN_KILL_FRACTION = 0.3; // need the boss at least this far down before trusting an HP extrapolation
 
 // Progression-specific Score constructors (mirror core's DPS()/COMP(): impact and
 // label forged together so the sort key can't drift from the shown text). This
@@ -174,7 +175,10 @@ export async function progressionFindings(code, { encounterId = null, fresh = fa
   // EARLY death (well before the pull ended) is a leading cause worth naming: losing
   // a player before the wipe is what tips the pull. The tail cluster is the wall,
   // handled by the DPS check / wall note below. Class/encounter-agnostic.
-  const isEarly = (ev) => (endById.get(ev.fight) - ev.timestamp) > DEATH_WINDOW_MS;
+  // Guard a missing endTime (a malformed / still-live pull): undefined - ts = NaN, and
+  // NaN > window is false, which would SILENTLY drop every death in that pull from the
+  // cause analysis. Make "no end time -> can't classify -> not an early cause" explicit.
+  const isEarly = (ev) => { const end = endById.get(ev.fight); return end != null && (end - ev.timestamp) > DEATH_WINDOW_MS; };
 
   const byAbility = new Map();   // id -> { pulls:Set, victims:Map(name->count) }  (early only)
   const byPlayer = new Map();    // name -> { pulls:Set, cls }                     (early only)
@@ -251,15 +255,23 @@ async function dpsCheck(result) {
   const deep = await reportCore(result.code, deepest.id).catch(() => null);
   if (!deep || !deep.dmg || !deep.dmg.data) return;
   const data = deep.dmg.data;
-  // Players only: drop NPC/Boss rows, and Pets (separate entries here) so a pet is
-  // never named as a "low contributor". Pet damage is small enough that omitting it
-  // from the raid-DPS estimate is within this check's already-rough tolerance.
-  const entries = (data.entries || []).filter((e) => !/^(NPC|Boss|Pet)$/i.test(e.type || ""));
+  // Raid DAMAGE (for the boss-HP estimate and the raid-DPS rate) is ALL combatants'
+  // output -- players AND pets (pets are separate rows here). Excluding pets understated
+  // boss HP (the pet damage DID help kill the boss), which understated the deficit. The
+  // laggard call-out below uses a pet-free list so a pet is never named "low DPS".
+  const dmgEntries = (data.entries || []).filter((e) => !/^(NPC|Boss)$/i.test(e.type || ""));
+  const entries = dmgEntries.filter((e) => !/^Pet$/i.test(e.type || ""));
   const durSec = secs(data.totalTime || (deepest.endTime - deepest.startTime));
   if (!(durSec > 0) || !entries.length) return;
-  const raidDamage = entries.reduce((s, e) => s + (e.total || 0), 0);
+  const raidDamage = dmgEntries.reduce((s, e) => s + (e.total || 0), 0);
   const raidDps = raidDamage / durSec;
-  const fractionKilled = Math.min(1, Math.max(0.01, 1 - (result.bestRemaining / 100)));
+  // Extrapolating boss HP from how far the deepest pull got is only meaningful once
+  // they've actually pushed the boss down. A pull walled by a MECHANIC at ~5-10% killed
+  // is the LEAST reliable HP estimate yet would produce the LARGEST, most confident
+  // "you're X% short on DPS" -- exactly backwards. Below the floor, the wall is execution,
+  // not a damage gate, so stay silent rather than fabricate one.
+  const fractionKilled = Math.min(1, Math.max(0, 1 - (result.bestRemaining / 100)));
+  if (fractionKilled < MIN_KILL_FRACTION) return;
   const bossHp = raidDamage / fractionKilled;
 
   const killMs = median(await encounterKillTimes(result.encounterID, result.difficulty));

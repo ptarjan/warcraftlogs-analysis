@@ -241,6 +241,10 @@ test("gearLevers: a MEASURED-zero priority stat suppresses the re-itemize advice
   const swaps = ["Neck", "Belt", "Ring1"].map((s) => sw(s, 130));
   const zero = gearLevers({ swaps, restats: [] }, "haste", { perRating: 0.001, pct: 0.3, nHave: 5, nNot: 5 });
   assert.ok(!zero.some((x) => /re-itemize|via (Neck|Belt|Ring1)/.test(x.text)), "measured-0% -> no stat-swap advice");
+  // The field measured EXACTLY zero benefit (pct=0 -> perRating=0): same suppression.
+  // (The old `measured && ...` guard let this exact-zero case through as an "est" swap.)
+  const flat = gearLevers({ swaps, restats: [] }, "haste", { perRating: 0, pct: 0, nHave: 5, nNot: 5 });
+  assert.ok(!flat.some((x) => /re-itemize|via (Neck|Belt|Ring1)/.test(x.text)), "measured exactly-0% -> no stat-swap advice");
   // A measurable benefit (pct rounds to >=1%) still produces the re-itemize line.
   const real = gearLevers({ swaps, restats: [] }, "haste", { perRating: 0.02, pct: 2, nHave: 5, nNot: 5 });
   assert.ok(real.some((x) => /re-itemize/.test(x.text)), "measured 2% -> re-itemize fires");

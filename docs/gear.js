@@ -246,7 +246,13 @@ export async function gearFindings(name, server, region, className, specName, di
 
     let best = ist[priority] || 0;
     for (const bk of (variants[g.id] || new Map()).keys()) {
-      const v = (await itemStats(g.id, JSON.parse(bk)))[priority] || 0;
+      const vs = await itemStats(g.id, JSON.parse(bk));
+      // A restat is a re-itemization of the SAME item, so only a same-ilvl variant counts.
+      // A higher-ilvl field variant has more of EVERY stat (an upgrade, not a free recraft
+      // -- and "recraft to N" has no concrete how for it), so skip it. When either ilvl is
+      // unknown, fall through (don't over-suppress on missing data).
+      if (vs.ilvl != null && ist.ilvl != null && vs.ilvl > ist.ilvl + 1) continue;
+      const v = vs[priority] || 0;
       if (v > best) best = v;
     }
     if (best > (ist[priority] || 0) + 15) {
@@ -575,7 +581,11 @@ export function gearLevers(gf, priority, statValue = null, gemDelta = null, abov
   // self-contradicting and not actionable. Drop the priority-stat swaps/restats (gems
   // + embellishments use their own measure and stay). reconcileImpacts owns the
   // remainder. (Only when MEASURED -- an unmeasured sim estimate still shows.)
-  const measuredZero = measured && Math.round(statValue.pct) === 0;
+  // A field counterfactual that ROUNDS TO 0% is measured-zero -- whether perRating is a
+  // tiny positive (pct ~0.3) or exactly 0 (the field group wasn't faster at all, so
+  // fieldDelta returned pct=0 -> perRating=0). The old `measured &&` requirement let the
+  // exact-zero case slip through and get re-recommended as an unmeasured "est" swap.
+  const measuredZero = !!(statValue && Math.round(statValue.pct) === 0);
   if (measuredZero) {
     const embRx = embellishmentRx(gf);
     if (embRx) out.push(embRx);
@@ -592,7 +602,7 @@ export function gearLevers(gf, priority, statValue = null, gemDelta = null, abov
     const total = Math.min(rawTotal, cap);   // gear is a few % -- don't let a confounded field-delta inflate it
     const gain = swaps.reduce((s, sw) => s + (sw.gain || 0), 0);
     const items = swaps.map((sw) => `${sw.slot} ${wowheadItem(sw.fromId, sw.fromName)}→${wowheadItem(sw.toId, sw.toName)}`).join(", ");
-    out.push(finding(DIM.GEAR, { impact: total, label: `~${Math.round(total)}% ${metricUnit()}` },
+    out.push(finding(DIM.GEAR, { impact: total, label: `~${Math.round(total) >= 1 ? Math.round(total) : "<1"}% ${metricUnit()}` },
       `${PRI}: re-itemize ${swaps.length} slots toward ${priority} (+${gain} ${priority} total${measured ? "" : " -- sim to confirm"})${measured ? mcite : ""} -- ${items}.`,
       measured ? "measured" : "est"));
   } else {

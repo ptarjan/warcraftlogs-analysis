@@ -156,6 +156,35 @@ test("progressionFindings: surfaces a DPS check when the raid is damage-light an
   assert.doesNotMatch(dpsFinding.text, /Healy|Tanky/, "does NOT name the healer or tank as a low DPS contributor (they do less BY ROLE)");
 });
 
+test("progressionFindings: NO DPS check when the boss was barely scratched (mechanic wall, not a damage gate)", async () => {
+  // Every pull walls at ~85% boss HP remaining (fractionKilled ~0.15, below the floor).
+  // Extrapolating boss HP from 15% killed is a ~7x guess -> it would fire a confident,
+  // bogus "you're ~85% short on DPS" on a boss they never had a damage problem with. The
+  // min-progress guard must keep the DPS check silent there.
+  clearGqlCache();
+  const barely = () => Array.from({ length: 14 }, (_, i) => {
+    const id = i + 1;
+    return { id, name: "Test Boss", encounterID: 100, kill: false, difficulty: 5, size: 20,
+      startTime: id * 1000, endTime: id * 1000 + 300000,
+      fightPercentage: 85, bossPercentage: 85, lastPhase: 1, averageItemLevel: 639,
+      friendlyPlayers: [20, 21, 22, 23, 24] };
+  });
+  globalThis.fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("oauth/token")) return resp({ access_token: "t", expires_in: 3600 });
+    if (u.includes("wowhead.com")) return resp({ name: "spell" });
+    if (u.includes("/api/v2/")) {
+      let q = ""; try { q = JSON.parse(opts.body).query || ""; } catch {}
+      if (/fights\s*\{/.test(q)) return resp({ data: { reportData: { report: { fights: barely() } } } });
+      return resp({ data: shape(q) });
+    }
+    throw new Error("no mock route for " + u);
+  };
+  const r = await prog.progressionFindings("ABC123DEF4");
+  assert.ok(!r.dps, "barely-scratched boss -> no fabricated DPS deficit computed");
+  assert.ok(!r.findings.some((f) => /short on DPS/.test(f.text)), "no DPS-gate finding emitted");
+});
+
 test("progressionFindings: findings are sorted biggest-blocker-first and capped", async () => {
   install();
   const r = await prog.progressionFindings("ABC123DEF4");
