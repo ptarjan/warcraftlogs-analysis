@@ -866,8 +866,12 @@ function weakWindowLever(rot) {
     : fromP >= 66
     ? "don't coast to the finish -- you may be dumping resources/cooldowns too early or repositioning for the kill; keep pressing through the execute"
     : "find what stops you there (movement, a mechanic you disengage for, or a cooldown you're holding) and keep your uptime up";
+  // The bracket label already carries the sizing (reconciled to your gap); restating a raw
+  // "~N% of your total" here just fought it (a near-field player saw "[~2% DPS]" beside
+  // "~5% of your total"). The concrete k-vs-k drop conveys the magnitude; lead with the fix.
+  const Hint = hint.charAt(0).toUpperCase() + hint.slice(1);
   return [finding(DIM.ROTATION, DPS(pct),
-    `DAMAGE TIMELINE: your ${throughputWord()} craters during ${phase} (${fromP}-${toP}% of the fight) -- ~${k(w.youDps)} vs your own ~${k(w.yourTypical)} across the rest of it, and it's not a shared break (the field holds ~${k(w.fieldDps)} there). Closing that one window is ~${pct}% of your total: ${hint}.`,
+    `DAMAGE TIMELINE: your ${throughputWord()} craters during ${phase} (${fromP}-${toP}% of the fight) -- ~${k(w.youDps)} vs your own ~${k(w.yourTypical)} across the rest of it, and it's not a shared break (the field holds ~${k(w.fieldDps)} there). ${Hint}.`,
     "measured", KIND.WEAK_WINDOW)];
 }
 

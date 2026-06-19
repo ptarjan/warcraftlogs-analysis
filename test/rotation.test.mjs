@@ -271,7 +271,8 @@ test("weakWindowLever: surfaces the field-validated weak stretch as a measured, 
   // Phase NAMING: a window at the START reads as the opener; one at the END as the execute.
   const opener = rotationLevers({ weakWindow: { from: 0, to: 0.2, youDps: 1e4, yourTypical: 6e4, fieldDps: 5e4, lostFrac: 0.07 }, usage: { under: [], over: [] }, abilityIds: {} }).find((f) => /DAMAGE TIMELINE/.test(f.text));
   assert.match(opener.text, /your opener/);
-  assert.match(opener.text, /ramp up faster/);
+  assert.match(opener.text, /Ramp up faster/);                 // hint leads the sentence, capitalized
+  assert.doesNotMatch(opener.text, /% of your total/);         // no raw % fighting the bracket label
   const execute = rotationLevers({ weakWindow: { from: 0.9, to: 1.0, youDps: 1e4, yourTypical: 6e4, fieldDps: 5e4, lostFrac: 0.05 }, usage: { under: [], over: [] }, abilityIds: {} }).find((f) => /DAMAGE TIMELINE/.test(f.text));
   assert.match(execute.text, /the fight's final stretch/);
   assert.match(execute.text, /coast to the finish/);

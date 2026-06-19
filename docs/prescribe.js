@@ -920,6 +920,13 @@ function renderHeader(log, d, you, field, peerGap, topGap) {
   const ahead = peerGap <= 0;
   const gapPhrase = ahead ? `${Math.abs(peerGap)}% ahead` : `${peerGap}% behind`;
   const topClause = topGap != null ? `, and ${topGap}% behind the top parses` : "";
+  // Is the gap mostly a damage-bound REMAINDER (the healer "it's the encounter" framing
+  // holds) or mostly CONCRETE fixes? When your own sized levers already explain most of the
+  // gap, "most of it is the encounter/comp" CONTRADICTS the "~Npp you can fix" breakdown
+  // below (Mostlynotgay: 13% behind, all of it haste/embellishment/enchant/cooldown). Use
+  // the same finding impacts the breakdown reconciles, so header and breakdown agree.
+  const yoursSum = (d.rx || []).filter((r) => r.impact > 0 && r.dim !== DIM.COMP).reduce((s, r) => s + (r.impact || 0), 0);
+  const mostlyFixable = !ahead && peerGap > 0 && yoursSum >= peerGap * 0.5;
   // What the gap MEANS, as its own sentence (not a dashed aside): same-gear players
   // already do it, so it's gainable, and the list below is sized to sum to it.
   const tail = ahead
@@ -927,7 +934,9 @@ function renderHeader(log, d, you, field, peerGap, topGap) {
     : isEliteParse(d.medP)
     ? ` But the field here is the TOP parses at your item level, and at your ${ordinal(d.medP)} percentile most of that gap is raid comp + execution on optimal pulls, not a setup you're getting wrong. The fixes below are the concrete part you control.`
     : runIsHealer()
-    ? ` But ${metricUnit()} is capped by the damage your raid takes and your healing assignment, so most of that gap is the encounter and healer comp, not ${metricUnit()} you can simply add. The fixes below are the concrete part you control.`
+    ? (mostlyFixable
+       ? ` Most of that gap is concrete -- the gear/enchant/cooldown fixes below. (${metricUnit()} is also capped by the damage your raid takes, so chase effective throughput, not raw ${metricUnit()}.)`
+       : ` But ${metricUnit()} is capped by the damage your raid takes and your healing assignment, so most of that gap is the encounter and healer comp, not ${metricUnit()} you can simply add. The fixes below are the concrete part you control.`)
     : runIsSupport()
     ? ` But as a support, most of your value is the amps you keep on allies (credited to THEIR parses, not your personal DPS), so this personal-DPS gap mostly measures buff value, not DPS you can simply add. Your real lever is buff uptime (see the Support buffs card); the fixes below are the rest you control.`
     : ` They're at your exact item level, so that ${peerGap}% is realistically yours to gain -- the fixes below are sized to add up to it.`;
