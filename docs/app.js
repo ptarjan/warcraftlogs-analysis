@@ -17,6 +17,7 @@ import * as rotation from "./rotation.js";
 import * as talents from "./talents.js";
 import * as topparse from "./topparse.js";
 import * as gear from "./gear.js";
+import * as consumables from "./consumables.js";
 import * as healing from "./healing.js";
 import * as support from "./support.js";
 import * as prescribe from "./prescribe.js";
@@ -562,6 +563,7 @@ const SUPPORTING = [
   ["Talents", (p, log) => talents.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Top parses", (p, log) => topparse.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
   ["Gear", (p, log) => gear.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty, p.priority)],
+  ["Consumables", (p, log) => consumables.run(log, p.name, p.server, p.region, p.cls, p.spec, p.difficulty)],
 ];
 
 // The supporting cards for this run. Healers get a "Healing efficiency" card
