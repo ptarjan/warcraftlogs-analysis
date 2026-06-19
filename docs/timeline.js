@@ -38,7 +38,6 @@ async function fightMetrics(code, fight, sourceId, className = "Monk", { autoFal
   const autosIn = (t0, t1) => autoTs.filter((t) => t > t0 && t <= t1).length;
 
   let lostNotPressing = 0.0, lostRangeMove = 0.0;
-  const stalls = [];
   const threshold = gcd * 1.4;
   for (let i = 0; i < merged.length - 1; i++) {
     const g = merged[i + 1] - merged[i];
@@ -50,7 +49,6 @@ async function fightMetrics(code, fight, sourceId, className = "Monk", { autoFal
     // never as "out of range".
     if (!hasAuto || got >= expected * 0.5) lostNotPressing += excess;
     else lostRangeMove += excess;
-    stalls.push([merged[i] - fStart, g, got >= Math.max(1, expected) * 0.5]);
   }
 
   const overGaps = gaps.filter((g) => g >= gcd && g <= gcd + 600).map((g) => g - gcd);
@@ -72,7 +70,6 @@ async function fightMetrics(code, fight, sourceId, className = "Monk", { autoFal
     pressLostPerMin: (lostNotPressing / 1000) / (dur / 60),
     autoDownPct: 100 * autoDown / (dur * 1000),
     overshootMs: overshoot || 0,
-    stalls,
   };
 }
 
