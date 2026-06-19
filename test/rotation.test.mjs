@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, rotationLevers, medianCastRates } = await import("../docs/rotation.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, empoweredStats, empowermentCandidate, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, rotationLevers, medianCastRates } = await import("../docs/rotation.js");
 const { setRunMetric } = await import("../docs/core.js");
 
 // Run a body with the run metric forced, always restoring "dps" so it never leaks.
@@ -199,6 +199,50 @@ test("empoweredShare: 0 when the ability is uniform (no hit clears 1.5x the medi
 
 test("empoweredShare: null when too few hits to judge", () => {
   assert.equal(empoweredShare([40000, 100000, 41000]), null);
+});
+
+test("empoweredStats: the share plus the concrete empowered/total counts (for '41/78' wording)", () => {
+  const amts = [38000, 39000, 40000, 41000, 42000, 40000, 39000, 100000, 105000, 98000];
+  assert.deepEqual(empoweredStats(amts), { share: 0.3, empowered: 3, total: 10 });
+  assert.equal(empoweredStats([1, 2, 3]), null);          // too few -> null
+});
+
+test("empowermentCandidate: picks the high-VOLUME bimodal filler, NOT the hardest-median hit", () => {
+  // Frost-Mage shape: Glacial Spike hits hard EVERY cast (high median, NOT bimodal -> no
+  // empowered cluster); Ice Lance is small most casts, ~3x into Shatter (low median, bimodal,
+  // and high total volume from many casts). The empowerment lever must analyze ICE LANCE.
+  const hits = [
+    { name: "Glacial Spike", med: 200000, empShare: 0, procBig: 0 },   // uniform big hit
+    { name: "Ice Lance", med: 20000, empShare: 0.4, procBig: 5 },      // bimodal filler
+    { name: "Frostbolt", med: 30000, empShare: null, procBig: 1 },
+  ];
+  const dmgTotals = { "Glacial Spike": 1_500_000, "Ice Lance": 3_000_000, Frostbolt: 2_000_000 };
+  const biggest = hits[0];                                              // hardest-median
+  assert.equal(empowermentCandidate(hits, dmgTotals, biggest).name, "Ice Lance");
+  // Among TWO bimodal abilities, volume breaks the tie.
+  const two = [{ name: "A", empShare: 0.3, procBig: 3 }, { name: "B", empShare: 0.3, procBig: 3 }];
+  assert.equal(empowermentCandidate(two, { A: 100, B: 900 }).name, "B");
+  // No bimodal ability -> fall back to biggest (don't regress specs whose big hit IS the one).
+  const uniform = [{ name: "X", empShare: 0, procBig: 0 }];
+  assert.equal(empowermentCandidate(uniform, {}, biggest).name, "Glacial Spike");
+  assert.equal(empowermentCandidate([], {}, null), null);
+});
+
+test("empowerment lever: fires on the candidate when your empowered SHARE trails the field, with counts", () => {
+  // perCast tagged for the candidate (Ice Lance): you 40% vs field 70% empowered, 30pp gap,
+  // sized pct >= 1 -> a measured EMPOWERMENT lever naming the concrete wasted casts.
+  const rot = {
+    perCast: [{ name: "Ice Lance", pct: 6, youEmp: 0.40, fieldEmp: 0.70, youEmpCount: 32, youEmpN: 80 }],
+    usage: { under: [], over: [] }, abilityIds: { "Ice Lance": 30455 },
+  };
+  const emp = rotationLevers(rot).find((fnd) => /EMPOWERMENT/.test(fnd.text));
+  assert.ok(emp, "lever fires when share trails by >= 12pp");
+  assert.match(emp.text, /Ice Lance/);
+  assert.match(emp.text, /32\/80/);                       // your concrete count
+  assert.match(emp.text, /~56\/80/);                      // field share (0.70) x your N (80)
+  // Equal shares -> NOT timing -> silent (the gap is per-cast stats, not empowerment).
+  const even = { perCast: [{ name: "Ice Lance", pct: 6, youEmp: 0.68, fieldEmp: 0.70, youEmpCount: 54, youEmpN: 80 }], usage: { under: [], over: [] }, abilityIds: {} };
+  assert.equal(rotationLevers(even).filter((fnd) => /EMPOWERMENT/.test(fnd.text)).length, 0);
 });
 
 test("empoweredShare is the gear-robust gate -- two players with the SAME share despite different hit sizes", () => {

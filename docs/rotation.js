@@ -44,12 +44,36 @@ export function openerSequence(casts, windowMs = 20000, n = 8) {
 // field's Y%" and only claim an empowerment lever when your share actually trails --
 // and because it's a within-player fraction, a flat amp (comp, or a boss's
 // damage-taken debuff) lifts both clusters and leaves the share unchanged.
-export function empoweredShare(nonCritAmounts, { minHits = 6, factor = 1.5 } = {}) {
+// {share, empowered, total} for an ability's non-crit casts, or null if too few to
+// judge. `empowered`/`total` are concrete COUNTS so a lever can say "you land it
+// empowered 41/78 times vs the field's ~62/78" instead of only a percentage.
+export function empoweredStats(nonCritAmounts, { minHits = 6, factor = 1.5 } = {}) {
   const s = [...nonCritAmounts].sort((a, b) => a - b);
   if (s.length < minHits) return null;
   const med = s[Math.floor(s.length / 2)];
   if (!(med > 0)) return null;
-  return nonCritAmounts.filter((a) => a > med * factor).length / nonCritAmounts.length;
+  const empowered = nonCritAmounts.filter((a) => a > med * factor).length;
+  return { share: empowered / nonCritAmounts.length, empowered, total: nonCritAmounts.length };
+}
+
+export function empoweredShare(nonCritAmounts, opts = {}) {
+  const st = empoweredStats(nonCritAmounts, opts);
+  return st ? st.share : null;
+}
+
+// Pick the ability whose EMPOWERMENT we measure against the field. NOT the hardest-median
+// hit: a filler that's small most casts and big only when empowered (Frost's Ice Lance into
+// Shatter, a combo'd Tiger Palm) has a LOW median, so a median pick skips it -- yet that's
+// exactly where "wasted empowered casts" hide. Take the highest-VOLUME ability that has a
+// real bimodal (empowered-vs-bare) distribution (procBig>=2 + a measurable empShare); fall
+// back to `biggest` when none qualifies. Class-agnostic: it's the spec's "only good when
+// empowered" button, whatever it's named. `hits` carry { name, empShare, procBig }.
+/** @param {any[]|null|undefined} hits @param {Record<string,number>|null|undefined} [dmgTotals] @param {any} [biggest] */
+export function empowermentCandidate(hits, dmgTotals, biggest = null) {
+  const cands = (hits || []).filter((h) => h.empShare != null && h.procBig >= 2);
+  if (!cands.length) return biggest;
+  const tot = dmgTotals || {};
+  return [...cands].sort((a, b) => (tot[b.name] || 0) - (tot[a.name] || 0))[0];
 }
 
 // --- data layer: everything reads from the shared core loader (reportCore,
@@ -72,13 +96,16 @@ function perHit(events) {
   const s = [...amounts].sort((a, b) => a - b);
   const crits = events.filter((x) => x.hitType === 2).length;
   const nonCrit = events.filter((x) => x.hitType !== 2).map((x) => x.amount || 0);
+  const empSt = empoweredStats(nonCrit);
   return {
     count: s.length,
     med: s.length ? s[Math.floor(s.length / 2)] : 0,
     max: s.length ? s[s.length - 1] : 0,
     critPct: s.length ? (100 * crits) / s.length : 0,
-    procBig: empoweredCount(nonCrit),   // outsized NON-crit hits = a real proc
-    empShare: empoweredShare(nonCrit),  // fraction of casts that land empowered (null if too few)
+    procBig: empoweredCount(nonCrit),         // outsized NON-crit hits = a real proc
+    empShare: empSt ? empSt.share : null,     // fraction of casts that land empowered (null if too few)
+    empCount: empSt ? empSt.empowered : null, // and the concrete counts behind that fraction
+    empN: empSt ? empSt.total : null,
   };
 }
 
@@ -610,7 +637,7 @@ export function castable(name, talent) {
 // valid PLAYSTYLE comparison and an approximate one beats none. Two hero trees swap whole
 // buttons (a mixed field makes the cast-rate diff lie both ways), so we compare only to
 // SAME-tree peers; hero detection is best-effort (null -> whole field). Returns the top 5.
-async function fetchRotationPeers(name, server, region, boss, difficulty, className, specName, best, you, biggest) {
+async function fetchRotationPeers(name, server, region, boss, difficulty, className, specName, best, you, cand) {
   let cands = await ilvlPeers(name, server, region, boss, difficulty, className, specName);
   if (!cands.length) cands = await ilvlPeers(name, server, region, boss, difficulty, className, specName, { window: 15 });
   let yourHero = null;
@@ -618,7 +645,7 @@ async function fetchRotationPeers(name, server, region, boss, difficulty, classN
   const analyzed = (await mapLimit(cands, 4, async (r) => {
     try {
       const a = await analyzeKill(r.name, r.report.code, r.report.fightID, specName, className,
-                                  { onlyAbility: biggest ? biggest.name : "__noempower__", dotIds: (you.dots || []).map((d) => d.guid) });
+                                  { onlyAbility: cand ? cand.name : "__noempower__", dotIds: (you.dots || []).map((d) => d.guid) });
       if (!a) return null;
       const hero = yourHero ? await heroTreeOf(r.report.code, r.report.fightID, a.sourceID).catch(() => null) : null;
       return { ...a, hero };
@@ -667,26 +694,24 @@ export async function rotationFindings(name, server, region, className, specName
     if (extra.length) you.castRate = medianCastRates([you.castRate, ...extra]);
   }
 
-  // The empowerment candidate is your HARDEST hitter (biggest per-cast) -- the hit
-  // whose strength matters most, and the one a missed buff/combo window most hurts.
-  // We measure the FIELD's empowered share of THIS ability so "your big hit lands
-  // weak" can only fire on real under-empowerment, never on a uniform stat gap.
+  // `biggest` = your hardest-median hit, kept for the "biggest single-hit ability" display.
   const biggest = (you.hits || []).length ? [...(you.hits || [])].sort((a, b) => b.med - a.med)[0] : null;
-  const isReal = biggest ? biggest.procBig >= 2 : false;   // null biggest -> no empowerment analysis
+  const empCand = empowermentCandidate(you.hits, you.dmgTotals, biggest);
+  const isReal = empCand ? empCand.procBig >= 2 : false;   // null candidate -> no empowerment analysis
 
-  // The ilvl-matched field (peers analyzed the SAME way as you), restricted to your
-  // hero tree. Feeds the empowered-share + proc rate of your biggest hit, the opener,
-  // and the whole ability-usage comparison.
+  // The ilvl-matched field (peers analyzed the SAME way as you), restricted to your hero
+  // tree. Feeds the empowered-share + proc rate of the SAME candidate ability, the opener,
+  // and the whole ability-usage comparison. One ability measured per peer, so picking
+  // empCand over biggest adds NO fetch -- it just measures the RIGHT button.
   const { peers, yourHero } = await fetchRotationPeers(
-    name, server, region, boss, difficulty, className, specName, best, you, biggest);
+    name, server, region, boss, difficulty, className, specName, best, you, empCand);
   const fieldProc = (isReal && peers.length) ? median(peers.map((a) => a.procPerMin)) : null;
-  // Field's empowered-cast share of your biggest hit (median over peers who had
-  // enough hits to judge). Pairs with your own share to SHOW the comparison and to
-  // gate the empowerment lever -- equal shares means the gap is per-cast stats, not
-  // timing, so we stay silent.
+  // Field's empowered-cast share of the candidate (median over peers who had enough hits to
+  // judge). Pairs with your own share to SHOW the comparison and to gate the empowerment
+  // lever -- equal shares means the gap is per-cast stats, not timing, so we stay silent.
   const empShares = peers.map((p) => p.empShare).filter((x) => x != null);
   const fieldEmp = (isReal && empShares.length >= 3) ? median(empShares) : null;
-  const youEmp = biggest ? biggest.empShare : null;
+  const youEmp = empCand ? empCand.empShare : null;
   const fieldOpener = peers.length ? peers[0].opener : null;
   // For an ATONEMENT healer the rotation IS the damage rotation, so the field rate must be
   // the peers' DAMAGE cast rate -- built by filtering each peer's already-fetched all-casts
@@ -795,11 +820,11 @@ export async function rotationFindings(name, server, region, className, specName
     const overallRatio = peerTotals.length ? median(peerTotals) / (you.total || 1) : 1;
     perCast = perCastGaps(yourAb, fieldAb, overallRatio, you.total ||
       Object.values(you.dmgTotals || {}).reduce((a, b) => a + b, 0));
-    // Tag the biggest-hit's per-cast gap with the empowered-share comparison, so the
-    // lever can decide WHY it's behind: a lower empowered share -> timing (empower
-    // it more); equal shares -> uniform per-cast stats (leave it in the remainder).
+    // Tag the candidate's per-cast gap with the empowered-share comparison (+ the concrete
+    // counts), so the lever can decide WHY it's behind: a lower empowered share -> timing
+    // (empower it more); equal shares -> uniform per-cast stats (leave it in the remainder).
     for (const pc of perCast) {
-      if (biggest && pc.name === biggest.name) Object.assign(pc, { youEmp, fieldEmp });
+      if (empCand && pc.name === empCand.name) Object.assign(pc, { youEmp, fieldEmp, youEmpCount: empCand.empCount, youEmpN: empCand.empN });
     }
   }
   // Your talented abilities, so the prescription can tell a skipped talent from a
@@ -833,7 +858,8 @@ export async function rotationFindings(name, server, region, className, specName
     usage, cooldowns, cdUsage, buffCds, perCast, dotGaps, dotCount: (you.dots || []).length, petGap, castGap, fieldPeers: peers.length, talent, abilityIds,
     yourHero: yourHero || null,
     heroMatched: yourHero && peers.length ? (peers.every((p) => p.hero === yourHero) ? yourHero : null) : null,
-    proc: { name: biggest ? biggest.name : null, isReal, youPerMin: biggest ? biggest.procPerMin : 0, fieldPerMin: fieldProc, youEmp, fieldEmp },
+    proc: { name: empCand ? empCand.name : null, isReal, youPerMin: empCand ? empCand.procPerMin : 0, fieldPerMin: fieldProc, youEmp, fieldEmp,
+            youEmpCount: empCand ? empCand.empCount : null, youEmpN: empCand ? empCand.empN : null },
   };
 }
 
@@ -871,10 +897,13 @@ export async function run(log, name, server, region, className = "Monk",
       const p = fnd.proc;
       log(`=== EMPOWERMENT (${p.name}, high-damage casts) ===`);
       if (p.youEmp != null && p.fieldEmp != null) {
-        log(`  empowered casts:  you ${Math.round(p.youEmp * 100)}%   peers ${Math.round(p.fieldEmp * 100)}%`);
+        const cnt = (p.youEmpCount != null && p.youEmpN)
+          ? `  (you ${p.youEmpCount}/${p.youEmpN}, field ~${Math.round(p.fieldEmp * p.youEmpN)}/${p.youEmpN})`
+          : "";
+        log(`  empowered casts:  you ${Math.round(p.youEmp * 100)}%   peers ${Math.round(p.fieldEmp * 100)}%${cnt}`);
         log(p.fieldEmp - p.youEmp >= 0.12
-          ? "  -> Fewer than peers -- land your hardest hit in its empower/amp window more often."
-          : "  -> About the same as peers. Your big hits land in their window as often; the per-cast gap is stats/comp/fight-amp, not timing.");
+          ? `  -> Fewer than peers -- land ${p.name} in its empower/amp window more often.`
+          : `  -> About the same as peers. Your ${p.name} lands in its window as often; the per-cast gap is stats/comp/fight-amp, not timing.`);
       } else {
         log(`  proc hits/min:  you ${p.youPerMin.toFixed(1)}   peers ${p.fieldPerMin == null ? "?" : p.fieldPerMin.toFixed(1)}`);
       }
@@ -1103,10 +1132,15 @@ function empowermentLever(rot, link) {
     (pc) => pc.youEmp != null && pc.fieldEmp != null && pc.pct >= 1 &&
             pc.fieldEmp >= 0.2 && pc.fieldEmp - pc.youEmp >= 0.12);
   if (emp) {
+    // Concrete counts when we have them ("41/78 vs ~62/78") -- the field count is its
+    // SHARE applied to YOUR cast total, so it's an apples-to-apples "of the same casts".
+    const count = (emp.youEmpCount != null && emp.youEmpN)
+      ? ` (you land ${emp.youEmpCount}/${emp.youEmpN}; the field lands ~${Math.round(emp.fieldEmp * emp.youEmpN)}/${emp.youEmpN} of the same casts)`
+      : "";
     out.push(finding(DIM.ROTATION, DPS(emp.pct),
       `EMPOWERMENT: ${Math.round(emp.youEmp * 100)}% of your ${link(emp.name)} casts land in its high-damage window ` +
-      `vs the field's ${Math.round(emp.fieldEmp * 100)}% -- your weak casts hit for roughly half. ` +
-      `Line your hardest hit up with its empower window (its combo/buff/proc, or the boss's damage-taken window) every time.`,
+      `vs the field's ${Math.round(emp.fieldEmp * 100)}%${count} -- your weak casts hit for roughly half. ` +
+      `Line ${link(emp.name)} up with its empower window (its combo/buff/proc, or the boss's damage-taken window) every time.`,
       "measured", KIND.EMPOWERMENT));
   }
   return out;
