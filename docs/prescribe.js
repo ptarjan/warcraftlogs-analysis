@@ -751,7 +751,7 @@ function renderVerdict(log, d, yours) {
     // Metric-aware: a healer's residual gap is healing efficiency + damage-bound
     // throughput, never "damage-per-cast". (Same class of fix as the HPS metric-word
     // routing; "damage-per-cast" would leak a damage word into an HPS report.)
-    const residualWord = hasPress ? "reps" : runIsHealer()
+    const residualWord = hasPress ? "more pulls" : runIsHealer()
       ? "healing efficiency + throughput (stats/gear/comp), not activity"
       : "damage-per-cast (stats/gear), not activity";
     // Don't reassure "not a rotation overhaul" when a rotation habit recurs across your

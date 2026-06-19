@@ -440,10 +440,10 @@ export function embellishmentRx(gf) {
     const lead = emb.length < 2
       ? `you run ${emb.length}/2 -- craft ${recText}`
       : `yours (${ec.yourCombo.join("+") || "none"}) isn't one top performers run -- switch to ${recText}`;
-    msg = `EMBELLISHMENTS: ${lead}${pop}. Throughput drops can't give.`;
+    msg = `EMBELLISHMENTS: ${lead}${pop} -- guaranteed throughput you craft, no lucky drop required.`;
   } else {
     msg = emb.length < 2
-      ? `EMBELLISHMENTS: you run ${emb.length}/2 -- fill the free slot${pop}. Throughput drops can't give.`
+      ? `EMBELLISHMENTS: you run ${emb.length}/2 -- fill the free slot${pop}: guaranteed throughput you craft, no lucky drop required.`
       : `EMBELLISHMENTS: yours (${ec.yourCombo.join("+") || "none"}) isn't one top performers run${top ? `; the #1 combo is ${top[0].join("+")} (${top[1]}/${ec.fieldN})` : ""}. Match it.`;
   }
   return finding(DIM.GEAR, DPS(2, 4), msg);

@@ -160,7 +160,7 @@ test("residualText: playstyle doesn't say 'NOT press faster' when a PRESS FASTER
   const rot = { proc: null, usage: { under: [] }, talent: null };
   const withPress = residualText("playstyle", 43, d, rot, [{ kind: KIND.PRESS_FASTER, text: "PRESS FASTER ..." }]);
   assert.doesNotMatch(withPress, /NOT "press faster"/, "no flat contradiction of the #1 PRESS FASTER item");
-  assert.match(withPress, /beyond the idle gap/);
+  assert.match(withPress, /[Bb]eyond the idle gap/);
   // No press-faster lever in the list -> keep the original blunt wording.
   const noPress = residualText("playstyle", 43, d, rot, []);
   assert.match(noPress, /NOT "press faster"/);

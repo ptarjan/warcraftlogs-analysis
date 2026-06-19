@@ -268,7 +268,7 @@ export function residualText(kind, r, d, rot, rx) {
     const hasPressItem = (rx || []).some((x) => x.kind === KIND.PRESS_FASTER);
     const notGear = `it's NOT gear (a sim would value your gear swaps at a few %)`;
     const playstyleBody = hasPressItem
-      ? `${notGear} and -- beyond the idle gap listed above -- NOT just pressing faster either; it's how you play the same gear the field plays`
+      ? `${notGear}. Beyond the idle gap above, it's not just pressing faster either -- it's how you play the same gear the field plays`
       : `${notGear} and NOT "press faster" -- it's how you play the same gear the field plays`;
     return isOffMetaBuild(rx)
       ? `OFF-META BUILD + PLAYSTYLE (~${r}%): a large part is your BUILD -- you run a hero tree (and talents) the field doesn't (see the HERO TREE + TALENTS items), so your rotation can't be compared button-for-button and a sim would value the swap well above the estimate above. Switch to the meta build and re-run first.${cite}`
