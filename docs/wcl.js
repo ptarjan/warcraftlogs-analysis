@@ -283,12 +283,19 @@ const _ttlForRead = (q) => {
   if (_preferCache) return FIELD_STALE_CAP_MS;
   return _ttlFor(q);
 };
-// TTL applied when deciding what to KEEP on disk at flush time. We retain drift-able
-// entries up to the stale cap (not just the weekly TTL) so a later preferCache/cache-only
-// run can still serve them; without this, flush would drop them at one week and the reuse
-// would never span runs. Read-eligibility is still gated by _ttlForRead, so a normal run
-// won't START serving these older entries -- they just stay on disk in case they're wanted.
-const _ttlForKeep = (q) => (_isImmutable(q) ? Infinity : FIELD_STALE_CAP_MS);
+// What we KEEP on disk at flush. Eviction is now LRU-by-SIZE (see _evictLru), NOT by age, so
+// flush keeps every entry regardless of age -- a character you keep reviewing never time-expires.
+// (Read-eligibility / fetch-mode freshness of drift-able data is still gated by _ttlForRead, so a
+// stale field is refetched on use even though it stays on disk.) FIELD_STALE_CAP_MS is now used
+// only by _ttlForRead (the preferCache serve cap), not for retention.
+const _ttlForKeep = (_q) => Infinity;
+// LRU budget: the cache is bounded by SIZE, evicting the least-recently-ACCESSED shards (by file
+// mtime, which _loadShardInto touches on read), NOT by age. So review never lapses on a timer;
+// the cache only shrinks when it exceeds the budget. Generous default, env-overridable. Evicted
+// shards refetch identically (immutable data) -- a budget cost, not data loss. Read at evict time
+// so tests/users can tune it.
+const _maxCacheBytes = () => (Number(process.env.WCL_CACHE_MAX_MB) || 2048) * 1024 * 1024;
+let _evictDone = false;   // size check runs once per process
 // Persisted fingerprint store (Node disk cache). Used by revalidateCharacter to remember
 // a character's kill-signature across runs. `meta:` keys are immutable (never pruned).
 export function metaGet(key) { const q = "meta:" + key; _ensureLoaded(q); return _gqlCache.has(q) ? _gqlCache.get(q) : undefined; }
@@ -328,6 +335,7 @@ function _loadShardInto(id, migrate) {
   let migrated = false;
   for (const file of [_shardFile(id), _legacyShardFile(id)]) {
     let buf; try { buf = _diskFs.readFileSync(file); } catch { continue; }   // shard not written yet
+    try { _diskFs.utimesSync(file, now / 1000, now / 1000); } catch { /* mtime touch is best-effort -- it's the LRU recency signal */ }
     try {
       for (const [q, e] of Object.entries(_decodeShard(buf)))
         if (e && (now - e.t) < _ttlForRead(q) && (!_diskStore[q] || _diskStore[q].t < e.t)) {
@@ -508,13 +516,44 @@ function _flushDisk() {
   // resets the budget (diskPut clears nothing, but a clean flush below does).
   if (stillDirty.size && _flushRetries++ < 3) _diskTimer = setTimeout(_flushDisk, 2000);
   else _flushRetries = 0;
+  // Bound the cache by SIZE once per process (after a write, off the hot path). Cheap
+  // stat-only scan; only the rare over-budget case deletes anything.
+  if (!_evictDone) { _evictDone = true; setTimeout(_evictLru, 0); }
 }
+
+// LRU eviction: when the on-disk cache exceeds the size budget, delete the
+// least-recently-ACCESSED shard files (by mtime -- _loadShardInto touches it on every read, and
+// flush rewrites touch it on write) down to 90% of the budget. RECENCY-based, never age-based:
+// a shard you keep reading keeps a fresh mtime and survives; only cold shards are dropped, and
+// they refetch identically. Stat-only scan (no decompress). Best-effort: any FS hiccup just
+// skips eviction, leaving the cache intact (never a partial/corrupt delete of a shard's content
+// -- we remove whole files atomically, so the never-clobber invariant holds).
+function _evictLru() {
+  if (!_diskFs || !_diskDir || !_diskPath) return;
+  let names; try { names = _diskFs.readdirSync(_diskDir); } catch { return; }
+  const shards = names.filter((f) => f.endsWith(".json.gz") || f.endsWith(".json"));
+  const stats = []; let total = 0;
+  for (const f of shards) {
+    try { const st = _diskFs.statSync(_diskPath.join(_diskDir, f)); stats.push([f, st.size, st.mtimeMs]); total += st.size; }
+    catch { /* vanished mid-scan -- skip */ }
+  }
+  const budget = _maxCacheBytes();
+  if (total <= budget) return;
+  const target = budget * 0.9;                 // evict to 90% so it doesn't run every session
+  stats.sort((a, b) => a[2] - b[2]);           // least-recently-accessed (oldest mtime) first
+  for (const [f, size] of stats) {
+    if (total <= target) break;
+    try { _diskFs.unlinkSync(_diskPath.join(_diskDir, f)); total -= size; } catch { /* skip */ }
+  }
+}
+export function _evictGqlLru() { _evictLru(); }   // test hook
 
 // Test-only hooks: flush the debounced write now, and forget all disk state so a
 // fresh initDisk() re-reads the shards (simulating a separate CLI run).
 export function _flushGqlDisk() { _flushDisk(); }
 export function _resetGqlDisk() {
   clearTimeout(_diskTimer); _dirty.clear(); _migrate = false; _flushRetries = 0; _loadedShards.clear();
+  _evictDone = false;
   _diskReady = _diskStore = _diskFile = _diskDir = _diskFs = _diskPath = _diskZlib = null;
 }
 

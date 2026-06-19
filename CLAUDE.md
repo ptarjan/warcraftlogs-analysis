@@ -69,11 +69,18 @@ payoff; the list is sorted **biggest-DPS-first by the impact actually shown**.
   `encounter:totalKills`, a query it makes anyway — NOT rankPercent, that drifts
   with the field) and, when the signature matches last run's (stored via
   `metaGet`/`metaPut`), flips `setPreferCache(true)` so reads serve the cached
-  field past its TTL up to `FIELD_STALE_CAP_MS` (~a month, the ceiling so it can't
-  drift forever). Cache-only runs serve stale unconditionally (no fetch, so stale
-  beats a `CacheMiss`). `_ttlForRead` gates SERVING; `_ttlForKeep` (also the cap)
-  gates disk RETENTION so a later run can still reuse it. A new kill changes the
+  field past its TTL up to `FIELD_STALE_CAP_MS` (~a month — a SERVE ceiling on stale
+  reads, not a retention cap). Cache-only runs serve stale unconditionally (no fetch,
+  so stale beats a `CacheMiss`). `_ttlForRead` gates SERVING. A new kill changes the
   fingerprint and the field refreshes exactly as before.
+- **Disk eviction is LRU-by-SIZE, NOT by age (`_evictLru`).** Nothing time-expires
+  off disk: `_ttlForKeep` is `Infinity`, so flush keeps every entry regardless of age
+  — a character you keep reviewing never lapses. The cache is bounded by
+  `WCL_CACHE_MAX_MB` (default 2 GB); when over, it deletes the least-recently-ACCESSED
+  whole shard files (`_loadShardInto` touches each shard's mtime on read; eviction sorts
+  by mtime). Evicted shards refetch identically (immutable data) — a budget cost, not
+  data loss. The weekly/serve TTL (`_ttlForRead`) is ONLY about fetch-mode freshness of
+  drift-able data (a stale field is refetched on use), never about retention.
 - camelCase all derived fields. Snake_case only for OAuth/HTTP wire formats.
 - **Verify every WCL GraphQL field/arg against the schema — don't guess.** Before
   adding or changing a query, check `WCL-SCHEMA.md` (our verified query surface +

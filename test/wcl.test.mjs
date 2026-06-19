@@ -452,3 +452,45 @@ test("revalidateCharacter: unchanged kills -> reuse the field (preferCache on)",
     setPreferCache(false); clearGqlCache(); _resetGqlDisk();
   }
 });
+
+// LRU eviction: the cache is bounded by SIZE and evicts the least-recently-ACCESSED shards
+// (by file mtime), never by age. Over the budget, the oldest-mtime shards go first; recently
+// touched ones survive. Replaces the old time-based retention so review never lapses on a timer.
+test("disk cache: LRU evicts least-recently-accessed shards over the size budget", async () => {
+  const { gql, _resetGqlDisk, _flushGqlDisk, _evictGqlLru } = await import("../docs/wcl.js");
+  const file = path.join(os.tmpdir(), `wcl-lru-${process.pid}.json`);
+  const dir = `${file}.shards`;
+  process.env.WCL_GQL_CACHE = "1";
+  process.env.WCL_GQL_CACHE_FILE = file;
+  process.env.WCL_CACHE_MAX_MB = "1";   // 1 MB budget
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+    _resetGqlDisk();
+    // A fetch initialises the disk machinery (_diskDir/_diskFs/_diskPath) + writes a shard.
+    globalThis.fetch = mockFetch([TOKEN, ["/api/v2/client", { json: { data: { ok: 1 } } }]]);
+    await gql("query { worldData { encounter(id:99) { characterRankings(page:1) } } }");
+    _flushGqlDisk();
+    // 5 real-size shards (~400 KB each = ~2 MB > the 1 MB budget): 3 cold (old mtime), 2 hot.
+    const now = Date.now();
+    const mk = (name, ageDays) => {
+      const p = path.join(dir, name);
+      fs.writeFileSync(p, Buffer.alloc(400 * 1024));
+      const t = (now - ageDays * 86400000) / 1000;
+      fs.utimesSync(p, t, t);
+    };
+    mk("a00.json.gz", 30); mk("a01.json.gz", 20); mk("a02.json.gz", 10);   // cold
+    mk("f00.json.gz", 0.10); mk("f01.json.gz", 0.05);                       // hot (recent)
+    _evictGqlLru();
+    const left = new Set(fs.readdirSync(dir).filter((f) => f.endsWith(".json.gz")));
+    assert.ok(left.has("f00.json.gz") && left.has("f01.json.gz"), "recently-accessed shards survive");
+    assert.ok(!left.has("a00.json.gz"), "oldest-mtime shard evicted first");
+    // Total left must be under the budget (1 MB).
+    let total = 0; for (const f of left) total += fs.statSync(path.join(dir, f)).size;
+    assert.ok(total <= 1024 * 1024, `cache pruned under the budget (got ${total})`);
+  } finally {
+    delete process.env.WCL_GQL_CACHE; delete process.env.WCL_GQL_CACHE_FILE; delete process.env.WCL_CACHE_MAX_MB;
+    _resetGqlDisk();
+    fs.rmSync(file, { force: true }); fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
