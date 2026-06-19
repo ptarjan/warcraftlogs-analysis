@@ -22,6 +22,10 @@ import {
 import { wowheadSpell } from "./links.js";
 
 const TOPN = 6; // how many top-ranked kills to learn routing/potions from
+// Minimum routing gap (top % on adds minus yours) worth acting on. ONE constant so the
+// supporting card, the tank-target fetch, and the prescription lever can't drift apart --
+// the card used to surface a 1-4% gap the lever never turned into a list item.
+const ROUTE_MIN = 5;
 
 // The canonical raid-wide DAMAGE buffs/debuffs and who provides each. `on`:
 // "self" = a buff on the player, "boss" = a debuff on the enemy (so it needs the
@@ -174,7 +178,7 @@ export async function topParseFindings(name, server, region, difficulty, classNa
     // Brewmasters tanked the same Alleria and still out-funneled).
     const route = median(topRoutes.map((r) => r.pct)) - youRoute.pct;
     let tank = null, fieldTank = null, cleaveShare = null;
-    if (!runIsHealer() && route >= 5 && addNames.length) {
+    if (!runIsHealer() && route >= ROUTE_MIN && addNames.length) {
       try { tank = await tankTarget(mine.code, mine.fight, you.sourceID); } catch (e) { /* no read -> stays a choice lever */ }
       try {
         const fts = (await mapLimit(tops.slice(0, 3), 3, (t) => tankTarget(t.code, t.fight, t.m.sourceID).catch(() => null)))
@@ -235,7 +239,7 @@ export async function run(log, name, server, region, className, specName, diffic
   // (you already route more) or "potions: top 0, you 0" are non-actionable noise.
   // Suppressed for healers: a healer's DAMAGE routing is meaningless for HPS (the
   // routing LEVER is suppressed too) -- don't show "you put X% of damage on adds".
-  if (!runIsHealer() && fnd.routing && fnd.routing.top - fnd.routing.you >= 1 && fnd.routing.addNames.length) {
+  if (!runIsHealer() && fnd.routing && fnd.routing.top - fnd.routing.you >= ROUTE_MIN && fnd.routing.addNames.length) {
     log("--- Damage routing ---");
     log(`  top parses put ${f(fnd.routing.top, 0)}% of damage on non-boss targets; you ${f(fnd.routing.you, 0)}%.`);
     log(`  they cleave/funnel that you don't: ${fnd.routing.addNames.join(", ")}`);
@@ -283,7 +287,7 @@ export function topParseLevers(tp, compDeltas = null) {
   // as yours. Otherwise it's a genuine choice/funnel gap -> the sized "cleave more" lever.
   // DPS-only (compares where you put DAMAGE); suppressed for healers (nonsense for HPS).
   const route = tp.routing ? tp.routing.top - tp.routing.you : 0;
-  if (!runIsHealer() && tp.routing && route >= 5 && tp.routing.addNames.length) {
+  if (!runIsHealer() && tp.routing && route >= ROUTE_MIN && tp.routing.addNames.length) {
     const adds = tp.routing.addNames.join(", ");
     const top = f(tp.routing.top, 0), youPct = f(tp.routing.you, 0);
     const tank = tp.routing.tank, fieldTank = tp.routing.fieldTank;

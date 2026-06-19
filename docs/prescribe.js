@@ -1060,7 +1060,6 @@ function renderChangeList(log, d, peerGap, outpaces) {
     const target = Math.max(0, gap - compImpact);                 // the plausibly-yours share
     const { scaled, residual: res } = reconcileImpacts(renderYou.map((r) => r.impact), target);
     renderYou.forEach((r, i) => { r.impact = scaled[i]; r.label = pctLabel(scaled[i]); });
-    renderYou.sort((a, b) => b.impact - a.impact);
     residual = res;
     fixableTotal = scaled.reduce((s, v) => s + (v || 0), 0);      // your concrete, post-scale
   }
@@ -1084,6 +1083,11 @@ function renderChangeList(log, d, peerGap, outpaces) {
     const rtext = residualText(residualKind, r, d, rot, rx);
     renderYou.push({ dim: DIM.EXECUTION, impact: residual, label: pctLabel(residual), text: rtext, basis: "measured" });
   }
+  // Sort AFTER the remainder is pushed so the list stays biggest-first INCLUDING it: a
+  // large unexplained remainder is the biggest lever and must lead, not hide under a 1%
+  // gear swap (the hard rule -- the order must match the displayed % DPS). INFO notes
+  // (impact 0) always trail.
+  if (gap > 0) renderYou.sort((a, b) => b.impact - a.impact);
   const youOut = renderYou.concat(infoList);
 
   // Where your gap actually lives, in one line -- so a big gap with small per-item
