@@ -55,7 +55,7 @@ test("fieldDelta measures an attribute's value from the field (have vs not)", ()
   assert.equal(fieldDelta([110, 100, 100, 100, 100], [true, false, false, false, false]), null);
 });
 const { pickBenchmarkKill, compCoversGap, killHistory } = await import("../docs/prescribe.js");
-const { reconcileImpacts, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, verdictBlindSpots, overhaulDisclaimer, strengths, residualText, residualSummary } = await import("../docs/prescribe-helpers.js");
+const { reconcileImpacts, reconcileProtectingMeasured, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, verdictBlindSpots, overhaulDisclaimer, strengths, residualText, residualSummary } = await import("../docs/prescribe-helpers.js");
 const { executionLevers, latencyLever, trinketLevers, consumableLevers } = await import("../docs/prescribe-levers.js");
 
 test("killHistory: parse spread (consistency) + recent-vs-old trend (improvement), time-ordered", () => {
@@ -529,6 +529,33 @@ test("reconcileImpacts: concrete fixes + residual always sum to the target (the 
   // comp already covers the gap (target 0): concrete scale to ~0, no residual.
   r = reconcileImpacts([3, 2], 0);
   assert.deepEqual(r.scaled, [0, 0]);
+  assert.equal(r.residual, 0);
+});
+
+test("reconcileProtectingMeasured: your from-log measurements aren't crowded out by confounded gear", () => {
+  const sum = (a) => a.reduce((s, v) => s + (v || 0), 0);
+  // The bug: a real 5% weak-window + a confounded 10% gear field-delta on a 9% gap used to
+  // scale BOTH down (weak-window -> 3). Now the measurement is kept at 5 and gear takes the rest.
+  let r = reconcileProtectingMeasured([5], [10], 9);
+  assert.deepEqual(r.measuredScaled, [5], "the measured lever keeps its value");
+  assert.deepEqual(r.estScaled, [4], "gear fills only the 4 left, scaled from 10");
+  assert.equal(r.residual, 0);
+  assert.equal(sum(r.measuredScaled) + sum(r.estScaled) + r.residual, 9, "still adds up to the gap");
+  // Measurements ALONE exceed the gap -> they scale to it; gear is ~0% of the gap (execution
+  // already explains it) -- Andaarius: the Phase-5 hole IS the gap, crit gear shrinks to <1%.
+  r = reconcileProtectingMeasured([12], [5], 9);
+  assert.deepEqual(r.measuredScaled, [9], "measured alone scaled to the gap");
+  assert.deepEqual(r.estScaled, [0], "gear adds nothing when execution explains the whole gap");
+  assert.equal(r.residual, 0);
+  // Under-explained: both kept, leftover is the residual (a further-behind player).
+  r = reconcileProtectingMeasured([3], [2], 10);
+  assert.deepEqual(r.measuredScaled, [3]);
+  assert.deepEqual(r.estScaled, [2]);
+  assert.equal(r.residual, 5);
+  // Comp covers the gap (target 0): everything to 0.
+  r = reconcileProtectingMeasured([4], [3], 0);
+  assert.deepEqual(r.measuredScaled, [0]);
+  assert.deepEqual(r.estScaled, [0]);
   assert.equal(r.residual, 0);
 });
 

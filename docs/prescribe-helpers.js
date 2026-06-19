@@ -28,6 +28,26 @@ export function reconcileImpacts(impacts, target) {
   return { scaled: impacts.slice(), residual: target - rawSum };
 }
 
+// Like reconcileImpacts, but PROTECTS your genuine from-your-log measurements (rotation +
+// execution levers) from being scaled down by CONFOUNDED estimates (gear field-deltas,
+// consumables, talents). The bug it fixes: a gear field-delta ("peers who stack crit do 18%
+// more -- mostly because they're better players") inflated the raw sum and dragged a real
+// weak-window / cast-gap lever below its measured value. Your measurements are real, so they
+// fill the gap FIRST; the estimates fill only what's left (scaled if they overflow it). If the
+// measurements ALONE already exceed the gap, only they scale and the estimates go to 0 --
+// your execution explains the whole gap, so a gear swap toward it is ~0% of it. Returns
+// parallel scaled arrays + the leftover residual. Pure -> unit-testable.
+export function reconcileProtectingMeasured(measured, est, target) {
+  if (target <= 0) return { measuredScaled: measured.map(() => 0), estScaled: est.map(() => 0), residual: 0 };
+  const M = measured.reduce((s, v) => s + (v || 0), 0);
+  if (M >= target) {
+    const { scaled } = reconcileImpacts(measured, target);
+    return { measuredScaled: scaled, estScaled: est.map(() => 0), residual: 0 };
+  }
+  const { scaled, residual } = reconcileImpacts(est, target - M);
+  return { measuredScaled: measured.slice(), estScaled: scaled, residual };
+}
+
 // What the unexplained remainder most likely IS, so we headline it honestly:
 //  - "elite":      the player already parses top-decile, so the "field" (the TOP
 //                  parses at their ilvl) is an elite sample and the remainder is the

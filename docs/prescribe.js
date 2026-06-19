@@ -23,7 +23,7 @@ import { cacheOnly } from "./wcl.js";
 // prescribe-helpers.js (single source of truth -- the export-hygiene guard forbids
 // re-exporting). Import the ones used here; tests import isOffMetaBuild from there.
 import {
-  pctLabel, reconcileImpacts, remainderKind, isEliteParse, strengths,
+  pctLabel, reconcileImpacts, reconcileProtectingMeasured, remainderKind, isEliteParse, strengths,
   verdictLever, verdictBlindSpots, overhaulDisclaimer, residualText, residualSummary, consumableHit, CONSUMABLES,
 } from "./prescribe-helpers.js";
 // The cross-cutting lever builders live in prescribe-levers.js (extracted to keep this
@@ -539,10 +539,22 @@ function renderChangeList(log, d, peerGap, outpaces) {
   let residual = 0, fixableTotal = 0;
   if (gap > 0) {
     const target = Math.max(0, gap - compImpact);                 // the plausibly-yours share
-    const { scaled, residual: res } = reconcileImpacts(renderYou.map((r) => r.impact), target);
-    renderYou.forEach((r, i) => { r.impact = scaled[i]; r.label = pctLabel(scaled[i]); });
+    // PROTECT your genuine from-your-log measurements (rotation + execution levers) from being
+    // scaled down by CONFOUNDED estimates. A gear field-delta ("peers who stack crit do 18%
+    // more -- mostly because they're better players") is tagged measured but is a FIELD stat,
+    // not your log; letting it crowd a real weak-window/cast-gap lever under-weighted the thing
+    // the tool exists to surface. Your measurements fill the gap first; gear/consumables/talents
+    // take only the remainder. (Andaarius: weak-window kept at its measured value, crit gear
+    // shrinks to its share of what's left, instead of both scaling together.)
+    const isLogMeasured = (r) => r.basis === "measured" && (r.dim === DIM.ROTATION || r.dim === DIM.EXECUTION);
+    const meas = renderYou.filter(isLogMeasured);
+    const est = renderYou.filter((r) => !isLogMeasured(r));
+    const { measuredScaled, estScaled, residual: res } = reconcileProtectingMeasured(
+      meas.map((r) => r.impact), est.map((r) => r.impact), target);
+    meas.forEach((r, i) => { r.impact = measuredScaled[i]; r.label = pctLabel(measuredScaled[i]); });
+    est.forEach((r, i) => { r.impact = estScaled[i]; r.label = pctLabel(estScaled[i]); });
     residual = res;
-    fixableTotal = scaled.reduce((s, v) => s + (v || 0), 0);      // your concrete, post-scale
+    fixableTotal = renderYou.reduce((s, r) => s + (r.impact || 0), 0);   // your concrete, post-scale
   }
   // The remainder we can't pin to a specific fix. This is NOT just cosmetic: a big
   // remainder means the analysis FAILS to explain the measured gap -- usually a
