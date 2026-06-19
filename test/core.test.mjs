@@ -8,7 +8,7 @@ import { installLocalStorage, mockFetch } from "./helpers.mjs";
 process.env.WCL_CLIENT_ID = "x";
 process.env.WCL_CLIENT_SECRET = "y";
 installLocalStorage();
-const { bestRank, isHealer, metricForSpec, setRunMetric, runMetric, metricUnit, runIsHealer, eventTable, DPS, collectUpTo, detectContext, isAtonement, alwaysAtonement, atonementIfDamaging, FISTWEAVE_DAMAGE_SHARE, ordinal, collectPeers } = await import("../docs/core.js");
+const { bestRank, isHealer, metricForSpec, setRunMetric, runMetric, metricUnit, runIsHealer, eventTable, DPS, collectUpTo, detectContext, isAtonement, alwaysAtonement, atonementIfDamaging, FISTWEAVE_DAMAGE_SHARE, ordinal, collectPeers, kfmt, head, subhead, arrow, flag } = await import("../docs/core.js");
 const { clearGqlCache } = await import("../docs/wcl.js");
 
 test("ordinal: correct English suffix (no more '62th'/'91th' percentile)", () => {
@@ -240,4 +240,31 @@ test("collectPeers: an out-of-band ranking on one boss doesn't block the same pl
   assert.ok(names.includes("Dup"), "in-band kill on enc 2 is collected despite the out-of-band enc-1 kill");
   assert.ok(names.includes("InbandOnly"), "the normal in-band peer is collected");
   assert.equal(names.filter((n) => n === "Dup").length, 1, "deduped to one entry, not duplicated");
+});
+
+// --- shared readout grammar (format.js) ----------------------------------------
+test("readout grammar: kfmt/head/subhead/arrow are the ONE definition of the panel format", () => {
+  // kfmt: identical k/M throughput on every card (overview used raw "27,999 dps").
+  assert.equal(kfmt(27999), "28k");
+  assert.equal(kfmt(66700), "67k");
+  assert.equal(kfmt(1_240_000), "1.2M");
+  assert.equal(kfmt(840), "840");
+  assert.equal(kfmt(0), "0");
+  assert.equal(kfmt(-5200), "-5k");
+  // The grammar tokens the app renderer keys off (=== head ===, --- sub ---, -> takeaway).
+  assert.equal(head("OPENER"), "=== OPENER ===");
+  assert.equal(subhead("by boss"), "--- by boss ---");
+  assert.equal(arrow("press it more"), "-> press it more");
+});
+
+test("readout grammar: flag marks the WORSE side consistently, silent within noise", () => {
+  // More-is-better metric (uptime): below peers -> WORSE.
+  assert.match(flag(60, 75), /WORSE than peers/);
+  assert.equal(flag(75, 60, { both: false }), "", "ahead, no positive flag by default");
+  assert.match(flag(75, 60, { both: true }), /✓ better than peers/);
+  // Lower-is-better metric (lost GCDs, latency): above peers -> WORSE.
+  assert.match(flag(5.2, 4.2, { lowerIsBetter: true }), /WORSE than peers/);
+  assert.equal(flag(4.2, 5.2, { lowerIsBetter: true }), "", "fewer lost GCDs than peers -> no nag");
+  // Within noise -> silent (no flag spam on ~ties).
+  assert.equal(flag(5.2, 5.1, { lowerIsBetter: true, noise: 0.5 }), "");
 });
