@@ -4,6 +4,7 @@ import {
   DIFFICULTY, characterZone, characterEncounter, topRankings, playerMetrics,
   secondaryStats, gearSummary, median, topN, f, padL, padR, collectUpTo, bestRank,
   ilvlPeers, PEER_SAMPLE, metricUnit, recentKills, runIsHealer, mapLimit, BOSS_FANOUT,
+  kfmt, head, subhead, arrow, flag,
 } from "./core.js";
 
 // The bug is a CONTRADICTION, not just a low kill: WCL brackets the pull at a DECENT
@@ -21,7 +22,7 @@ export async function overview(log, name, server, region, difficulty) {
   const c = await characterZone(name, server, region, difficulty);
   const zr = c.zoneRankings;
   log("");
-  log(`=== ${name}-${server} (${region}) | ${DIFFICULTY[difficulty] || difficulty} ===`);
+  log(head(`${name}-${server} (${region}) · ${DIFFICULTY[difficulty] || difficulty}`));
   log(`Best-avg %ile: ${f(zr.bestPerformanceAverage, 1)}   Median %ile: ${f(zr.medianPerformanceAverage, 1)}`);
   const killed = [];
   for (const r of (zr.rankings || [])) {
@@ -70,26 +71,31 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
   const pmedActive = pmed("activePct"), pmedDps = pmed("dps");
   const outlier = peers.length && isUnrepresentativeKill(you, pmedActive, pmedDps, best.rankPercent);
   log("");
-  log(`--- ${encounter.name} | your best-ilvl kill: ilvl ${ilvl}, ${f(you.dur, 0)}s, ${f(you.dps, 0)} ${metricUnit().toLowerCase()}, ${f(best.rankPercent, 0)}%ile ---`);
+  log(subhead(`${encounter.name} · your best-ilvl kill: ilvl ${ilvl}, ${f(you.dur, 0)}s, ${kfmt(you.dps)} ${metricUnit()}, ${f(best.rankPercent, 0)}%ile`));
   if (!peers.length) {
     log("  (no item-level-matched peers found)");
     return;
   }
   if (outlier) {
-    log(`  NOTE: this current-ilvl kill isn't representative -- ${f(you.dps, 0)} ${metricUnit().toLowerCase()} at ${f(you.activePct, 0)}% active vs peers' ${f(pmedActive, 0)}%, yet WCL scored it ${f(best.rankPercent, 0)}%ile (a death / late-join / short pull it bracketed leniently). Your real standing is the parse%ile in the summary above; skipping the head-to-head.`);
+    log(`  NOTE: this current-ilvl kill isn't representative -- ${kfmt(you.dps)} ${metricUnit()} at ${f(you.activePct, 0)}% active vs peers' ${f(pmedActive, 0)}%, yet WCL scored it ${f(best.rankPercent, 0)}%ile (a death / late-join / short pull it bracketed leniently). Your real standing is the parse%ile in the summary above; skipping the head-to-head.`);
   } else {
     log(`  vs ${peers.length} ilvl-matched peers:`);
-    log(`    ${padR(metricUnit() + ":", 13)} you ${padL(f(you.dps, 0), 9)}   peer med ${padL(f(pmed("dps"), 0), 9)}`);
-    log(`    casts/min:    you ${padL(f(you.castsPerMin, 1), 9)}   peer med ${padL(f(pmed("castsPerMin"), 1), 9)}`);
-    log(`    active %:     you ${padL(f(you.activePct, 1), 9)}   peer med ${padL(f(pmed("activePct"), 1), 9)}`);
+    log(`    ${padR(metricUnit() + ":", 13)} you ${padL(kfmt(you.dps), 9)}   peer med ${padL(kfmt(pmed("dps")), 9)}${flag(you.dps, pmed("dps"))}`);
+    log(`    casts/min:    you ${padL(f(you.castsPerMin, 1), 9)}   peer med ${padL(f(pmed("castsPerMin"), 1), 9)}${flag(you.castsPerMin, pmed("castsPerMin"), { noise: 1 })}`);
+    log(`    active %:     you ${padL(f(you.activePct, 1), 9)}   peer med ${padL(f(pmed("activePct"), 1), 9)}${flag(you.activePct, pmed("activePct"), { noise: 1 })}`);
     log(`    ${runIsHealer() ? "healed:      " : "targets hit:  "}you ${padL(f(you.targets, 1), 9)}   peer med ${padL(f(pmed("targets"), 1), 9)}`);
 
     // Duration-controlled cut: peers whose kill time is within 40s of yours. Only
     // worth showing with a few of them -- a "median" of 1-2 just repeats the headline.
     const near = peers.filter((p) => Math.abs(p.dur - you.dur) <= 40).map((p) => p.dps);
     if (near.length >= 3) {
-      log(`    ${metricUnit()} at your kill-time (+/-40s): you ${f(you.dps, 0)}  vs peer med ${f(median(near), 0)}  (n=${near.length})`);
+      log(`    ${metricUnit()} at your kill-time (+/-40s): you ${kfmt(you.dps)}  vs peer med ${kfmt(median(near))}  (n=${near.length})`);
     }
+    // Close on the one "so what": where you stand vs the ilvl field on this kill.
+    const gap = pmedDps > 0 ? Math.round((pmedDps - you.dps) / you.dps * 100) : 0;
+    log(arrow(gap > 3 ? `you trail the ilvl-matched field by ~${gap}% here -- the prescription card ranks what to change.`
+      : gap < -3 ? `you're ~${Math.abs(gap)}% ahead of the ilvl-matched field here -- chase the top parses.`
+      : `you're about even with the ilvl-matched field here.`));
   }
 
   const youStats = await secondaryStats(code, fight, you.sourceID, className);
@@ -119,7 +125,7 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
 async function difficultyInflation(log, name, server, region, encounter, className, specName,
   high = 5, low = 4, sample = 12) {
   log("");
-  log(`=== Difficulty inflation check on ${encounter.name} (${DIFFICULTY[low]} vs ${DIFFICULTY[high]}) ===`);
+  log(head(`Difficulty inflation check on ${encounter.name} (${DIFFICULTY[low]} vs ${DIFFICULTY[high]})`));
   const rows = [];
   const seen = new Set();
   for (const page of [1, 5, 12, 25]) {
