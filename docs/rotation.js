@@ -161,15 +161,18 @@ export function empoweredShare(nonCritAmounts, opts = {}) {
   return st ? st.share : null;
 }
 
-// Pick the ability whose EMPOWERMENT we measure against the field. NOT the hardest-median
-// hit: a filler that's small most casts and big only when empowered (Frost's Ice Lance into
-// Shatter, a combo'd Tiger Palm) has a LOW median, so a median pick skips it -- yet that's
-// exactly where "wasted empowered casts" hide. Take the highest-VOLUME ability that has a
-// real bimodal (empowered-vs-bare) distribution (procBig>=2 + a measurable empShare); fall
-// back to `biggest` when none qualifies. Class-agnostic: it's the spec's "only good when
-// empowered" button, whatever it's named. `hits` carry { name, empShare, procBig }.
+// Pick the ability whose EMPOWERMENT we measure against the field. If your hardest-median
+// hit is ITSELF bimodal (a real empowered-vs-bare cluster), THAT is the empowerment ability
+// and we keep it -- the original, validated choice (Brewmaster's Tiger Palm: median 71k, max
+// 593k, 7 big non-crit hits). We only switch when that hardest hit is UNIFORM (no empowered
+// cluster -- Frost's Ray of Frost, 0 big hits): then the median pick analyzes nothing useful,
+// while the real loss hides in a low-median bimodal FILLER (Ice Lance into Shatter). For that
+// case take the highest-VOLUME ability with a bimodal distribution (procBig>=2 + a measurable
+// empShare). Changing ONLY the previously-dead case keeps every validated spec intact.
+// Class-agnostic: it's the spec's "only good when empowered" button, whatever it's named.
 /** @param {any[]|null|undefined} hits @param {Record<string,number>|null|undefined} [dmgTotals] @param {any} [biggest] */
 export function empowermentCandidate(hits, dmgTotals, biggest = null) {
+  if (biggest && biggest.empShare != null && biggest.procBig >= 2) return biggest;   // already the empowered hit
   const cands = (hits || []).filter((h) => h.empShare != null && h.procBig >= 2);
   if (!cands.length) return biggest;
   const tot = dmgTotals || {};

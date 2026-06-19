@@ -217,11 +217,16 @@ test("empowermentCandidate: picks the high-VOLUME bimodal filler, NOT the hardes
     { name: "Frostbolt", med: 30000, empShare: null, procBig: 1 },
   ];
   const dmgTotals = { "Glacial Spike": 1_500_000, "Ice Lance": 3_000_000, Frostbolt: 2_000_000 };
-  const biggest = hits[0];                                              // hardest-median
+  const biggest = hits[0];                                              // hardest-median (uniform)
   assert.equal(empowermentCandidate(hits, dmgTotals, biggest).name, "Ice Lance");
-  // Among TWO bimodal abilities, volume breaks the tie.
+  // KEEP the hardest-median hit when IT is already bimodal (Brewmaster's Tiger Palm) -- don't
+  // switch to a higher-volume button on volume alone; this preserves every validated spec.
+  const tp = { name: "Tiger Palm", med: 71000, empShare: 0.4, procBig: 7 };
+  const ks = { name: "Keg Smash", med: 36000, empShare: 0.3, procBig: 7 };
+  assert.equal(empowermentCandidate([tp, ks], { "Tiger Palm": 1_000_000, "Keg Smash": 2_000_000 }, tp).name, "Tiger Palm");
+  // Among TWO bimodal fillers (with a UNIFORM biggest), volume breaks the tie.
   const two = [{ name: "A", empShare: 0.3, procBig: 3 }, { name: "B", empShare: 0.3, procBig: 3 }];
-  assert.equal(empowermentCandidate(two, { A: 100, B: 900 }).name, "B");
+  assert.equal(empowermentCandidate(two, { A: 100, B: 900 }, { name: "U", empShare: 0, procBig: 0 }).name, "B");
   // No bimodal ability -> fall back to biggest (don't regress specs whose big hit IS the one).
   const uniform = [{ name: "X", empShare: 0, procBig: 0 }];
   assert.equal(empowermentCandidate(uniform, {}, biggest).name, "Glacial Spike");
