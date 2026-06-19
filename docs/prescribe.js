@@ -827,9 +827,18 @@ export async function run(log, name, server, region, className = "Monk", specNam
   // only ever looks at the benchmark boss). Drop the weak-window to avoid two items for one
   // idea -- no fragile fraction-overlap test (they can now be on different bosses).
   const gLevers = graphLevers(graphData);
-  const rotLevers = gLevers.some((l) => l.kind === KIND.PHASE_DIP)
+  const hasPhaseDip = gLevers.some((l) => l.kind === KIND.PHASE_DIP);
+  let rotLevers = hasPhaseDip
     ? rotMerged.levers.filter((l) => l.kind !== KIND.WEAK_WINDOW)
     : rotMerged.levers;
+  // A COOLDOWN-caused phase dip already says "hold/align a burst cooldown for <phase>" --
+  // the SAME advice as the general CD ALIGNMENT info ("you scatter your cooldowns, stack
+  // them"), just localized + sized. Drop the redundant general one so the cooldown-timing
+  // fix is stated once. (A non-cooldown dip, or none at all, leaves CD ALIGNMENT in place.)
+  const dip = graphData && /** @type {any} */ (graphData).worst;
+  if (hasPhaseDip && dip && dip.cause === "cooldown") {
+    rotLevers = rotLevers.filter((l) => l.kind !== KIND.CD_ALIGN);
+  }
   /** @type {Finding[]} */
   const rx = [
     ...executionLevers(execd, rot, peerGapPct, (execd && execd.activePct != null) ? execd.activePct : (you && you.activePct)),
