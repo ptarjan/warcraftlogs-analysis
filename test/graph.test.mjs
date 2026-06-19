@@ -67,8 +67,8 @@ test("graphLevers: a cooldown-cause dip is a sized DPS lever, idle is a 0-impact
 
   const idle = graphLevers({ ...base, worst: { ...wBase, cause: "idle", cpmRatio: 0.4 } });
   assert.equal(idle.length, 1);
-  assert.equal(idle[0].impact, 0, "an idle dip is INFO (the lost-GCD lever already sizes it)");
-  assert.match(idle[0].text, /idle|coast|quiet|rotation going/i);
+  assert.equal(idle[0].impact, 4, "a LOCALIZED idle hole is sized (the whole-fight press-faster lever is silent for an active player)");
+  assert.match(idle[0].text, /quiet|coasting|rotation going/i);
 });
 
 test("graphLevers: names the culprit ability / the mistimed cooldown, or honestly bows out", () => {

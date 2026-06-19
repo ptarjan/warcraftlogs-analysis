@@ -9,7 +9,6 @@ import {
   median, collectUpTo, mapLimit, bestRank, dpsOverTime, metricUnit, runIsHealer, isSupport,
   fightWindow, fightEvents, abilityCurvesOverTime, selfBuffIntervals, finding, DIM, DPS, INFO, KIND,
 } from "./core.js";
-import { pickBenchmarkKill } from "./prescribe.js";
 
 // Browser renders the chart as an inline SVG (app.js), the CLI as an ASCII sparkline.
 // app.js detects this exact prefix on a streamed line, parses the JSON, and draws it
@@ -76,40 +75,29 @@ function quant(sorted, q) {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
 }
 
-// Every boss you've killed, each with its best-ilvl (current-gear) kill -- the pool
-// pickBenchmarkKill picks the representative (median-parse) kill from, exactly like
-// prescribe. Same characterEncounter reads the other cards make (cached -> ~free).
-async function gatherKills(name, server, region, difficulty, specName) {
-  const c = await characterZone(name, server, region, difficulty);
-  const ranks = (c.zoneRankings.rankings || []).filter(
-    (r) => (r.totalKills || 0) > 0 && r.rankPercent != null);
-  const got = await mapLimit(ranks, 5, async (r) => {
-    const er = await characterEncounter(name, server, region, r.encounter.id, difficulty);
-    const best = bestRank(er && er.ranks, specName);
-    return best ? {
-      ilvl: best.bracketData || 0, boss: r.encounter, code: best.report.code,
-      fight: best.report.fightID, startTime: best.startTime || 0,
-      rankPercent: best.rankPercent, dur: best.duration || 0,
-    } : null;
-  });
-  return got.filter(Boolean);
-}
-
-// Pure computation: your curve + the peer band over the benchmark kill, normalized to
-// fight progress, plus the worst-dip window. Returns a `skip` marker (not null) for the
-// "by design we don't chart this" cases so run() can explain rather than go silent.
+// The dip the prescription should carry: your BIGGEST gainable dip across ALL bosses, not
+// whichever boss happened to be the gear benchmark. The tool sorts biggest-gain-first, so
+// the worst boss is the one worth fixing (on Hadryan that's Chimaerus P3 ~10%, not Crown P5
+// ~5%). Scan every boss shallow (cheap -- shares the card's fetches), pick the largest
+// gainPct, then DEEP-diagnose just that one for the actionable lever. Returns null when no
+// boss has a real dip (-> no lever, not a fake one).
 export async function graphFindings(name, server, region, className, specName, difficulty) {
-  // Support specs (Augmentation): personal damage isn't their lever (their value is
-  // ally buffs), so a personal-DPS curve misleads. Suppress -- same rule the weak-window
-  // lever uses.
+  // Support specs (Augmentation): personal damage isn't their lever -> no dip lever.
   if (isSupport(specName)) return { skip: "support" };
-  const kills = await gatherKills(name, server, region, difficulty, specName);
-  if (!kills.length) return null;
-  const bench = pickBenchmarkKill(kills);
-  if (!bench) return null;
-  // The prescription lever is sized on the BENCHMARK boss, with the full (deep) dip
-  // diagnosis. The CARD shows every boss (analyzeBoss, deep:false) -- see run().
-  return analyzeBoss(name, server, region, bench.boss, difficulty, className, specName, { deep: true });
+  let ranks;
+  try {
+    const c = await characterZone(name, server, region, difficulty);
+    ranks = (c.zoneRankings.rankings || []).filter((r) => (r.totalKills || 0) > 0 && r.rankPercent != null);
+  } catch { return null; }
+  if (!ranks.length) return null;
+  const scans = await mapLimit(ranks, BOSS_FANOUT, async (r) => {
+    try { const s = /** @type {any} */ (await analyzeBoss(name, server, region, r.encounter, difficulty, className, specName, { deep: false })); return s && s.worst ? { r, s } : null; }
+    catch { return null; }
+  });
+  const dips = scans.filter((x) => x && x.s.worst.deficit >= DIP_FLOOR && (x.s.worst.gainPct || 0) >= 1)
+    .sort((a, b) => (b.s.worst.gainPct || 0) - (a.s.worst.gainPct || 0));
+  if (!dips.length) return null;
+  return analyzeBoss(name, server, region, dips[0].r.encounter, difficulty, className, specName, { deep: true });
 }
 
 // Per-BOSS worker: your representative kill of THIS boss vs the ilvl-matched field band
@@ -230,8 +218,10 @@ export function graphLevers(d) {
   // window only fires when the field does NOT drop there (see buildCurveComparison).
   const head = `DAMAGE TIMELINE: in ${where} on ${d.boss} your ${unit} drops to ~${kfmt(w.youWindow)} vs your own ~${kfmt(w.youTypical)} the rest of the kill -- and the field holds its pace here (~${kfmt(w.fieldWindow)}), so it's a real hole, not a low-damage phase`;
   if (w.cause === "idle") {
-    return [finding(DIM.EXECUTION, INFO,
-      `${head}: your cast rate falls to ${Math.round(100 * (w.cpmRatio || 0))}% of normal, so you go quiet here (the lost-GCD time above, in one window). Keep your rotation going through ${where}'s mechanics instead of coasting.`,
+    // A LOCALIZED idle hole (you go quiet in one phase) -- sized, because the whole-fight
+    // "press faster" lever is silent for an active player, so this is the gainable lever.
+    return [finding(DIM.EXECUTION, DPS(w.gainPct),
+      `${head}. Your cast rate falls to ${Math.round(100 * (w.cpmRatio || 0))}% of normal in ${where}, so you go quiet there -- keep your rotation going through its movement/mechanics instead of coasting.`,
       "measured", KIND.PHASE_DIP)];
   }
   // Cast rate normal but output down -> attribute it from YOUR data:

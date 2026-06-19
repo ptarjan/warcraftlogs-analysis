@@ -820,22 +820,16 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const rotMerged = mergeRotationRecurrence(
     rotationLevers(rot),
     otherRot.map((o) => ({ name: o.name, levers: rotationLevers(o.findings) })));
-  // The rotation's own-baseline WEAK_WINDOW (where you trail YOUR typical) and the
-  // graph's field-relative PHASE_DIP often catch the SAME late slump -- two ~equal items
-  // about one stretch reads as padding. When their fight-fraction windows overlap, keep
-  // the ONE that says more: the graph dip when it diagnosed a cooldown problem (cast rate
-  // normal -> WHEN you press, which the weak window can't tell); otherwise the weak window
-  // (and drop the graph's now-redundant idle locator).
-  let rotLevers = rotMerged.levers, gLevers = graphLevers(graphData);
-  const dip = graphData && /** @type {any} */ (graphData).worst, ww = rot && rot.weakWindow;
-  if (dip && ww && dip.fracStart != null && gLevers.some((l) => l.kind === KIND.PHASE_DIP)) {
-    const inter = Math.max(0, Math.min(dip.fracEnd, ww.to) - Math.max(dip.fracStart, ww.from));
-    const minW = Math.min(dip.fracEnd - dip.fracStart, ww.to - ww.from) || 1;
-    if (inter / minW >= 0.5) {
-      if (dip.cause === "cooldown") rotLevers = rotLevers.filter((l) => l.kind !== KIND.WEAK_WINDOW);
-      else gLevers = gLevers.filter((l) => l.kind !== KIND.PHASE_DIP);
-    }
-  }
+  // The graph's PHASE_DIP and the rotation's own-baseline WEAK_WINDOW both find "where you
+  // trail your own typical, field holds" -- the SAME concept. The graph one is strictly more
+  // informed (phase-aligned, scanned across ALL your bosses for the biggest, and diagnosed:
+  // idle vs which cooldown), so when it fires, it SUPERSEDES the rotation weak-window (which
+  // only ever looks at the benchmark boss). Drop the weak-window to avoid two items for one
+  // idea -- no fragile fraction-overlap test (they can now be on different bosses).
+  const gLevers = graphLevers(graphData);
+  const rotLevers = gLevers.some((l) => l.kind === KIND.PHASE_DIP)
+    ? rotMerged.levers.filter((l) => l.kind !== KIND.WEAK_WINDOW)
+    : rotMerged.levers;
   /** @type {Finding[]} */
   const rx = [
     ...executionLevers(execd, rot, peerGapPct, (execd && execd.activePct != null) ? execd.activePct : (you && you.activePct)),
