@@ -320,7 +320,7 @@ const CONSUMABLES = [
     match: (lc) => lc.includes("well fed"), minPct: 50,
     none: DPS(1, 2), missText: "you ate none", tail: "Free parse.", swap: DPS(1) },
   { field: "potions", mine: "potion", label: "COMBAT POTION", peerVerb: "pop",
-    note: " (pre-pull + again on cooldown/burst = 2 per fight)", swapNeedsMeasure: true,
+    note: " (during your burst window)", swapNeedsMeasure: true,
     match: (lc) => lc.includes("potion") && !lc.includes("healing"), minPct: 0,
     none: DPS(1, 3), missText: "you used none", tail: "Free parse with equal gear.", swap: DPS(1) },
   { field: "augRunes", mine: "augrune", label: "AUGMENT RUNE", peerVerb: "use",
