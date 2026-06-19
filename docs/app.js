@@ -477,7 +477,7 @@ function proseLine(h, line) {
 // SVG. Detected before everything else so the JSON payload never becomes a preview
 // line or readout. Survives share snapshots: the snapshot stores the same line and
 // replays it through logTo, redrawing the chart with no re-run.
-const CHART_PREFIX = "\u0001CHART";
+const CHART_PREFIX = graph.CHART_PREFIX; // single source: graph.js owns + emits this marker
 function fmtK(v) {
   return v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${Math.round(v / 1e3)}k` : `${Math.round(v)}`;
 }
