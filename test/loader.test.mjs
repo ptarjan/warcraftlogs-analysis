@@ -66,13 +66,18 @@ function unitsOf(q) {
   for (const part of q.split(/report\(\s*code:\s*"/).slice(1)) {  // each segment = CODE"){ ...this report's fields... }
     const code = (part.match(/^([^"]+)"/) || [])[1];
     if (!code) continue;
-    for (const m of part.matchAll(/(?:table|events)\s*\(([^)]*)\)/g)) {
-      const a = m[1];
+    // A `table` read (uptime/total summary) and an `events` read (the raw apply/remove or
+    // cast stream) of the SAME dataType are DIFFERENT sub-resources -- e.g. the Buffs TABLE
+    // (whole-fight uptime, for names/consumables) vs Buffs EVENTS (apply/remove, for
+    // windowed uptime in the DPS-over-time card). Key them apart so each is fetched once; a
+    // second of EITHER is still caught as a dupe.
+    for (const m of part.matchAll(/(table|events)\s*\(([^)]*)\)/g)) {
+      const kind = m[1], a = m[2];
       const fid = (a.match(/fightIDs:\s*\[?(\d+)/) || [])[1];
       const dt = (a.match(/dataType:\s*(\w+)/) || [])[1];
       const sid = (a.match(/sourceID:\s*(\d+)/) || [])[1];
       const ab = (a.match(/abilityID:\s*(\d+)/) || [])[1];
-      if (fid && dt) units.add(`${code}:${fid}:${dt}${sid ? ":src" + sid : ""}${ab ? ":ab" + ab : ""}`);
+      if (fid && dt) units.add(`${code}:${fid}:${kind}:${dt}${sid ? ":src" + sid : ""}${ab ? ":ab" + ab : ""}`);
     }
     // A fights(fightIDs:N) read selecting `phaseTransitions` (the boss phase boundaries,
     // for the DPS-over-time card's phase alignment) is a DISTINCT sub-resource from the

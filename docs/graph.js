@@ -7,7 +7,7 @@
 import {
   characterZone, characterEncounter, playerMetrics, ilvlPeers, PEER_SAMPLE,
   median, collectUpTo, mapLimit, bestRank, dpsOverTime, metricUnit, runIsHealer, isSupport,
-  fightWindow, fightEvents, abilityCurvesOverTime, finding, DIM, DPS, INFO, KIND,
+  fightWindow, fightEvents, abilityCurvesOverTime, selfBuffIntervals, finding, DIM, DPS, INFO, KIND,
 } from "./core.js";
 import { pickBenchmarkKill } from "./prescribe.js";
 
@@ -160,6 +160,34 @@ export async function graphFindings(name, server, region, className, specName, d
         } else if (rows.length >= 3) {
           w.uniform = true;                                  // drop spread evenly -> an amp, not a button
           w.uniformPct = Math.round(100 * median(rows.slice(0, 5).map((r) => r.pct)));
+          // A uniform drop COULD be a damage cooldown landing earlier -- but ONLY claim
+          // that if a cooldown is ACTUALLY mistimed. Find your self-buffs that are damage
+          // AMPS (presence lifts your DPS) and check if any covers the window LESS than the
+          // rest. If one does -> name it. If your cooldowns DO cover the window -> say so:
+          // the even drop is then target count (less cleave) / a raid cooldown, not yours.
+          const { intervals, names, start: bS, end: bE } = await selfBuffIntervals(code, fight, you.sourceID);
+          const bd = bE - bS, L = yc.dps.length;
+          const upt = (iv, a, b) => { let u = 0; for (const [x, y] of (iv || [])) { const lo = Math.max(x, a), hi = Math.min(y, b); if (hi > lo) u += hi - lo; } return (b - a) > 0 ? u / (b - a) : 0; };
+          const mean = (arr) => arr.reduce((x, y) => x + y, 0) / (arr.length || 1);
+          const aMs2 = bS + (w.fracStart || 0) * bd, bMs2 = bS + (w.fracEnd || 1) * bd;
+          let best = null, sawAmp = false;
+          for (const g of Object.keys(intervals)) {
+            const whole = upt(intervals[g], bS, bE);
+            if (whole < 0.08 || whole > 0.75) continue;      // skip permanents (flask/Stagger) + rare procs
+            const act = [], ina = [];
+            for (let i = 0; i < L; i++) (upt(intervals[g], bS + (i / L) * bd, bS + ((i + 1) / L) * bd) >= 0.5 ? act : ina).push(yc.dps[i]);
+            if (act.length < 2 || ina.length < 2 || mean(act) / (mean(ina) || 1) < 1.2) continue;   // not a damage amp
+            sawAmp = true;
+            const inWin = upt(intervals[g], aMs2, bMs2);
+            const outWin = (whole * bd - inWin * (bMs2 - aMs2)) / Math.max(1, bd - (bMs2 - aMs2));
+            // name=null when the buff isn't in the table or its id doesn't match (procs /
+            // aura-id mismatches) -- then we WON'T assert "shift X", we'll say so honestly.
+            const nm = names[g];
+            const named = nm && !/^id\d+$/.test(nm) ? nm : null;
+            if (outWin - inWin >= 0.15 && (!best || outWin - inWin > best.drop)) best = { name: named, inPct: Math.round(100 * inWin), outPct: Math.round(100 * outWin), drop: outWin - inWin };
+          }
+          if (best) w.cooldown = best;                       // an amp IS mistimed (named or not)
+          else if (sawAmp) w.cdsCover = true;                // your cooldowns DO cover the window -> not timing
         }
       }
     } catch (e) { /* no cast/ability data -> leave cause/culprit unset (run() degrades to a generic read) */ }
@@ -195,15 +223,40 @@ export function graphLevers(d) {
       `${head}: your cast rate falls to ${Math.round(100 * (w.cpmRatio || 0))}% of normal, so you go quiet here (the lost-GCD time above, in one window). Keep your rotation going through ${where}'s mechanics instead of coasting.`,
       "measured", KIND.PHASE_DIP)];
   }
-  // Cast rate normal but output down -> attribute it to a button: one ability way down
-  // (press THAT) vs every ability down ~evenly (a flat amp/cooldown landing earlier --
-  // timing, not a button). Stated from what's measured; the amp case names the lever
-  // (cooldown timing) without inventing a specific spell.
-  let tail;
-  if (w.cause !== "cooldown") tail = `. Keep your uptime and cooldowns lined up through it.`;
-  else if (w.culprit) tail = `. You press just as much there, but your ${w.culprit.name} is way down (~${w.culprit.windowK}k vs ~${w.culprit.normalK}k the rest of the kill) -- make sure you're landing it in ${where}.`;
-  else if (w.uniform) tail = `. You press just as much there, but EVERY ability hits ~${w.uniformPct}% softer -- so it's not one button, it's a damage cooldown/amp landing earlier in the fight. Shift your strongest damage cooldown to cover ${where}.`;
-  else tail = `. You press just as much there (cast rate normal), so your hits land softer -- likely a damage cooldown that fired earlier. Try lining one up for ${where}.`;
+  // Cast rate normal but output down -> attribute it from YOUR data:
+  //  - one ability dominates the drop -> name it ("press THAT").
+  //  - a self damage-cooldown is genuinely MISTIMED (covers the window less) -> name it.
+  //  - cooldowns DO cover the window (cdsCover) -> it's NOT timing; the even drop is target
+  //    count (less cleave) or a raid cooldown earlier -> honest INFO, not a personal lever.
+  //  - couldn't read buffs -> a hedged generic note.
+  if (w.culprit) {
+    return [finding(DIM.EXECUTION, DPS(w.gainPct),
+      `${head}. You press just as much there, but your ${w.culprit.name} is way down (~${w.culprit.windowK}k vs ~${w.culprit.normalK}k the rest of the kill) -- make sure you're landing it in ${where}.`,
+      "measured", KIND.PHASE_DIP)];
+  }
+  if (w.cooldown && w.cooldown.name) {
+    return [finding(DIM.EXECUTION, DPS(w.gainPct),
+      `${head}. Your ${w.cooldown.name} covers only ${w.cooldown.inPct}% of ${where} vs ${w.cooldown.outPct}% the rest of the kill -- shift it to cover ${where}.`,
+      "measured", KIND.PHASE_DIP)];
+  }
+  if (w.cooldown) {
+    // The HOLE is measured (own-baseline, field holds) -> keep it sized. An amp IS less
+    // active in the window, but we couldn't NAME it (proc / aura-id mismatch) -> hedge the
+    // cause and point the player at their own cooldowns rather than assert a spell.
+    return [finding(DIM.EXECUTION, DPS(w.gainPct),
+      `${head}. A damage buff of yours is less active here (~${w.cooldown.inPct}% of ${where} vs ${w.cooldown.outPct}% elsewhere) -- I can't name it from the log, so check that your damage cooldowns line up with ${where} (it may also be a proc or a raid cooldown).`,
+      "measured", KIND.PHASE_DIP)];
+  }
+  if (w.cdsCover) {
+    // Your cooldowns already cover the window -> NOT a timing lever. Don't claim gainable
+    // DPS; record it as an INFO so the list isn't padded with a fix that isn't yours.
+    return [finding(DIM.EXECUTION, INFO,
+      `${head}. But your damage cooldowns DO cover ${where} -- so this isn't cooldown timing. Every ability just hits ~${w.uniformPct || 0}% softer there, which usually means fewer targets (less cleave) or a raid cooldown (e.g. Bloodlust) used earlier -- likely not a personal lever to fix.`,
+      "measured", KIND.PHASE_DIP)];
+  }
+  const tail = w.cause !== "cooldown"
+    ? `. Keep your uptime and cooldowns lined up through it.`
+    : `. You press just as much there (cast rate normal), so your hits land softer -- a damage cooldown is landing earlier. Check that your cooldowns cover ${where}.`;
   return [finding(DIM.EXECUTION, DPS(w.gainPct), head + tail, "measured", KIND.PHASE_DIP)];
 }
 
@@ -275,7 +328,7 @@ export function buildCurveComparison(yc, peers) {
   const yourTypical = liveYou.length ? median(liveYou) : (median(you48) || 1);
   const fieldTypical = liveFld.length ? median(liveFld) : (median(pmed) || 1);
   const W = Math.max(4, Math.round(N * 0.18));
-  /** @type {{start:number,end:number,deficit:number,center:number,phase?:number,nPhases?:number,gainPct?:number,fracStart?:number,fracEnd?:number,cause?:string,cpmRatio?:number,youTypical?:number,youWindow?:number,fieldWindow?:number,culprit?:{name:string,normalK:number,windowK:number},uniform?:boolean,uniformPct?:number}|null} */
+  /** @type {{start:number,end:number,deficit:number,center:number,phase?:number,nPhases?:number,gainPct?:number,fracStart?:number,fracEnd?:number,cause?:string,cpmRatio?:number,youTypical?:number,youWindow?:number,fieldWindow?:number,culprit?:{name:string,normalK:number,windowK:number},uniform?:boolean,uniformPct?:number,cooldown?:{name:string,inPct:number,outPct:number,drop:number},cdsCover?:boolean}|null} */
   let worst = null;
   for (let i = 0; i + W <= N; i++) {
     let youSum = 0, fldDrop = 0, fldSum = 0, n = 0;
@@ -387,15 +440,21 @@ export async function run(log, name, server, region, className = "Monk", specNam
     if (w.cause === "idle") {
       log(`  -> ${drop} — and your cast rate falls to ${Math.round(100 * (w.cpmRatio || 0))}% of normal, so you go quiet here.`);
       log(`     Keep your rotation going through ${where}'s movement/mechanics instead of coasting. (~${w.gainPct}% ${unit})`);
-    } else if (w.cause === "cooldown" && w.culprit) {
+    } else if (w.culprit) {
       log(`  -> ${drop} — you press just as much, but your ${w.culprit.name} is way down (~${w.culprit.windowK}k vs ~${w.culprit.normalK}k normally).`);
       log(`     Make sure you're landing ${w.culprit.name} in ${where}. (~${w.gainPct}% ${unit})`);
-    } else if (w.cause === "cooldown" && w.uniform) {
-      log(`  -> ${drop} — you press just as much, but EVERY ability hits ~${w.uniformPct}% softer, so it's not one button.`);
-      log(`     A damage cooldown/amp is landing earlier — shift your strongest one to cover ${where}. (~${w.gainPct}% ${unit})`);
+    } else if (w.cooldown && w.cooldown.name) {
+      log(`  -> ${drop} — and your ${w.cooldown.name} covers only ${w.cooldown.inPct}% of ${where} vs ${w.cooldown.outPct}% elsewhere.`);
+      log(`     Shift ${w.cooldown.name} to cover ${where}. (~${w.gainPct}% ${unit})`);
+    } else if (w.cooldown) {
+      log(`  -> ${drop} — a damage buff of yours is less active here (~${w.cooldown.inPct}% vs ${w.cooldown.outPct}%), but I can't name it from the log.`);
+      log(`     Check that your damage cooldowns line up with ${where} (could also be a proc or raid cooldown).`);
+    } else if (w.cdsCover) {
+      log(`  -> ${drop} — but your cooldowns DO cover ${where}, so it's not timing. Every ability just hits ~${w.uniformPct || 0}% softer.`);
+      log(`     Likely fewer targets (less cleave) or a raid cooldown (e.g. Bloodlust) used earlier — probably not a personal lever.`);
     } else if (w.cause === "cooldown") {
       log(`  -> ${drop} — but you press just as much (cast rate normal), so your hits land softer there.`);
-      log(`     Likely a damage cooldown that fired earlier; line one up for ${where}. (~${w.gainPct}% ${unit})`);
+      log(`     A damage cooldown is landing earlier; check that your cooldowns cover ${where}. (~${w.gainPct}% ${unit})`);
     } else {
       log(`  -> ${drop}. Keep your uptime and cooldowns lined up through it. (~${w.gainPct}% ${unit})`);
     }

@@ -71,18 +71,25 @@ test("graphLevers: a cooldown-cause dip is a sized DPS lever, idle is a 0-impact
   assert.match(idle[0].text, /idle|coast|quiet|rotation going/i);
 });
 
-test("graphLevers: names the culprit ability, or identifies the amp when the drop is uniform", () => {
+test("graphLevers: names the culprit ability / the mistimed cooldown, or honestly bows out", () => {
   const base = { boss: "Boss", unit: "DPS", isHealer: false };
   const wBase = { deficit: 0.3, gainPct: 4, phase: 5, center: 0.8, youTypical: 60000, youWindow: 42000, fieldWindow: 50000, cause: "cooldown" };
   // One ability dominates the drop -> name it ("press THAT").
   const named = graphLevers({ ...base, worst: { ...wBase, culprit: { name: "Rising Sun Kick", normalK: 12, windowK: 3 } } });
+  assert.equal(named[0].impact, 4);
   assert.match(named[0].text, /Rising Sun Kick/);
   assert.match(named[0].text, /3k vs ~12k/);
-  // Drop spread evenly -> it's an amp, not a button.
-  const amp = graphLevers({ ...base, worst: { ...wBase, uniform: true, uniformPct: 30 } });
-  assert.match(amp[0].text, /not one button|every ability/i);
-  assert.match(amp[0].text, /30% softer/);
-  assert.match(amp[0].text, /cooldown|amp/i);
+  // A self damage-cooldown is genuinely mistimed -> NAME it (from the log) + sized lever.
+  const cd = graphLevers({ ...base, worst: { ...wBase, uniform: true, uniformPct: 30, cooldown: { name: "Invoke Niuzao", inPct: 5, outPct: 35, drop: 0.3 } } });
+  assert.equal(cd[0].impact, 4);
+  assert.match(cd[0].text, /Invoke Niuzao/);
+  assert.match(cd[0].text, /5% of Phase 5 vs 35%/);
+  assert.match(cd[0].text, /shift it/i);
+  // Cooldowns DO cover the window -> NOT timing; honest INFO (impact 0), not a fake lever.
+  const cover = graphLevers({ ...base, worst: { ...wBase, uniform: true, uniformPct: 30, cdsCover: true } });
+  assert.equal(cover[0].impact, 0, "no gainable personal lever -> INFO, not a sized DPS item");
+  assert.match(cover[0].text, /cooldowns DO cover|not.*timing/i);
+  assert.match(cover[0].text, /cleave|Bloodlust|raid cooldown|fewer targets/i);
 });
 
 test("graphLevers: nothing to add when there's no real dip, or for healers/skips", () => {

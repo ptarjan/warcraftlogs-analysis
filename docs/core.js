@@ -401,6 +401,33 @@ export async function abilityCurvesOverTime(code, fight, sourceId) {
     .map((x) => ({ name: x.name, guid: x.guid, data: (x.data || []).map((v) => +v || 0) }));
 }
 
+// Your SELF-applied buffs as active-intervals over the fight -- so a consumer can read
+// each buff's uptime in ANY window (the Buffs table ignores startTime/endTime, verified)
+// AND measure which buff is a damage AMP (its presence lifts your DPS). Buffs EVENTS
+// (apply/remove), paginated, then filtered to SELF (source===target===you) so external
+// raid buffs / healer HoTs drop out -- leaving the cooldowns/procs YOU control. Names from
+// the whole-fight Buffs table (guid->name). Your kill only. Returns
+// { intervals:{guid:[[start,end]...]}, names:{guid:name}, start, end }.
+export async function selfBuffIntervals(code, fight, sourceId) {
+  const [s, e] = await fightWindow(code, fight);
+  if (!(e > s)) return { intervals: {}, names: {}, start: s, end: e };
+  const rows = await paginateEvents(code, fight, sourceId, "Buffs", null, s, e);
+  const bt = await buffUptimes(code, fight, sourceId);
+  const names = {};
+  for (const [n, o] of Object.entries(bt)) names[o.guid] = n;
+  /** @type {Record<string, Array<[number,number]>>} */
+  const intervals = {};
+  const open = {};
+  for (const r of rows) {
+    if (r.sourceID !== sourceId || r.targetID !== sourceId) continue;   // SELF buffs only
+    const g = r.abilityGameID, t = r.timestamp;
+    if (/applybuff/.test(r.type)) { if (open[g] == null) open[g] = t; }
+    else if (/removebuff/.test(r.type)) { if (open[g] != null) { (intervals[g] = intervals[g] || []).push([open[g], t]); open[g] = null; } }
+  }
+  for (const g in open) if (open[g] != null) (intervals[g] = intervals[g] || []).push([open[g], e]);
+  return { intervals, names, start: s, end: e };
+}
+
 // --------------------------------------------------------------------- //
 // Pull/progression fetchers (the raid-night flow -- see progression.js)
 // --------------------------------------------------------------------- //
