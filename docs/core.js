@@ -134,7 +134,7 @@ function metricsFromTables(dmg, casts, name, specName) {
   const castCounts = {};
   for (const a of (ce ? ce.abilities : [])) castCounts[a.name] = a.total;
   const dmgBy = {};
-  for (const a of e.abilities) dmgBy[a.name] = a.total;
+  for (const a of (e.abilities || [])) dmgBy[a.name] = a.total;
   // Overhealing: the Healing table carries `overheal` per actor AND per ability
   // (effective `total` excludes it); the DamageDone table has no such field, so it
   // reads `undefined -> 0` and every DPS consumer is unaffected (byte-identical).
@@ -142,7 +142,7 @@ function metricsFromTables(dmg, casts, name, specName) {
   // the flagship healer efficiency signal. No new query: rides reportCore's table.
   const overheal = e.overheal || 0;
   const overhealBy = {};
-  for (const a of e.abilities) overhealBy[a.name] = a.overheal || 0;
+  for (const a of (e.abilities || [])) overhealBy[a.name] = a.overheal || 0;
   const totalCasts = Object.values(castCounts).reduce((s, v) => s + v, 0);
   return {
     name: e.name, ilvl: e.itemLevel, dur,
@@ -273,7 +273,7 @@ export async function dotUptimes(code, fight, sourceId, ids, durMs) {
   const r = (await gql(`query { reportData { report(code:"${code}") { ${aliases} } } }`)).reportData.report;
   const out = {};
   ids.forEach((id, i) => {
-    const auras = (r[`u${i}`] && r[`u${i}`].data.auras) || [];
+    const auras = (r[`u${i}`] && r[`u${i}`].data && r[`u${i}`].data.auras) || [];
     const mx = auras.reduce((x, a) => Math.max(x, a.totalUptime || 0), 0); // primary (boss) target
     out[id] = Math.round((100 * mx) / durMs);
   });

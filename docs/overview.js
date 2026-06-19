@@ -95,8 +95,8 @@ async function deepCompare(log, name, server, region, encounter, difficulty, cla
   const youStats = await secondaryStats(code, fight, you.sourceID, className);
   if (youStats) {
     const keys = ["crit", "haste", "mastery", "vers"];
-    const sec = keys.reduce((s, k) => s + youStats[k], 0) || 1;
-    log("    secondary allocation (you): " + keys.map((k) => `${k} ${f(100 * youStats[k] / sec, 0)}%`).join("  "));
+    const sec = keys.reduce((s, k) => s + (youStats[k] || 0), 0) || 1;
+    log("    secondary allocation (you): " + keys.map((k) => `${k} ${f(100 * (youStats[k] || 0) / sec, 0)}%`).join("  "));
   }
 
   const g = gearSummary(you.gear);
