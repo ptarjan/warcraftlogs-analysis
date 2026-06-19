@@ -795,6 +795,25 @@ test("recurrence: a habit on >=2 OTHER bosses but not the benchmark surfaces as 
   assert.ok(!recurringKinds.has("cd"), "cd fired only on the benchmark -> not a cross-boss recurring kind");
 });
 
+test("recurrence: TWO habits on the same other bosses fold into ONE note (framing said once)", () => {
+  // Two different slips (press Bolt, clip DoT) both recur on BossB+BossC. The shared
+  // "didn't show on the kill we sized your gap on ... worth fixing raid-wide" framing must
+  // appear ONCE, with each slip listed -- not two items each repeating the whole preamble.
+  const main = [lever("cd:Storm", "COOLDOWN: you cast Storm too little.")];
+  const others = [
+    { name: "BossB", levers: [lever("press:Bolt", "ROTATION: press Bolt more."), lever("dot:Flame", "DOT UPTIME: Flame clipped.")] },
+    { name: "BossC", levers: [lever("press:Bolt", "ROTATION: press Bolt more."), lever("dot:Flame", "DOT UPTIME: Flame clipped.")] },
+  ];
+  const { infos } = mergeRotationRecurrence(main, others);
+  assert.equal(infos.length, 1, "both habits share one combined note, not two");
+  const t = infos[0].text;
+  assert.equal((t.match(/HABIT ACROSS FIGHTS/g) || []).length, 1, "header said once");
+  assert.equal((t.match(/worth fixing raid-wide/gi) || []).length, 1, "closing framing said once");
+  assert.match(t, /BossB and BossC/);
+  assert.match(t, /press Bolt more/);
+  assert.match(t, /Flame clipped/);
+});
+
 test("recurrence: a lever on exactly ONE other boss is fight-specific noise -> no INFO", () => {
   const main = [lever("cd:Storm", "COOLDOWN: you cast Storm too little.")];
   const others = [{ name: "BossB", levers: [lever("press:Bolt", "ROTATION: press Bolt more.")] }];

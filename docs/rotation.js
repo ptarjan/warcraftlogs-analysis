@@ -953,6 +953,12 @@ export function mergeRotationRecurrence(mainLevers, otherBosses = []) {
   const mainKeys = new Set(main.map((fnd) => fnd.recurKey).filter(Boolean));
   const infos = [];
   const emitted = new Set();
+  // GROUP the cross-boss-only habits by the SET of bosses they recur on, so the shared
+  // "this lives off the kill we sized your gap on" framing is said ONCE per group instead
+  // of repeated verbatim per ability (two habits on the same bosses used to print the whole
+  // preamble twice -- "said twice"). With <=2 other bosses analyzed, every qualifying habit
+  // shares the same set, so this collapses to a single note listing each slip.
+  const groups = new Map();   // sorted-boss-key -> { bosses, texts[] }
   for (const o of others) {
     for (const fnd of o.levers) {
       const key = fnd.recurKey;
@@ -961,10 +967,19 @@ export function mergeRotationRecurrence(mainLevers, otherBosses = []) {
       const bosses = on ? [...on].filter((b) => b !== "__bench__") : [];
       if (bosses.length < 2) continue;
       emitted.add(key);
-      infos.push(finding(DIM.ROTATION, INFO,
-        `HABIT ACROSS FIGHTS: this didn't show on the kill we sized your gap on (so it's not in the % list above), ` +
-        `but on ${bosses.join(" and ")} the same slip recurs -- ${fnd.text} Worth fixing raid-wide.`));
+      const gk = [...bosses].sort().join("|");
+      if (!groups.has(gk)) groups.set(gk, { bosses, texts: [] });
+      groups.get(gk).texts.push(fnd.text);
     }
+  }
+  for (const { bosses, texts } of groups.values()) {
+    const where = bosses.join(" and ");
+    infos.push(finding(DIM.ROTATION, INFO, texts.length === 1
+      ? `HABIT ACROSS FIGHTS: this didn't show on the kill we sized your gap on (so it's not in the % list above), ` +
+        `but on ${where} the same slip recurs -- ${texts[0]} Worth fixing raid-wide.`
+      : `HABIT ACROSS FIGHTS: these didn't show on the kill we sized your gap on (so they're not in the % list above), ` +
+        `but on ${where} the same slips recur -- worth fixing raid-wide. ` +
+        texts.map((t, i) => `(${i + 1}) ${t}`).join(" ")));
   }
   return { levers, infos, recurringKinds };
 }
