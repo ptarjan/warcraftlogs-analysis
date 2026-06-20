@@ -10,7 +10,7 @@
 // node `id`, and WCL `id` === Raidbots entry `id`, which carries the real name +
 // spellId. We match the spec by CombatantInfo.specID === Raidbots specId.
 import { spellTooltip } from "./wcl.js";
-import { reportCore, playerMetrics, topField, mapLimit, median, topN, f, bestKill, DPS, finding, DIM, KIND, metricUnit, throughputWord } from "./core.js";
+import { reportCore, playerMetrics, topField, mapLimit, median, topN, f, bestKill, DPS, finding, DIM, KIND, metricUnit, throughputWord, head, arrow } from "./core.js";
 import { wowheadSpell } from "./links.js";
 
 const TALENTS_URL = "https://www.raidbots.com/static/data/live/talents.json";
@@ -377,7 +377,7 @@ export async function run(log, name, server, region, className = "Monk", specNam
   const dpsMiss = fnd.missing.filter((t) => t.dps);
   const utilMiss = fnd.missing.filter((t) => !t.dps);
 
-  log(`=== Talents vs ${fnd.nPeers} top ${specName}s on ${fnd.boss} ===`);
+  log(head(`Talents vs ${fnd.nPeers} top ${specName}s on ${fnd.boss}`));
   log(`Your build matches ${fnd.matched}/${fnd.metaTotal} of the talents your peers commonly take.`);
   // Hero tree is one either/or choice -- show the field split, don't list its
   // nodes as individual "missing" talents.
@@ -402,8 +402,10 @@ export async function run(log, name, server, region, className = "Monk", specNam
     log(`Off-meta picks (few peers run these here — worth re-checking):`);
     for (const t of offDps.slice(0, 6)) log(`  - ${wowheadSpell(t.spellId, t.name)} — only ${f(100 * t.adopt, 0)}% of peers`);
   }
-  if (!dpsMiss.length && !offDps.length) {
-    log("");
-    log(`Your talents line up with your peers on this boss — no obvious ${metricUnit()} swaps.`);
-  }
+  log("");
+  log(arrow(dpsMiss.length
+    ? `swap to the meta build -- you're missing ${dpsMiss.length} ${metricUnit()} talent${dpsMiss.length > 1 ? "s" : ""} the field takes here (confirm in a sim/guide).`
+    : offDps.length
+    ? `your build mostly matches; re-check the ${offDps.length} off-meta pick${offDps.length > 1 ? "s" : ""} above.`
+    : `your talents line up with the field on this boss -- no ${metricUnit()} swaps.`));
 }

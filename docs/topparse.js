@@ -17,7 +17,7 @@
 // rule is actually about.
 import {
   playerMetrics, topRankings, buffUptimes, bossDebuffs, tankTarget, median, topN, f, mapLimit, bestKill,
-  playerAbilities, DPS, COMP, INFO, finding, DIM, runIsHealer, metricUnit,
+  playerAbilities, DPS, COMP, INFO, finding, DIM, runIsHealer, metricUnit, head, subhead, arrow,
 } from "./core.js";
 import { wowheadSpell } from "./links.js";
 
@@ -220,10 +220,10 @@ export async function run(log, name, server, region, className, specName, diffic
   const fnd = await topParseFindings(name, server, region, difficulty, className, specName);
   if (!fnd) { log("(couldn't build a top-parse comparison for this character)"); return; }
 
-  log(`=== You vs the top parses on ${fnd.boss} (your kill: ${f(fnd.yourPct, 0)}%ile) ===`);
+  log(head(`You vs the top parses on ${fnd.boss} (your kill: ${f(fnd.yourPct, 0)}%ile)`));
   log("");
 
-  log("--- Raid-comp throughput amps (you can't press these -- it's who's in the raid) ---");
+  log(subhead("Raid-comp throughput amps (you can't press these -- it's who's in the raid)"));
   if (!fnd.bossReadable) log("  (couldn't read the boss's debuffs -- boss-side amps like Chaos Brand omitted)");
   if (fnd.comp.missing.length) {
     for (const e of fnd.comp.missing) {
@@ -239,16 +239,26 @@ export async function run(log, name, server, region, className, specName, diffic
   // (you already route more) or "potions: top 0, you 0" are non-actionable noise.
   // Suppressed for healers: a healer's DAMAGE routing is meaningless for HPS (the
   // routing LEVER is suppressed too) -- don't show "you put X% of damage on adds".
-  if (!runIsHealer() && fnd.routing && fnd.routing.top - fnd.routing.you >= ROUTE_MIN && fnd.routing.addNames.length) {
-    log("--- Damage routing ---");
-    log(`  top parses put ${f(fnd.routing.top, 0)}% of damage on non-boss targets; you ${f(fnd.routing.you, 0)}%.`);
-    log(`  they cleave/funnel that you don't: ${fnd.routing.addNames.join(", ")}`);
+  const routed = (!runIsHealer() && fnd.routing && fnd.routing.top - fnd.routing.you >= ROUTE_MIN && fnd.routing.addNames.length)
+    ? fnd.routing : null;
+  if (routed) {
+    log(subhead("Damage routing"));
+    log(`  top parses put ${f(routed.top, 0)}% of damage on non-boss targets; you ${f(routed.you, 0)}%.`);
+    log(`  they cleave/funnel that you don't: ${routed.addNames.join(", ")}`);
     log("");
   }
-  if (fnd.potions && fnd.potions.top > fnd.potions.you) {
-    log("--- Consumables timing ---");
-    log(`  potions/kill: top ${fnd.potions.top}, you ${fnd.potions.you}  <-- pre-pot + a second combat potion`);
+  const potGap = (fnd.potions && fnd.potions.top > fnd.potions.you) ? fnd.potions : null;
+  if (potGap) {
+    log(subhead("Consumables timing"));
+    log(`  potions/kill: top ${potGap.top}, you ${potGap.you} -- pre-pot + a second combat potion.`);
   }
+  // Close on the one "so what": what separates you from rank-1 here.
+  log("");
+  log(arrow(fnd.comp.missing.length
+    ? `most of the gap to rank-1 is raid comp (${fnd.comp.missing.slice(0, 2).map((e) => e.label).join(", ")}${fnd.comp.missing.length > 2 ? ", …" : ""})${routed || potGap ? " -- routing/potions are the parts you control" : ", not something you press"}.`
+    : routed || potGap
+    ? `your comp matches the top; the gap you control is ${[routed ? "damage routing" : "", potGap ? "potion timing" : ""].filter(Boolean).join(" + ")}.`
+    : `you match the top parses on comp, routing, and potions -- the rest is raw execution.`));
 }
 
 // Findings for prescribe.js (chasing-99 domain): levers beyond your own play --

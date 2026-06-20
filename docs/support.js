@@ -18,7 +18,7 @@
 // deliberately don't ship. The ally-coverage lever is a verified follow-up.
 import {
   bestKill, playerMetrics, buffUptimes,
-  f, runIsSupport,
+  f, runIsSupport, head, arrow,
 } from "./core.js";
 
 // Amps worth showing as YOURS: maintained at a real uptime (>= floor) but not the
@@ -53,16 +53,16 @@ export async function run(log, name, server, region, className, specName, diffic
     // Honest header: this is buffs ON you (the Buffs-by-you table can't tell who CAST
     // each aura), so it lists your own amps' self-uptime mixed with raid buffs/HoTs
     // allies put on you. Don't claim "you maintained" a Druid HoT / Paladin aura.
-    log("=== BUFFS ON YOU THIS KILL (your amps' self-uptime + raid buffs/HoTs others gave you) ===");
+    log(head("Buffs on you this kill (your amps' self-uptime + raid buffs/HoTs others gave you)"));
     for (const [n, p] of rows) log(`  ${String(n).padEnd(28)} ${f(p, 0).padStart(4)}%`);
     log("");
     log("  NOTE: this is buffs ON you (your own amps' self-uptime, plus HoTs/raid buffs others");
     log("  gave you). Your ALLY coverage -- the real lever -- needs per-target buff data we don't");
     log("  pull yet, so we don't size a buff-uptime lever here (a naive one flags raid buffs your");
-    log("  raid lacked as 'yours'). Keep your amps rolling on the right targets; chase that on a");
-    log("  fixed kill, not the raw personal-DPS number. Your concrete personal levers (Breath of");
-    log("  Eons / cooldowns / gear) are in the PRESCRIPTION.");
+    log("  raid lacked as 'yours').");
   } else {
     log("(No maintained amps read from this kill -- the Buffs table may be unavailable.)");
   }
+  log("");
+  log(arrow(`keep your amps rolling on the right targets -- chase ally coverage on a fixed kill, not the raw personal-DPS number; your concrete levers (Breath of Eons / cooldowns / gear) are in the prescription.`));
 }

@@ -9,7 +9,7 @@
 //   - your opener sequence vs the field's
 import {
   playerMetrics, ilvlPeers, mapLimit, median, bestKill, reportDeaths,
-  playerAbilities, dotUptimes, petDamage, fightWindow, fightEvents, paginateEvents, buffUptimes, f, DPS, INFO, finding, KIND, DIM, eventTable, runIsHealer, runIsSupport, throughputWord,
+  playerAbilities, dotUptimes, petDamage, fightWindow, fightEvents, paginateEvents, buffUptimes, f, DPS, INFO, finding, KIND, DIM, eventTable, runIsHealer, runIsSupport, throughputWord, head, arrow, kfmt,
   damageAbilitiesForced, alwaysAtonement, atonementIfDamaging, isAtonement,
 } from "./core.js";
 import { talentedAbilities, heroTreeOf } from "./talents.js";
@@ -523,10 +523,10 @@ export async function run(log, name, server, region, className = "Monk",
   // Pet-heavy specs (Demo Lock) have no player-sourced per-hit data -> no hits.
   if ((fnd.hits || []).length && fnd.biggest) {
     log("");
-    log(`=== YOUR ${runIsHealer() ? "BIGGEST HEALS" : "HARDEST-HITTING ABILITIES"} (per cast) ===`);
+    log(head(`Your ${runIsHealer() ? "biggest heals" : "hardest-hitting abilities"} (per cast)`));
     for (const h of [...(fnd.hits || [])].sort((a, b) => b.med - a.med))
-      log(`  ${h.name.padEnd(20)} median ${Math.round(h.med).toLocaleString().padStart(8)}  ` +
-          `max ${Math.round(h.max).toLocaleString().padStart(8)}  (${Math.round(h.critPct)}% crit, ` +
+      log(`  ${h.name.padEnd(20)} median ${kfmt(h.med).padStart(6)}  ` +
+          `max ${kfmt(h.max).padStart(6)}  (${Math.round(h.critPct)}% crit, ` +
           `${h.procBig} non-crit big hits)`);
     log(`  -> biggest single-hit ability: ${fnd.biggest.name}`);
   }
@@ -538,12 +538,12 @@ export async function run(log, name, server, region, className = "Monk",
   if (!runIsHealer()) {
     log("");
     if (!fnd.proc.isReal) {
-      log("=== BIG HITS ARE CRIT-DRIVEN, NOT A PROC ===");
+      log(head("Big hits are crit-driven, not a proc"));
       log("  Your outsized hits are crits, not a missed empowerment button. More big");
       log("  hits = more crit + raid damage buffs (comp), not a rotation change.");
     } else {
       const p = fnd.proc;
-      log(`=== EMPOWERMENT (${p.name}, high-damage casts) ===`);
+      log(head(`Empowerment (${p.name}, high-damage casts)`));
       if (p.youEmp != null && p.fieldEmp != null) {
         const cnt = (p.youEmpCount != null && p.youEmpN)
           ? `  (you ${p.youEmpCount}/${p.youEmpN}, field ~${Math.round(p.fieldEmp * p.youEmpN)}/${p.youEmpN})`
@@ -559,7 +559,7 @@ export async function run(log, name, server, region, className = "Monk",
   }
 
   log("");
-  log("=== OPENER ===");
+  log(head("Opener"));
   log(`  your opener:  ${fnd.opener.join(" > ")}`);
   if (fnd.fieldOpener) log(`  peers' opener: ${fnd.fieldOpener.join(" > ")}`);
 
@@ -568,9 +568,9 @@ export async function run(log, name, server, region, className = "Monk",
   if (!runIsHealer() && fnd.weakWindow) {
     const w = fnd.weakWindow;
     log("");
-    log("=== DAMAGE OVER TIME (vs field) ===");
+    log(head("Damage over time (vs field)"));
     log(`  weakest stretch: ${Math.round(w.from * 100)}-${Math.round(w.to * 100)}% of the fight -- ` +
-        `your ${throughputWord()} drops to ~${Math.round(w.youDps / 1000)}k vs your usual ~${Math.round(w.yourTypical / 1000)}k (field still ~${Math.round(w.fieldDps / 1000)}k, so not an intermission).`);
+        `your ${throughputWord()} drops to ~${kfmt(w.youDps)} vs your usual ~${kfmt(w.yourTypical)} (field still ~${kfmt(w.fieldDps)}, so not an intermission).`);
     log(`  -> holding your normal output there is ~${Math.max(1, Math.round(w.lostFrac * 100))}% of your total; find what stops you and keep uptime through it.`);
   }
 
@@ -587,14 +587,21 @@ export async function run(log, name, server, region, className = "Monk",
   // COOLDOWN items) + the Healing efficiency card.
   if (!runIsHealer() && (under.length || over.length)) {
     log("");
-    log(`=== ABILITY USAGE vs PEERS (casts/min, ${fnd.fieldPeers} peers` +
-        `${fnd.heroMatched ? `, all on ${fnd.heroMatched}` : ""}) ===`);
+    log(head(`Ability usage vs peers (casts/min, ${fnd.fieldPeers} peers${fnd.heroMatched ? `, all on ${fnd.heroMatched}` : ""})`));
     for (const a of under.slice(0, 4))
       log(`  UNDER-USE  ${a.name.padEnd(20)} you ${a.you.toFixed(1)}/min  peers ${a.field.toFixed(1)}/min  <-- press it more`);
     for (const a of over.slice(0, 4))
       log(`  OVER-USE   ${a.name.padEnd(20)} you ${a.you.toFixed(1)}/min  peers ${a.field.toFixed(1)}/min  <-- peers press this less`);
-    if (under.length) log("  -> Shift presses toward what peers actually cast.");
   }
+  // Close on the one "so what": the top rotation lever (or all-clear).
+  log("");
+  log(arrow(under.length
+    ? `press ${under[0].name} more is your top button fix${over.length ? `; you over-press ${over[0].name}` : ""} -- the prescription sizes the rotation levers.`
+    : over.length
+    ? `you over-press ${over[0].name} vs the field -- shift those globals to your priority buttons.`
+    : fnd.weakWindow
+    ? `you press the field's buttons; your lever is the weak stretch above, not which buttons.`
+    : `your rotation tracks the field -- no button changes here.`));
 }
 
 // Findings for prescribe.js (rotation domain), split by lever kind below; rotationLevers

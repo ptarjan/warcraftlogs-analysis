@@ -3,7 +3,7 @@
 // Wowhead proxy) and compares slot-by-slot to the field. Ported from gear.py.
 import { itemTooltip, itemXml, zoneTooltip, npcTooltip } from "./wcl.js";
 import {
-  playerMetrics, topField, mapLimit, topEntry, topN, bestKill, DPS, finding, DIM, metricUnit,
+  playerMetrics, topField, mapLimit, topEntry, topN, bestKill, DPS, finding, DIM, metricUnit, head, arrow,
 } from "./core.js";
 import { wowheadItem } from "./links.js";
 
@@ -363,7 +363,7 @@ export async function run(log, name, server, region, className, specName, diffic
   const ff = await gearFindings(name, server, region, className, specName, difficulty, priority);
   if (!ff) throw new Error("No gear found.");
   log("");
-  log(`=== Gear audit (priority: ${priority}) · vs ${ff.n} top-${metricUnit()} ${specName}s ===`);
+  log(head(`Gear audit (priority: ${priority}) · vs ${ff.n} top-${metricUnit()} ${specName}s`));
   log(`${"SLOT".padEnd(9)} ${"YOUR ITEM".padEnd(30)} ${"crit/hst/mas/ver".padEnd(17)} matches peers?`);
   for (const [slot, ist, match, embellished] of ff.rows) {
     const secs = `${String(ist.crit).padStart(3)}/${String(ist.haste).padStart(3)}/${String(ist.mastery).padStart(3)}/${String(ist.vers).padStart(3)}`;
@@ -416,6 +416,15 @@ export async function run(log, name, server, region, className, specName, diffic
     log("");
     log(`No re-stat gains: on every item you own, no peer runs more ${priority} than you -- your stats are maxed/fixed for the gear you have.`);
   }
+  // Close on the one "so what": which gear levers exist (the prescription sizes them).
+  const gaps = [];
+  if (emb.length < 2) gaps.push("an open embellishment slot");
+  if (ff.swaps.length) gaps.push(`${ff.swaps.length} ${priority} drop swap${ff.swaps.length > 1 ? "s" : ""}`);
+  if (ff.restats.length) gaps.push(`${ff.restats.length} re-stat${ff.restats.length > 1 ? "s" : ""}`);
+  log("");
+  log(arrow(gaps.length
+    ? `gear gains available: ${gaps.join(", ")} -- the prescription ranks them by ${metricUnit()}.`
+    : `your gear is dialed in for what you own -- no gear lever here, only future drops.`));
 }
 
 // --------------------------------------------------------------------- //

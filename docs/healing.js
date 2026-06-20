@@ -9,7 +9,7 @@
 // names come from YOUR own healing breakdown (the Healing table), never hard-coded.
 import {
   ilvlPeers, playerMetrics, bestKill, mapLimit, median, healingBreakdown, manaStats,
-  f, DPS, INFO, finding, DIM, KIND, runIsHealer,
+  f, DPS, INFO, finding, DIM, KIND, runIsHealer, head, arrow, kfmt,
 } from "./core.js";
 
 // Overheal % above the field by this many points reads as real spill worth a
@@ -146,7 +146,7 @@ export async function run(log, name, server, region, className, specName, diffic
 
   log(`Healing efficiency on ${best.encounter.name} (your most recent kill at current gear).`);
   log("");
-  log("=== OVERHEALING (wasted output) ===");
+  log(head("Overhealing (wasted output)"));
   const fieldStr = field.overhealMed != null ? `${f(field.overhealMed, 0)}% (n=${field.n})` : "n/a (no ilvl field)";
   log(`  overheal %:  you ${f(you.overhealPct, 0)}%   field ${fieldStr}`);
   if (field.overhealMed != null) {
@@ -161,12 +161,12 @@ export async function run(log, name, server, region, className, specName, diffic
     const ovhBy = you.overhealBy || {}, effBy = you.dmgBy || {};
     for (const n of worst) {
       const ovh = ovhBy[n] || 0, raw = ovh + (effBy[n] || 0);
-      log(`    ${String(n).padEnd(22)} ${f(100 * ovh / (raw || 1), 0).padStart(3)}% overheal  (${Math.round(ovh).toLocaleString()} spilled)`);
+      log(`    ${String(n).padEnd(22)} ${f(100 * ovh / (raw || 1), 0).padStart(3)}% overheal  (${kfmt(ovh)} spilled)`);
     }
   }
   if (you.mana) {
     log("");
-    log("=== MANA ===");
+    log(head("Mana"));
     log(`  end-of-fight: ${f(you.mana.endPct, 0)}%   low-water: ${f(you.mana.minPct, 0)}%` +
         (you.mana.oom != null ? `   first ~empty at ${f(you.mana.oom / 1000, 0)}s` : ""));
     log(you.mana.endPct >= 30
@@ -176,7 +176,13 @@ export async function run(log, name, server, region, className, specName, diffic
       : "  -> Spent about right.");
   }
   log("");
-  log("=== HEALING COOLDOWNS ===");
-  log("  Under-used healing cooldowns are sized in the ROTATION section (the COOLDOWN items) --");
+  log(head("Healing cooldowns"));
+  log("  Under-used healing cooldowns are sized in the Rotation card (the COOLDOWN items) --");
   log("  for a healer those are real HPS recs (e.g. using a healing CD on cooldown).");
+  // Close on the one "so what": overheal is your controllable lever; raw HPS is bounded.
+  const spills = field.overhealMed != null && you.overhealPct > field.overhealMed + OVERHEAL_NOISE_PTS;
+  log("");
+  log(arrow(spills
+    ? `cut your overheal -- you spill more than the field; the rest of the HPS gap is damage-bound (comp + assignment).`
+    : `your efficiency matches the field -- HPS here is damage-bound (comp + assignment), not a personal lever.`));
 }
