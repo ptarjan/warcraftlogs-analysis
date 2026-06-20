@@ -83,12 +83,12 @@ test("graphLevers: names the culprit ability / the mistimed cooldown, or honestl
   const cd = graphLevers({ ...base, worst: { ...wBase, uniform: true, uniformPct: 30, cooldown: { name: "Invoke Niuzao", inPct: 5, outPct: 35, drop: 0.3 } } });
   assert.equal(cd[0].impact, 4);
   assert.match(cd[0].text, /Invoke Niuzao/);
-  assert.match(cd[0].text, /5% of Phase 5 vs 35%/);
+  assert.match(cd[0].text, /5% of it vs 35%/);
   assert.match(cd[0].text, /shift it/i);
   // Cooldowns DO cover the window -> NOT timing; honest INFO (impact 0), not a fake lever.
   const cover = graphLevers({ ...base, worst: { ...wBase, uniform: true, uniformPct: 30, cdsCover: true } });
   assert.equal(cover[0].impact, 0, "no gainable personal lever -> INFO, not a sized DPS item");
-  assert.match(cover[0].text, /cooldowns DO cover|not.*timing/i);
+  assert.match(cover[0].text, /cooldowns cover/i);
   assert.match(cover[0].text, /cleave|Bloodlust|raid cooldown|fewer targets/i);
 });
 

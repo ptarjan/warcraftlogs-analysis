@@ -235,54 +235,18 @@ export function graphLevers(d) {
   if (!w || w.deficit < DIP_FLOOR || !(w.gainPct >= 1)) return [];
   if (w.death) return [];                                   // a death is survival, not a press-lever
   const where = phaseLabel(w, false);
-  const unit = d.unit || "DPS";
-  // Same ALL-CAPS-label house style as every other lever (and the rotation weak-window
-  // it replaces): "DAMAGE TIMELINE: ...". Sized OWN-BASELINE (vs YOUR own typical); the
-  // field-holds clause is the measured "others sustain here, so it's a real hole" -- the
-  // window only fires when the field does NOT drop there (see buildCurveComparison).
-  const head = `DAMAGE TIMELINE: in ${where} on ${d.boss} your ${unit} drops to ~${kfmt(w.youWindow)} vs your own ~${kfmt(w.youTypical)} the rest of the kill -- and the field holds its pace here (~${kfmt(w.fieldWindow)}), so it's a real hole, not a low-damage phase`;
-  if (w.cause === "idle") {
-    // A LOCALIZED idle hole (you go quiet in one phase) -- sized, because the whole-fight
-    // "press faster" lever is silent for an active player, so this is the gainable lever.
-    return [finding(DIM.EXECUTION, DPS(w.gainPct),
-      `${head}. Your cast rate falls to ${Math.round(100 * (w.cpmRatio || 0))}% of normal in ${where}, so you go quiet there -- keep your rotation going through its movement/mechanics instead of coasting.`,
-      "measured", KIND.PHASE_DIP)];
-  }
-  // Cast rate normal but output down -> attribute it from YOUR data:
-  //  - one ability dominates the drop -> name it ("press THAT").
-  //  - a self damage-cooldown is genuinely MISTIMED (covers the window less) -> name it.
-  //  - cooldowns DO cover the window (cdsCover) -> it's NOT timing; the even drop is target
-  //    count (less cleave) or a raid cooldown earlier -> honest INFO, not a personal lever.
-  //  - couldn't read buffs -> a hedged generic note.
-  if (w.culprit) {
-    return [finding(DIM.EXECUTION, DPS(w.gainPct),
-      `${head}. You press just as much there, but your ${w.culprit.name} is way down (~${w.culprit.windowK}k vs ~${w.culprit.normalK}k the rest of the kill) -- make sure you're landing it in ${where}.`,
-      "measured", KIND.PHASE_DIP)];
-  }
-  if (w.cooldown && w.cooldown.name) {
-    return [finding(DIM.EXECUTION, DPS(w.gainPct),
-      `${head}. Your ${w.cooldown.name} covers only ${w.cooldown.inPct}% of ${where} vs ${w.cooldown.outPct}% the rest of the kill -- shift it to cover ${where}.`,
-      "measured", KIND.PHASE_DIP)];
-  }
-  if (w.cooldown) {
-    // The HOLE is measured (own-baseline, field holds) -> keep it sized. An amp IS less
-    // active in the window, but we couldn't NAME it (proc / aura-id mismatch) -> hedge the
-    // cause and point the player at their own cooldowns rather than assert a spell.
-    return [finding(DIM.EXECUTION, DPS(w.gainPct),
-      `${head}. A damage buff of yours is less active here (~${w.cooldown.inPct}% of ${where} vs ${w.cooldown.outPct}% elsewhere) -- I can't name it from the log, so check that your damage cooldowns line up with ${where} (it may also be a proc or a raid cooldown).`,
-      "measured", KIND.PHASE_DIP)];
-  }
-  if (w.cdsCover) {
-    // Your cooldowns already cover the window -> NOT a timing lever. Don't claim gainable
-    // DPS; record it as an INFO so the list isn't padded with a fix that isn't yours.
-    return [finding(DIM.EXECUTION, INFO,
-      `${head}. But your damage cooldowns DO cover ${where} -- so this isn't cooldown timing. Every ability just hits ~${w.uniformPct || 0}% softer there, which usually means fewer targets (less cleave) or a raid cooldown (e.g. Bloodlust) used earlier -- likely not a personal lever to fix.`,
-      "measured", KIND.PHASE_DIP)];
-  }
-  const tail = w.cause !== "cooldown"
-    ? `. Keep your uptime and cooldowns lined up through it.`
-    : `. You press just as much there (cast rate normal), so your hits land softer -- a damage cooldown is landing earlier. Check that your cooldowns cover ${where}.`;
-  return [finding(DIM.EXECUTION, DPS(w.gainPct), head + tail, "measured", KIND.PHASE_DIP)];
+  // TIGHT: one line of measure + one short fix (≤2 lines rendered). Sized OWN-BASELINE
+  // (your window vs your own typical); the window only fires where the field holds.
+  const head = `DAMAGE TIMELINE: ${where} on ${d.boss} — you drop to ~${kfmt(w.youWindow)} vs your own ~${kfmt(w.youTypical)} (field holds ~${kfmt(w.fieldWindow)}).`;
+  const F = (score, fix) => [finding(DIM.EXECUTION, score, `${head} ${fix}`, "measured", KIND.PHASE_DIP)];
+  const G = DPS(w.gainPct);
+  if (w.death) return [];                                              // (guarded above; defensive)
+  if (w.cause === "idle") return F(G, `You go quiet (cast rate ${Math.round(100 * (w.cpmRatio || 0))}%) — keep pressing through it.`);
+  if (w.culprit) return F(G, `Your ${w.culprit.name} is way down (~${w.culprit.windowK}k vs ~${w.culprit.normalK}k) — land it here.`);
+  if (w.cooldown && w.cooldown.name) return F(G, `Your ${w.cooldown.name} covers only ${w.cooldown.inPct}% of it vs ${w.cooldown.outPct}% elsewhere — shift it here.`);
+  if (w.cooldown) return F(G, `A damage buff lands earlier — line your cooldowns up with ${where}.`);
+  if (w.cdsCover) return F(INFO, `Your cooldowns cover it — likely fewer targets or a raid cooldown, not yours to fix.`);
+  return F(G, `You press just as much — a damage cooldown lands earlier; line one up here.`);
 }
 
 // Pure: turn your curve + the peer curves into the aligned band + the worst-dip read.
@@ -456,19 +420,21 @@ function renderBoss(log, d, unit) {
   const phaseNote = g.aligned
     ? ` · aligned by phase${g.intermissions ? ` (${g.intermissions} intermission${g.intermissions === 1 ? "" : "s"} excluded)` : ""}`
     : "";
-  log(`  ${g.boss} · your kill vs ${g.peers} peers at your item level${phaseNote}.`);
-  if (g.isHealer) { log("  HPS tracks incoming raid damage (reactive) — see the Healing card for overhealing/mana."); return; }
+  log(`  ${g.boss} · your kill vs ${g.peers} peers${phaseNote}.`);
+  if (g.isHealer) { log("  HPS tracks incoming raid damage (reactive) — see the Healing card."); return; }
   const w = g.worst;
   const kk = (n) => `${Math.round((n || 0) / 1000)}k`;
-  if (!(w && w.deficit >= DIP_FLOOR)) { log("  -> You hold your level wherever the field does — no soft spot here."); return; }
+  if (!(w && w.deficit >= DIP_FLOOR)) { log("  -> You hold your level wherever the field does."); return; }
   const where = phaseLabel(w, true);
-  if (w.death) { log(`  -> Your damage craters in ${where} because you DIED (~${w.death.atPct}% in) — that's survival, not a rotation hole. See the deaths in the timeline/progression view.`); return; }
-  const drop = `${where}: your ${unit} drops to ~${kk(w.youWindow)} vs your own ~${kk(w.youTypical)} the rest of the kill, while the field holds ~${kk(w.fieldWindow)}`;
-  if (w.cause === "idle") log(`  -> ${drop} — your cast rate falls to ${Math.round(100 * (w.cpmRatio || 0))}% of normal, so you go quiet there. Keep pressing through it. (~${w.gainPct}%)`);
-  else if (w.culprit) log(`  -> ${drop} — your ${w.culprit.name} is way down (~${w.culprit.windowK}k vs ~${w.culprit.normalK}k); land it in ${where}. (~${w.gainPct}%)`);
-  else if (w.cooldown && w.cooldown.name) log(`  -> ${drop} — your ${w.cooldown.name} covers only ${w.cooldown.inPct}% of ${where} vs ${w.cooldown.outPct}% elsewhere; shift it. (~${w.gainPct}%)`);
-  else if (w.cdsCover) log(`  -> ${drop} — but your cooldowns cover ${where}, so it's likely target count / a raid cooldown, not a personal lever.`);
-  else log(`  -> ${drop} — you press just as much, so your hits land softer there (a cooldown/amp timing thing). (~${w.gainPct}%)`);
+  if (w.death) { log(`  -> ${where}: you DIED (~${w.death.atPct}% in) — survival, not a rotation hole.`); return; }
+  // One tight line: the drop + the cause. Keep it short (this card had too much text).
+  const drop = `${where}: ~${kk(w.youWindow)} vs your own ~${kk(w.youTypical)} (field ~${kk(w.fieldWindow)})`;
+  const g3 = `(~${w.gainPct}%)`;
+  if (w.cause === "idle") log(`  -> ${drop} — you go quiet (cast rate ${Math.round(100 * (w.cpmRatio || 0))}%); keep pressing. ${g3}`);
+  else if (w.culprit) log(`  -> ${drop} — your ${w.culprit.name} is way down; land it here. ${g3}`);
+  else if (w.cooldown && w.cooldown.name) log(`  -> ${drop} — shift ${w.cooldown.name} to cover it. ${g3}`);
+  else if (w.cdsCover) log(`  -> ${drop} — cooldowns cover it; likely targets/raid CD, not yours.`);
+  else log(`  -> ${drop} — a cooldown lands earlier; line one up here. ${g3}`);
 }
 
 export async function run(log, name, server, region, className = "Monk", specName = "Brewmaster", difficulty = 5) {
