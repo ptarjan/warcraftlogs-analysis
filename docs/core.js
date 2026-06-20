@@ -365,10 +365,16 @@ export async function dpsOverTime(code, fight, sourceId) {
   const g = rep.graph;
   const series = (g && g.data && g.data.series) || [];
   if (!series.length) return null;
+  // Phase boundaries as { frac, id } -- KEEP the WCL phase id (NOT the segment ordinal):
+  // cycling bosses repeat ids (Chimaerus is 1,2,1,2), so the 3rd segment is "Phase 1 again",
+  // not a distinct "Phase 3". Dedupe by fraction (a same-instant double transition), sort.
   const trans = (((rep.ph || [])[0] || {}).phaseTransitions) || [];
-  let phases = trans.map((t) => Math.max(0, Math.min(1, (t.startTime - s) / (e - s))));
-  phases = [...new Set(phases)].sort((a, b) => a - b);
-  if (!phases.length || phases[0] > 0.0001) phases.unshift(0);   // phase 1 always starts at 0
+  const seenF = new Set();
+  let pairs = trans.map((t) => ({ frac: Math.max(0, Math.min(1, (t.startTime - s) / (e - s))), id: t.id }))
+    .filter((p) => { const k = p.frac.toFixed(4); if (seenF.has(k)) return false; seenF.add(k); return true; })
+    .sort((a, b) => a.frac - b.frac);
+  if (!pairs.length || pairs[0].frac > 0.0001) pairs.unshift({ frac: 0, id: (pairs[0] && pairs[0].id) || 1 });
+  const phases = pairs.map((p) => p.frac), phaseIds = pairs.map((p) => p.id);
   // Prefer the "Total" (actor+pets) series; with no pets there's just the one actor
   // series and no Total, so fall back to it; defensively sum if neither is present.
   const total = series.find((x) => x.name === "Total");
@@ -380,7 +386,7 @@ export async function dpsOverTime(code, fight, sourceId) {
     dps = Array.from({ length: len }, (_, i) => series.reduce((a, x) => a + (+(x.data || [])[i] || 0), 0));
   }
   if (dps.length < 3) return null;
-  return { dur: (e - s) / 1000, dps, phases };
+  return { dur: (e - s) / 1000, dps, phases, phaseIds };
 }
 
 // Rolling DPS over a fight PER ABILITY for one actor (the named damage series), from the

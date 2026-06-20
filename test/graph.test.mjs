@@ -92,6 +92,16 @@ test("graphLevers: names the culprit ability / the mistimed cooldown, or honestl
   assert.match(cover[0].text, /cleave|Bloodlust|raid cooldown|fewer targets/i);
 });
 
+test("graphLevers: labels a CYCLING boss's dip by phase id + occurrence, not segment ordinal", () => {
+  const base = { boss: "Chimaerus", unit: "DPS", isHealer: false };
+  // 3rd segment of a 1,2,1,2 boss -> phase id 1, its 2nd occurrence (NOT "Phase 3").
+  const w = { deficit: 0.4, gainPct: 8, phase: 3, phaseId: 1, phaseOcc: 2, phaseTotal: 2, center: 0.8,
+    youTypical: 42000, youWindow: 24000, fieldWindow: 40000, cause: "idle", cpmRatio: 0.6 };
+  const lev = graphLevers({ ...base, worst: w });
+  assert.match(lev[0].text, /Phase 1 \(2nd time\)/);
+  assert.doesNotMatch(lev[0].text, /Phase 3/);
+});
+
 test("graphLevers: a death-contaminated dip is NOT a press-lever", () => {
   const base = { boss: "Boss", unit: "DPS", isHealer: false };
   const wBase = { deficit: 0.4, gainPct: 10, phase: 3, center: 0.85, youTypical: 42000, youWindow: 20000, fieldWindow: 41000, cause: "idle", cpmRatio: 0.66 };

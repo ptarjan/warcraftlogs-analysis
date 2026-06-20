@@ -6,7 +6,7 @@
 // Rotation cards size the lever. Same compute/render split as every other module.
 import {
   characterZone, characterEncounter, playerMetrics, ilvlPeers, PEER_SAMPLE, BOSS_FANOUT,
-  median, collectUpTo, mapLimit, bestRank, dpsOverTime, metricUnit, runIsHealer, isSupport,
+  median, collectUpTo, mapLimit, bestRank, dpsOverTime, metricUnit, runIsHealer, isSupport, ordinal,
   fightWindow, fightEvents, abilityCurvesOverTime, selfBuffIntervals, playerDeaths, finding, DIM, DPS, INFO, KIND,
 } from "./core.js";
 
@@ -221,12 +221,20 @@ export async function analyzeBoss(name, server, region, encounter, difficulty, c
 // "lost GCDs" lever already sizes, so it's an INFO that LOCATES it (impact 0 -> no
 // double-count). Healers/support: no lever (curve is informational only).
 const kfmt = (n) => `${Math.round((n || 0) / 1000)}k`;
+// Where the dip is, named by the WCL phase ID (not the segment ordinal) so a cycling
+// boss reads "Phase 1 (2nd time)", not a bogus "Phase 3". Falls back to opener/mid/execute
+// for single-phase fights.
+function phaseLabel(w, possessive) {
+  if (w.phaseId != null) return `Phase ${w.phaseId}${(w.phaseTotal || 1) > 1 ? ` (${ordinal(w.phaseOcc || 1)} time)` : ""}`;
+  if (w.phase != null) return `Phase ${w.phase}`;
+  return w.center < 1 / 3 ? (possessive ? "your opener" : "the opener") : w.center < 2 / 3 ? (possessive ? "the middle" : "mid-fight") : "the execute";
+}
 export function graphLevers(d) {
   if (!d || d.skip || d.isHealer) return [];
   const w = d.worst;
   if (!w || w.deficit < DIP_FLOOR || !(w.gainPct >= 1)) return [];
   if (w.death) return [];                                   // a death is survival, not a press-lever
-  const where = w.phase ? `Phase ${w.phase}` : w.center < 1 / 3 ? "the opener" : w.center < 2 / 3 ? "mid-fight" : "the execute";
+  const where = phaseLabel(w, false);
   const unit = d.unit || "DPS";
   // Same ALL-CAPS-label house style as every other lever (and the rotation weak-window
   // it replaces): "DAMAGE TIMELINE: ...". Sized OWN-BASELINE (vs YOUR own typical); the
@@ -345,7 +353,7 @@ export function buildCurveComparison(yc, peers) {
   const yourTypical = liveYou.length ? median(liveYou) : (median(you48) || 1);
   const fieldTypical = liveFld.length ? median(liveFld) : (median(pmed) || 1);
   const W = Math.max(4, Math.round(N * 0.18));
-  /** @type {{start:number,end:number,deficit:number,center:number,phase?:number,nPhases?:number,gainPct?:number,fracStart?:number,fracEnd?:number,cause?:string,cpmRatio?:number,youTypical?:number,youWindow?:number,fieldWindow?:number,culprit?:{name:string,normalK:number,windowK:number},uniform?:boolean,uniformPct?:number,cooldown?:{name:string|null,inPct:number,outPct:number,drop:number},cdsCover?:boolean,death?:{atPct:number}}|null} */
+  /** @type {{start:number,end:number,deficit:number,center:number,phase?:number,nPhases?:number,phaseId?:number,phaseOcc?:number,phaseTotal?:number,gainPct?:number,fracStart?:number,fracEnd?:number,cause?:string,cpmRatio?:number,youTypical?:number,youWindow?:number,fieldWindow?:number,culprit?:{name:string,normalK:number,windowK:number},uniform?:boolean,uniformPct?:number,cooldown?:{name:string|null,inPct:number,outPct:number,drop:number},cdsCover?:boolean,death?:{atPct:number}}|null} */
   let worst = null;
   for (let i = 0; i + W <= N; i++) {
     let youSum = 0, fldDrop = 0, fldSum = 0, n = 0;
@@ -362,11 +370,33 @@ export function buildCurveComparison(yc, peers) {
   // Which phase the dip falls in (aligned runs only) + SIZE it in overall-DPS terms: the
   // damage if you held your own typical across the window, as a % of your whole-fight
   // output (grid slots are ~equal wall-time -> sum of per-slot deficits / your total).
+  // INTERMISSIONS vs real phases: WCL gives no flag, so infer -- a phase segment where the
+  // field median craters to ~0 (boss untargetable, nobody dealing damage) is an
+  // intermission. Count them so the card can say "N phases (M intermissions)"; the dip
+  // itself can never land in one (the live gate already excludes near-zero-field grid).
+  let intermissions = 0;
+  if (bounds.length) {
+    const starts = [0, ...bounds], ends = [...bounds, N];
+    for (let i = 0; i < starts.length; i++) {
+      let sum = 0, cnt = 0;
+      for (let g = starts[i]; g < ends[i]; g++) { sum += pmed[g]; cnt++; }
+      if (cnt && sum / cnt < peak * 0.15) intermissions++;
+    }
+  }
   if (worst) {
     if (bounds.length) {
       const c = (worst.start + worst.end) / 2;
-      worst.phase = bounds.filter((b) => b <= c).length + 1;   // 1-based phase number
+      worst.phase = bounds.filter((b) => b <= c).length + 1;   // 1-based SEGMENT ordinal
       worst.nPhases = bounds.length + 1;
+      // Label by the WCL phase ID, with an occurrence # when the id repeats (cycling boss):
+      // Chimaerus's 3rd segment is "Phase 1 (2nd time)", not a bogus "Phase 3".
+      const ids = yc.phaseIds || [];
+      const pid = ids[worst.phase - 1];
+      if (pid != null) {
+        worst.phaseId = pid;
+        worst.phaseOcc = ids.slice(0, worst.phase).filter((x) => x === pid).length;
+        worst.phaseTotal = ids.filter((x) => x === pid).length;
+      }
     }
     const youSum = you48.reduce((a, b) => a + b, 0) || 1;
     let defSum = 0, winSum = 0, winN = 0;
@@ -379,7 +409,7 @@ export function buildCurveComparison(yc, peers) {
   }
 
   return {
-    n: N, you: you48, pmed, plo, phi, worst, bounds, aligned,
+    n: N, you: you48, pmed, plo, phi, worst, bounds, aligned, intermissions,
     bandBelow: below / liveN, bandAbove: above / liveN,
   };
 }
@@ -423,12 +453,15 @@ function renderBoss(log, d, unit) {
   log("");
   if (typeof document !== "undefined") log(CHART_PREFIX + JSON.stringify(chartData(g)));
   else asciiChart(log, g);
-  log(`  ${g.boss} · your kill vs ${g.peers} peers at your item level${g.aligned ? " · aligned by phase" : ""}.`);
+  const phaseNote = g.aligned
+    ? ` · aligned by phase${g.intermissions ? ` (${g.intermissions} intermission${g.intermissions === 1 ? "" : "s"} excluded)` : ""}`
+    : "";
+  log(`  ${g.boss} · your kill vs ${g.peers} peers at your item level${phaseNote}.`);
   if (g.isHealer) { log("  HPS tracks incoming raid damage (reactive) — see the Healing card for overhealing/mana."); return; }
   const w = g.worst;
   const kk = (n) => `${Math.round((n || 0) / 1000)}k`;
   if (!(w && w.deficit >= DIP_FLOOR)) { log("  -> You hold your level wherever the field does — no soft spot here."); return; }
-  const where = w.phase ? `Phase ${w.phase}` : w.center < 1 / 3 ? "your opener" : w.center < 2 / 3 ? "the middle" : "the execute";
+  const where = phaseLabel(w, true);
   if (w.death) { log(`  -> Your damage craters in ${where} because you DIED (~${w.death.atPct}% in) — that's survival, not a rotation hole. See the deaths in the timeline/progression view.`); return; }
   const drop = `${where}: your ${unit} drops to ~${kk(w.youWindow)} vs your own ~${kk(w.youTypical)} the rest of the kill, while the field holds ~${kk(w.fieldWindow)}`;
   if (w.cause === "idle") log(`  -> ${drop} — your cast rate falls to ${Math.round(100 * (w.cpmRatio || 0))}% of normal, so you go quiet there. Keep pressing through it. (~${w.gainPct}%)`);
