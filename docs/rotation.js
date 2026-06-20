@@ -262,7 +262,20 @@ export async function rotationFindings(name, server, region, className, specName
     const extra = (await mapLimit(extraKills, 3, async (ek) => {
       try {
         const a = await analyzeKill(name, ek.code, ek.fight, specName, className, { castRateOnly: true });
-        return a ? a.castRate : null;
+        if (!a) return null;
+        // ATONEMENT: the benchmark's castRate is DAMAGE (atonement-re-pointed), but an extra
+        // kill's plain castRate is HEALING -- the castRateOnly path returns BEFORE the
+        // re-point. Medianing the two zeroes out every damage ability (present only in the
+        // benchmark) and keeps healing ones, so a Disc who weaved SW:Pain/Mind Blast all
+        // fight read as "0/min, press it more". Rebuild the extra kill's DAMAGE rate from its
+        // allCastRate filtered to the benchmark's damage abilities (cheap -- allCastRate is
+        // already returned), mirroring the peer/field path, so the median stays on one basis.
+        if (you.atonement && you.dmgId2Name) {
+          const r = {};
+          for (const [id, nm] of Object.entries(you.dmgId2Name)) if (a.allCastRate && a.allCastRate[id]) r[String(nm)] = a.allCastRate[id];
+          return r;
+        }
+        return a.castRate;
       } catch (e) { return null; }
     })).filter(Boolean);
     if (extra.length) you.castRate = medianCastRates([you.castRate, ...extra]);
