@@ -241,4 +241,10 @@ if (fetching) await summarizeBilling(rateLimit, getRunStats, `${p.name}-${p.serv
 // cli.test.mjs can introspect SECTION_SPECS without executing the CLI.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   await main();
+  // A --allow-fetch run leaves an HTTP keep-alive socket open, so node won't exit on its own
+  // after main() returns -- which kept the single-writer fetch.lock HELD until it went stale
+  // (~15 min) and blocked the next run (including the scheduled audit batches). Flush stdout,
+  // then force a clean exit. (release() also runs via the lock's process.once("exit") hook.)
+  await new Promise((res) => process.stdout.write("", () => res(undefined)));
+  process.exit(0);
 }
