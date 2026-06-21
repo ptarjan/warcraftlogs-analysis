@@ -375,7 +375,7 @@ function renderHeader(log, d, you, field, peerGap, topGap) {
        : ` But ${metricUnit()} is capped by the damage your raid takes and your healing assignment, so most of that gap is the encounter and healer comp, not ${metricUnit()} you can simply add. The fixes below are the concrete part you control.`)
     : runIsSupport()
     ? ` But as a support, most of your value is the amps you keep on allies (credited to THEIR parses, not your personal DPS), so this personal-DPS gap mostly measures buff value, not DPS you can simply add. Your real lever is buff uptime (see the Support card); the fixes below are the rest you control.`
-    : ` They're at your exact item level, so that ${peerGap}% is realistically yours to gain -- the fixes below are sized to add up to it.`;
+    : ` They're at your exact item level, so that ${peerGap}% is realistically yours to gain -- the breakdown below shows what's a specific fix vs how you play the same gear.`;
   log(`Measured on ${gearBossLink} (ilvl ~${d.curIlvl}): you do ${k(you.dps)} ${metricUnit()} vs the ilvl-matched field's ${k(field.dpsMed)} -- ${gapPhrase}${topClause}.${tail}`);
   // CONSISTENCY + IMPROVEMENT, from your most-farmed boss's parse history (FREE --
   // cached ranks): are you steady or all over the place kill-to-kill, and are your
@@ -482,7 +482,10 @@ function renderVerdict(log, d, yours) {
     const rotTail = d.rotHabitAcrossFights
       ? " -- though you have a rotation habit that recurs across your other fights (see HABIT ACROSS FIGHTS)"
       : overhaulDisclaimer("rotation", d.skipped);
-    log(`VERDICT: your biggest character levers are the ${setupFixes.length} gear/setup fix${setupFixes.length > 1 ? "es" : ""} below${buildNote}${hasPress ? " + pressing faster" : ""}. The big gap is ${compList0.length ? "comp + " : ""}${residualWord}${rotTail}.`);
+    // Gap-aware: a player AHEAD of their bracket has no "big gap" -- it's the distance to
+    // the TOP parses. Saying "the big gap is..." to someone 3% ahead reads as a contradiction.
+    const gapWord = (peerGap != null && peerGap <= 0) ? "Past that, the distance to the top parses is" : "The big gap is";
+    log(`VERDICT: your biggest character levers are the ${setupFixes.length} gear/setup fix${setupFixes.length > 1 ? "es" : ""} below${buildNote}${hasPress ? " + pressing faster" : ""}. ${gapWord} ${compList0.length ? "comp + " : ""}${residualWord}${rotTail}.`);
   } else {
     // "Nothing to fix" must NOT be claimed over sections we never loaded. An empty
     // actionable list is MORE likely under a partial run (a skipped rotation/talents/gear
@@ -599,10 +602,23 @@ function renderChangeList(log, d, peerGap, outpaces) {
   // can fix, the raid-comp part, and what's still unexplained.
   if (gap > 0) {
     const compShare = Math.min(Math.round(compImpact), gap);
+    const fix = Math.round(fixableTotal);
+    const res = residual >= 1 ? Math.round(residual) : 0;
+    // PLAYSTYLE/execution IS yours to close -- the biggest lever, per the tool's premise
+    // ("a big gap at matched ilvl is playstyle, not gear"). Don't oppose it to "you can fix"
+    // (it reads as unfixable -- the user asked "why can't I fix playstyle?"). It's the MOST
+    // fixable thing here. Only comp is genuinely not-your-character; healer/support/small/
+    // elite residuals aren't a personal lever, so those keep the neutral breakdown.
+    const resYours = res && (residualKind === "playstyle" || residualKind === "underpress");
+    const comp = compShare > 0 ? ` · ~${compShare}pp raid comp (a roster gap, not your character)` : "";
     log("");
-    log(`Your ${gap}% gap breaks down as: ~${Math.round(fixableTotal)}pp you can fix (the list below)` +
-        (compShare > 0 ? ` · ~${compShare}pp raid comp` : "") +
-        (residual >= 1 ? ` · ~${Math.round(residual)}pp ${residualSummary(residualKind)}` : "") + ".");
+    if (resYours) {
+      const what = residualKind === "underpress" ? "GCD uptime / execution" : "playstyle (how you play the same gear)";
+      log(`Your ${gap}% gap is mostly YOURS to close — ~${fix}pp in the specific fixes below + ~${res}pp ${what}, the most fixable part (just not a single swap, see below)${comp}.`);
+    } else {
+      log(`Your ${gap}% gap breaks down as: ~${fix}pp you can fix (the list below)${comp}` +
+          (res ? ` · ~${res}pp ${residualSummary(residualKind)}` : "") + ".");
+    }
   }
 
   log("");
