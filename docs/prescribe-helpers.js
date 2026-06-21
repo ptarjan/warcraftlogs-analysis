@@ -323,7 +323,13 @@ export const CONSUMABLES = [
   { field: "flasks", mine: "flask", label: "FLASK", peerVerb: "run", note: "",
     match: (lc) => lc.includes("flask"), minPct: 50,
     none: DPS(2), missText: "you ran none", tail: "Free parse with equal gear.", swap: DPS(2) },
-  { field: "foods", mine: "food", label: "FOOD", peerVerb: "run", note: "",
+  // genericBuff: the food aura is a generic RANK name ("Well Fed" / "Hearty Well Fed"),
+  // NOT the food item -- so we can't name a concrete food to eat, and a food->food "swap"
+  // between two well-fed ranks isn't actionable (you're already fed). Worse, "Hearty Well
+  // Fed" is the MORE common buff in the field, so a small-sample top of plain "Well Fed"
+  // would point at a downgrade. Suppress food SWAPS; the MISSING path ("eat any food") still
+  // fires. (Flasks/potions/oils/runes name the specific item in the buff, so they keep swaps.)
+  { field: "foods", mine: "food", label: "FOOD", peerVerb: "run", note: "", genericBuff: true,
     match: (lc) => lc.includes("well fed"), minPct: 50,
     none: DPS(1, 2), missText: "you ate none", tail: "Free parse.", swap: DPS(1) },
   { field: "potions", mine: "potion", label: "COMBAT POTION", peerVerb: "pop",

@@ -815,17 +815,35 @@ test("embellishments: you OWN the #1 items (slot keyed differently) -> no findin
 });
 
 test("consumableLevers: don't recommend a swap the field MEASURED at ~0% (pointless), but keep a real one", () => {
+  const base = (flaskPct) => ({
+    flasks: new Map([["Flask of the Shattered Sun", 6], ["Flask of Thalassian Resistance", 2]]),
+    foods: new Map(), potions: new Map(), augRunes: new Map(), oils: new Map(),
+    guids: new Map([["Flask of the Shattered Sun", 12345]]),
+    deltas: {}, topDeltas: { flasks: { pct: flaskPct, nHave: 6, nNot: 4 } }, n: 10,
+  });
+  const my = { flask: "Flask of Thalassian Resistance", flaskGuid: 999 };  // a SWAP (wrong flask)
+  // measured 0% -> swapping your flask for theirs gains nothing -> not a suggestion
+  assert.equal(consumableLevers(base(0), my).filter((f) => /FLASK/.test(f.text)).length, 0);
+  // measured 3% -> a real swap, still surfaces
+  assert.equal(consumableLevers(base(3), my).filter((f) => /FLASK/.test(f.text)).length, 1);
+});
+
+test("consumableLevers: a FOOD swap NEVER surfaces -- the well-fed buff names a rank, not the food to eat", () => {
+  // "Hearty Well Fed" -> "Well Fed" can't tell the player which food to cook (the aura is a
+  // generic rank, not the item) and they're already fed; "Hearty Well Fed" is even the more
+  // common buff, so a small-field top of plain "Well Fed" would point at a downgrade.
   const base = (foodPct) => ({
     foods: new Map([["Well Fed", 6], ["Hearty Well Fed", 2]]),
     flasks: new Map(), potions: new Map(), augRunes: new Map(), oils: new Map(),
     guids: new Map([["Well Fed", 12345]]),
     deltas: {}, topDeltas: { foods: { pct: foodPct, nHave: 6, nNot: 4 } }, n: 10,
   });
-  const my = { food: "Hearty Well Fed", foodGuid: 999 };       // a SWAP (you run a different food)
-  // measured 0% -> swapping your food for theirs gains nothing -> not a suggestion
-  assert.equal(consumableLevers(base(0), my).filter((f) => /FOOD/.test(f.text)).length, 0);
-  // measured 3% -> a real swap, still surfaces
-  assert.equal(consumableLevers(base(3), my).filter((f) => /FOOD/.test(f.text)).length, 1);
+  const my = { food: "Hearty Well Fed", foodGuid: 999 };       // a different well-fed rank
+  // Even a "real" measured 3% swap is suppressed -- it isn't actionable.
+  assert.equal(consumableLevers(base(3), my).filter((f) => /FOOD/.test(f.text)).length, 0);
+  // ...but eating NO food still surfaces (eat any food is actionable).
+  const none = consumableLevers(base(3), { food: null, foodGuid: null });
+  assert.equal(none.filter((f) => /FOOD/.test(f.text)).length, 1);
 });
 
 test("consumableLevers: an IMPLAUSIBLE measured delta (small-field confound) falls back to the est, not a 13% flask", () => {

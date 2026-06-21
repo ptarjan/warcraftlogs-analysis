@@ -180,7 +180,9 @@ export function consumableLevers(field, my) {
       if (fd && Math.round(fd.pct) === 0) continue;
       out.push(finding(DIM.SETUP, noneScore, `${cn.label}: ${cn.missText} -- ${counter.get(top)}/${field.n} peers ` +
         `${cn.peerVerb} ${wowheadSpell(field.guids.get(top), top)}${cn.note}.${cite} ${cn.tail}`, basis));
-    } else if (mineName !== top) {
+    } else if (mineName !== top && !cn.genericBuff) {
+      // genericBuff (food): both names are well-fed ranks, not the food item -- a swap
+      // can't say WHICH food to eat and you're already fed, so don't surface one.
       // Swap: price the SPECIFIC field-favored item (peers on it vs not), not the
       // have-any delta -- so "defensive flask -> the DPS flask" reads measured.
       const tdRaw = field.topDeltas && field.topDeltas[cn.field];

@@ -75,7 +75,9 @@ export async function run(log, name, server, region, className = "Monk",
       // Only call it MISSING when the field actually runs one (most do).
       if (top && top[1] >= n / 2) missing++;
       log(`  ${c.label.padEnd(14)} you ran NONE${top && top[1] >= n / 2 ? "" : " (and the field mostly skips it too)"} · field: ${fieldStr}`);
-    } else if (top && yours.name !== top[0]) {
+    } else if (top && yours.name !== top[0] && !c.genericBuff) {
+      // genericBuff (food): "Hearty Well Fed" vs "Well Fed" are ranks of the same buff,
+      // not different foods -- you're fed, so it matches the field (no actionable swap).
       mismatched++;
       log(`  ${c.label.padEnd(14)} you ran ${wowheadSpell(yours.guid, yours.name)} · field: ${fieldStr}`);
     } else {

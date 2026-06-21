@@ -198,7 +198,12 @@ query coalescing), and a smoke test that the browser modules import under Node.
 ## Lessons baked in (don't relearn these)
 
 - Buff/consumable names vary by rank/tier (`"Hearty Well Fed"` vs `"Well Fed"`).
-  **Match buffs by keyword, never exact string.**
+  **Match buffs by keyword, never exact string.** And the food buff is a *generic
+  rank* (`"Well Fed"`), not the food item — so a food→food "swap" can't say which
+  food to eat (and `"Hearty Well Fed"` is the *more* common buff, so a small-field
+  top of plain `"Well Fed"` points at a downgrade). Food is `genericBuff: true`:
+  its swap lever is suppressed; only "you ate none → eat food" surfaces. Flasks/
+  potions/oils/runes name the specific item, so they keep swaps.
 - A character's ranked parses are logged at the **item level at the time** —
   usually mid-progression. "Current" = the **most recent kill within 1 ilvl of
   your best** (`bestRank`/`bestKill`), NOT the single highest-ilvl kill: a lucky
