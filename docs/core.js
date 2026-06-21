@@ -2,7 +2,7 @@
 // Shared constants, formatting helpers, and low-level WCL fetchers.
 // Ported from analyze.py's fetcher layer; imported by the analysis modules.
 import { gql, metaGet, metaPut, setPreferCache } from "./wcl.js";
-import { slug } from "./format.js";
+import { slug, median } from "./format.js";
 import { isHealer, runMetric, eventTable, resetRunContext } from "./runcontext.js";
 // The pure helpers, run context, and finding currency now live in focused modules;
 // re-export so the many `import { f, median, DPS, finding, runIsHealer, ... } from
@@ -30,13 +30,50 @@ const cRegion = (s) => clean(s).trim().toUpperCase();
 // --------------------------------------------------------------------- //
 // Low-level fetchers
 // --------------------------------------------------------------------- //
+// The current-expansion RAID zones, newest first. WCL's no-zone zoneRankings only ever
+// returns its DEFAULT zone (the season's main raid), so a side patch-raid like Sporefall
+// is invisible to it -- we enumerate the raids ourselves and analyze them ALL together.
+// Filter: current expansion (max id), live (not frozen), and NOT the M+ dungeon zone
+// (named "Mythic+ ..."). Cached -- the zone list barely changes, so this is ~free after
+// the first run. Returns [] on any hiccup (caller falls back to the WCL-default zone).
+export async function currentRaidZones() {
+  try {
+    const zones = (await gql(`query { worldData { zones { id name frozen expansion { id } } } }`)).worldData.zones || [];
+    const maxExp = Math.max(0, ...zones.map((z) => (z.expansion && z.expansion.id) || 0));
+    return zones
+      .filter((z) => (z.expansion && z.expansion.id) === maxExp && !z.frozen && !/mythic\s*\+/i.test(z.name || ""))
+      .map((z) => ({ id: z.id, name: z.name }))
+      .sort((a, b) => b.id - a.id);
+  } catch { return []; }
+}
+
+// Your rankings across EVERY current raid (not just WCL's default zone). Bundles one
+// aliased zoneRankings per raid zone into a SINGLE query (so it's one fetch, and the query
+// text varies with the zone set -> it auto-refreshes the moment a new raid opens), then
+// merges all the per-boss rankings into one zoneRankings-shaped object. The per-zone
+// best/median aggregates don't combine, so we recompute them across the merged kills.
+// Each ranking carries its own encounter {id,name}, and the whole analysis is per-encounter
+// (ilvlPeers/topRankings/characterEncounter are zone-agnostic), so the new raid's bosses
+// flow through automatically. Falls back to the WCL-default zone if the zone list is empty.
 export async function characterZone(name, server, region, difficulty) {
-  const q = `query { characterData { character(
-    name:"${cName(name)}", serverSlug:"${slug(clean(server))}", serverRegion:"${cRegion(region)}") {
-    id classID zoneRankings(difficulty:${difficulty}) } } }`;
-  const c = (await gql(q)).characterData.character;
+  const zones = await currentRaidZones();
+  const head = `character(
+    name:"${cName(name)}", serverSlug:"${slug(clean(server))}", serverRegion:"${cRegion(region)}")`;
+  const sel = zones.length
+    ? zones.map((z, i) => `z${i}: zoneRankings(zoneID:${z.id}, difficulty:${difficulty})`).join("\n    ")
+    : `zoneRankings(difficulty:${difficulty})`;
+  const c = (await gql(`query { characterData { ${head} {\n    id classID ${sel} } } }`)).characterData.character;
   if (!c) throw new Error(`Character not found: ${name}-${server}-${region}`);
-  return c;
+  const merged = [];
+  if (zones.length) { for (let i = 0; i < zones.length; i++) merged.push(...((c[`z${i}`] && c[`z${i}`].rankings) || [])); }
+  else merged.push(...((c.zoneRankings && c.zoneRankings.rankings) || []));
+  const ps = merged.filter((r) => (r.totalKills || 0) > 0 && r.rankPercent != null).map((r) => r.rankPercent);
+  return { id: c.id, classID: c.classID, zoneRankings: {
+    rankings: merged,
+    bestPerformanceAverage: ps.length ? Math.max(...ps) : 0,
+    medianPerformanceAverage: ps.length ? median(ps) : 0,
+    zones,
+  } };
 }
 
 // Decide whether we can REUSE the cached field instead of re-spending points to refresh
