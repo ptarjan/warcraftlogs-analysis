@@ -56,7 +56,7 @@ test("fieldDelta measures an attribute's value from the field (have vs not)", ()
 });
 const { pickBenchmarkKill, compCoversGap, killHistory } = await import("../docs/prescribe.js");
 const { reconcileImpacts, reconcileProtectingMeasured, remainderKind, isEliteParse, isOffMetaBuild, verdictLever, verdictBlindSpots, overhaulDisclaimer, strengths, residualText, residualSummary } = await import("../docs/prescribe-helpers.js");
-const { executionLevers, latencyLever, trinketLevers, consumableLevers } = await import("../docs/prescribe-levers.js");
+const { executionLevers, latencyLever, trinketLevers, consumableLevers, enchantLevers } = await import("../docs/prescribe-levers.js");
 
 test("killHistory: parse spread (consistency) + recent-vs-old trend (improvement), time-ordered", () => {
   const k = (p, t) => ({ rankPercent: p, startTime: t });
@@ -880,6 +880,34 @@ test("consumableLevers: a POTION swap needs a MEASURED gain (potions are near-eq
     "unmeasured potion swap -> suppressed (barely a difference)");
   const shown = consumableLevers(base({ pct: 2, nHave: 7, nNot: 3 }), my).find((f) => /POTION/.test(f.text));
   assert.ok(shown && shown.basis === "measured", "a MEASURED potion gain still surfaces");
+});
+
+test("enchantLevers: measured (per-slot field delta) when there's a counterfactual, est otherwise", () => {
+  // Two slots the field reliably enchants but you don't. enchBySlot keys on slot name.
+  const base = (enchDeltas) => ({
+    n: 10,
+    enchBySlot: { Wrist: new Map([["Devotion of Avoidance", 6]]), Chest: new Map([["Crystalline Radiance", 7]]) },
+    enchDeltas,
+  });
+  const my = { ench: new Set() };                               // you enchant neither slot
+  // No field counterfactual (everyone enchants -> fieldDelta returned null) -> est by count.
+  const est = enchantLevers(base({ Wrist: null, Chest: null }), my)[0];
+  assert.ok(est, "the lever fires");
+  assert.equal(est.basis, "est", "no counterfactual -> count estimate");
+  assert.equal(est.impact, 2, "est sized by missing-slot count (2)");
+  assert.doesNotMatch(est.text, /measured/);
+  // Both slots have a usable delta -> measured, with a per-slot cite, sized by the sum.
+  const meas = enchantLevers(base({ Wrist: { pct: 2, nHave: 6, nNot: 4 }, Chest: { pct: 3, nHave: 7, nNot: 4 } }), my)[0];
+  assert.equal(meas.basis, "measured", "both slots priced -> measured");
+  assert.equal(meas.impact, 5, "sized by the summed floors (2+3)");
+  assert.match(meas.text, /Wrist \+2%/);
+  assert.match(meas.text, /Chest \+3%/);
+  // One slot measured, one not -> can't honestly claim measured for the bundle -> est.
+  const mixed = enchantLevers(base({ Wrist: { pct: 2, nHave: 6, nNot: 4 }, Chest: null }), my)[0];
+  assert.equal(mixed.basis, "est", "a slot we couldn't price -> fall back to est");
+  // An implausible (> ceiling) confounded delta is distrusted -> drops the bundle to est.
+  const conf = enchantLevers(base({ Wrist: { pct: 2, nHave: 6, nNot: 4 }, Chest: { pct: 9, nHave: 7, nNot: 4 } }), my)[0];
+  assert.equal(conf.basis, "est", "an above-ceiling delta is distrusted -> est");
 });
 
 test("residualText (playstyle): empowered-share wording reflects ahead / even / behind, not always 'as often'", () => {

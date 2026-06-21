@@ -214,8 +214,30 @@ export function enchantLevers(field, my) {
     if (top && top[1] >= field.n / 2) missing.push([slotName, top[0]]);  // field reliably enchants it
   }
   if (!missing.length) return [];
-  const est = Math.min(missing.length, 5);
   const list = missing.map(([s, e]) => `${s} (${e})`).join(", ");
+  // Prefer the MEASURED value of each missing slot's enchant (peers who enchant it
+  // vs those who leave it bare -- enchDeltas) over the flat count. Same trust/cap as
+  // the consumable lever: a confounded delta above CONS_MAX_PCT (better players just
+  // enchant AND play better, on a small "bare" group) is distrusted and dropped from
+  // the sum. We can claim "measured" only when EVERY missing slot had a usable field
+  // counterfactual; otherwise one slot we couldn't price would make the bundled %
+  // dishonest, so we fall back to the count estimate. Mirrors the talent lever's
+  // all-or-nothing measured rule.
+  const ed = field.enchDeltas || {};
+  const trusted = missing
+    .map(([s]) => ({ slot: s, d: ed[s] }))
+    .filter((t) => t.d && Math.round(t.d.pct) <= CONS_MAX_PCT);
+  if (trusted.length === missing.length && trusted.length > 0) {
+    // Every missing slot had a usable field counterfactual -> price it. Sum the
+    // per-slot floors (capped -- enchants are universally small, and the deltas
+    // share a confound so the sum is an over-estimate reconcileImpacts trims).
+    const sum = trusted.reduce((a, t) => a + t.d.pct, 0);
+    const pct = Math.min(Math.max(1, Math.round(sum)), 5);
+    // Cite each slot's measured floor (transparent, not one inflated total).
+    const cite = ` (measured: ${trusted.map((t) => `${t.slot} +${Math.round(t.d.pct)}%`).join(", ")} -- peers who enchant the slot vs those who leave it bare)`;
+    return [finding(DIM.SETUP, DPS(pct), `ENCHANTS: you're missing enchants on ${list}. The field runs them -- a free parse with equal gear.${cite}`, "measured")];
+  }
+  const est = Math.min(missing.length, 5);
   return [finding(DIM.SETUP, DPS(est), `ENCHANTS: you're missing enchants on ${list}. The field runs them -- a free parse with equal gear.`)];
 }
 

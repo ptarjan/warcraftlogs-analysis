@@ -159,8 +159,9 @@ function tallyPeerField(peers, priority) {
 // -> the lever keeps its estimate. Covers: having ANY consumable (deltas), the FIELD'S
 // TOP item for a wrong-choice swap (topDeltas), the priority stat by % (statDelta) and
 // per RATING point (statValue, to size gear swaps from the field not a sim constant),
-// the most-common gem (gemDelta), and self-buff raid amps (compDeltas; boss-side debuffs
-// are measured separately in bossDebuffDeltas -- they sit on the enemy, not a peer's buffs).
+// the most-common gem (gemDelta), per-slot enchants (enchDeltas), and self-buff raid amps
+// (compDeltas; boss-side debuffs are measured separately in bossDebuffDeltas -- they sit on
+// the enemy, not a peer's buffs).
 function computeFieldDeltas(peers, dps, priority, tally) {
   const { flasks, foods, potions, augRunes, oils } = tally;
   const mask = (test) => peers.map((p) => Object.entries(p.bf || {}).some(([nm, b]) => test(nm.toLowerCase(), b)));
@@ -207,7 +208,19 @@ function computeFieldDeltas(peers, dps, priority, tally) {
     const d = fieldDelta(dps, peers.map((p) => Object.entries(p.bf || {}).some(([nm, b]) => e.match.test(nm) && b.pct > 1)));
     if (d) compDeltas[e.key] = d;
   }
-  return { deltas, topDeltas, statDelta, statValue, gemDelta, compDeltas };
+  // Per-slot enchant value: peers who enchant the slot vs those who leave it bare.
+  // An enchant is a stat add-on, so this is the SAME natural experiment gems and
+  // consumables get measured by -- the enchant lever was the lone setup lever still
+  // sized by a flat count. null where everyone (or no one) enchants the slot -> the
+  // lever keeps its count estimate for that slot. SLOT_NAME maps the gear-slot index
+  // to the readable name the enchant tally keys on.
+  /** @type {Record<string, FieldDelta|null>} */
+  const enchDeltas = {};
+  for (const slotName of Object.keys(tally.enchBySlot)) {
+    enchDeltas[slotName] = fieldDelta(dps, peers.map((p) =>
+      (p.m.gear || []).some((g) => SLOT_NAME[g.slot] === slotName && g.permanentEnchantName)));
+  }
+  return { deltas, topDeltas, statDelta, statValue, gemDelta, compDeltas, enchDeltas };
 }
 
 // The field's gear/consumable/stat picture for prescribe: fetch the peers once, tally
@@ -222,7 +235,7 @@ async function fieldGearConsumables(name, server, region, encounter, difficulty,
   const { enchBySlot, trinkets, flasks, foods, potions, augRunes, oils, guids, statPcts } = tally;
   return {
     enchBySlot, trinkets, flasks, foods, potions, augRunes, oils, guids,
-    ...fieldD,
+    ...fieldD,  // includes enchDeltas keyed by slot name
     statPct: statPcts.length ? median(statPcts) : null, n: peers.length,
     dpsMed: peers.length ? median(dps) : null, // measured field DPS
     // Field overheal % (median over the SAME peers) -- the baseline the healer
