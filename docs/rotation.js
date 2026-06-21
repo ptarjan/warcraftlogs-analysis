@@ -845,15 +845,14 @@ function openerLever(rot, link) {
   if (!og) return [];
   const share = Math.round(og.peerShare * 100);
   const fo = (rot.fieldOpener || []).slice(0, 7);
-  const yo = (rot.opener || []).slice(0, 7);
   const lead = og.omitted
-    ? `you never open with ${link(og.ability)} -- the field leads with it (${share}% of peers)`
-    : `you push ${link(og.ability)} back ${og.delay} global${og.delay === 1 ? "" : "s"} -- the field leads with it (${share}% of peers)`;
-  const seqs = (fo.length && yo.length)
-    ? ` Field opens: ${fo.join(" > ")}. You open: ${yo.join(" > ")}.`
-    : "";
+    ? `you never open with ${link(og.ability)} — the field leads with it (${share}% of peers)`
+    : `you push ${link(og.ability)} back ${og.delay} global${og.delay === 1 ? "" : "s"} — the field leads with it (${share}% of peers)`;
+  // The full both-sequences comparison lives in the Rotation card (prints your + peers'
+  // opener); keep the LIST item to the lead divergence + the action (≤2 lines).
+  const lead3 = fo.length ? ` (field opens ${fo.slice(0, 3).join(" > ")}…)` : "";
   return [finding(DIM.ROTATION, INFO,
-    `OPENER: ${lead}.${seqs} Match the field's opening sequence -- it sets up your whole first burst window.`,
+    `OPENER: ${lead}${lead3}. Match the field's opener — it sets up your first burst (full sequence in the Rotation card).`,
     "measured", KIND.OPENER)];
 }
 

@@ -261,45 +261,34 @@ export function residualText(kind, r, d, rot, rx) {
     // sequencing, uptime through movement) + the concrete next step. Only a SMALL
     // remainder is genuinely just stat variance.
     const big = r >= 25;
-    const frontier = ` A gap this size isn't just stat variance -- it's execution: aligning cooldowns with Bloodlust/burst windows, sequencing, and uptime/DoTs/buffs through movement (plus comp re-attribution + fight-amp windows you don't fully control). Pull up a rank-1 parse of this exact fight and diff its timeline against yours.`;
-    const perCastTail = ` The gap is per-cast ${throughputWord()} (crit/stats, plus comp re-attribution + fight-amp windows you don't fully control).`;
-    // Empowered-share band -- only reached when the EMPOWERMENT lever DIDN'T fire (gap
-    // < 12pp). Ahead or within 5pp => timing ISN'T the culprit. But 5-12pp BEHIND (e.g.
-    // a Feral at 11% vs 21% -- half the field's rate) means timing/snapshotting likely
-    // IS part of it, just under the lever's bar: NEVER tell that player "you land it
-    // nearly as often, so it's NOT timing" -- that dismisses the most likely lever.
+    // ≤2 LINES: % + what it is + ONE next step. The multi-line "frontier" prose was the
+    // bloat; cut it to a short "diff a rank-1 parse" pointer (the detail lives in the
+    // Rotation / Chasing-99 / Timeline cards). KEEP the empowerment clause + timing guards.
+    const diff = big ? " Diff a rank-1 parse of this exact fight against yours." : "";
+    // empBehind (5-12pp under): timing likely IS part of it -- never dismiss it.
     const empBehind = hasEmp && pr.youEmp < pr.fieldEmp - 0.05;
     const empWord = !hasEmp ? "" : pr.youEmp - pr.fieldEmp >= 0.05 ? "more often than"
       : pr.youEmp >= pr.fieldEmp - 0.05 ? "about as often as" : "less often than";
     const cite = hasEmp && pr.fieldEmp - pr.youEmp >= 0.12
-      ? ` The biggest piece: only ${ep(pr.youEmp)} of your ${pr.name} casts land empowered vs the field's ${ep(pr.fieldEmp)}${hasEmpItem ? " (see the EMPOWERMENT item)" : ""} -- the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps).`
-      : hasEmp && !empBehind
-      ? ` Your ${pr.name} lands empowered ${empWord} the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}), so it's NOT timing.${big ? frontier : perCastTail}`
+      ? ` Only ${ep(pr.youEmp)} of your ${pr.name} lands empowered vs the field's ${ep(pr.fieldEmp)}${hasEmpItem ? " (see the EMPOWERMENT item)" : ""} — land it in its window more.`
+      : empBehind
+      ? ` Your ${pr.name} lands empowered ${empWord} the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}) — part of this likely IS timing.${diff}`
       : hasEmp
-      ? ` Your ${pr.name} lands empowered ${empWord} the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}) -- so part of this likely IS timing (under the bar where we'd name it a lever): land your hardest hit in its high-damage window more often.${big ? frontier : ""}`
+      ? ` Your ${pr.name} lands empowered ${empWord} the field (you ${ep(pr.youEmp)} vs ${ep(pr.fieldEmp)}), so it's NOT timing.${diff || " The rest is per-cast stats."}`
       : under.length
-      ? ` Part of it: you press ${under.slice(0, 2).map((a) => `${a.name} ${f(a.you, 1)}/min vs ${f(a.field, 1)}`).join(", ")}.${big ? frontier : ""}`
+      ? ` Press ${under.slice(0, 2).map((a) => `${a.name} ${f(a.you, 1)}/min`).join(", ")} more.${diff}`
       : rotSkipped
-      // Rotation didn't load this run (rate-limited / private log) -- that's the cooldown/
-      // ability breakdown, so DON'T claim it's "listed above" (it isn't). Say so honestly.
-      ? ` Your rotation analysis didn't load this run (rate-limited or a private log) -- that's where the cooldown/ability breakdown lives, so re-run to see what's behind this.${big ? frontier : ""}`
-      : big
-      ? ` The measurable cooldown/ability gaps are listed above.${frontier}`
-      : ` The measurable cooldown/ability gaps are listed above; the rest is per-cast ${throughputWord()} (crit/stats + comp & fight amps) we can't pin to one ability.`;
-    // Off-meta build: no same-hero peers to compare against, so a big part of the
-    // remainder is the build itself (HERO TREE + TALENTS items), not "how you play".
-    // Don't say "NOT press faster" when a PRESS FASTER lever is ALREADY in the list
-    // above (the idle we COULD measure) -- the two collide and read as a contradiction.
-    // In that case the remainder is the part BEYOND that measured idle: still per-cast,
-    // not more idling. Phrase it so the two don't fight.
+      ? ` Your rotation analysis didn't load this run — re-run for the cooldown/ability breakdown.${diff}`
+      : big ? diff
+      : ` The rest is per-cast stats we can't pin to one ability.`;
+    // Don't say NOT "press faster" when a PRESS FASTER item is already in the list (collide).
     const hasPressItem = (rx || []).some((x) => x.kind === KIND.PRESS_FASTER);
-    const notGear = `it's NOT gear (a sim would value your gear swaps at a few %)`;
-    const playstyleBody = hasPressItem
-      ? `${notGear}. Beyond the idle gap above, it's not just pressing faster either -- it's how you play the same gear the field plays`
-      : `${notGear} and NOT "press faster" -- it's how you play the same gear the field plays`;
+    const body = hasPressItem
+      ? `how you play the same gear the field plays (beyond the idle gap above)`
+      : `how you play the same gear the field plays — not gear, NOT "press faster"`;
     return isOffMetaBuild(rx)
-      ? `OFF-META BUILD + PLAYSTYLE (~${r}%): a large part is your BUILD -- you run a hero tree (and talents) the field doesn't (see the HERO TREE + TALENTS items), so your rotation can't be compared button-for-button and a sim would value the swap well above the estimate above. Switch to the meta build and re-run first.${cite}`
-      : `PLAYSTYLE (~${r}%): the biggest chunk -- ${playstyleBody}.${cite}`;
+      ? `OFF-META BUILD + PLAYSTYLE (~${r}%): much of this is your BUILD — a hero tree/talents the field doesn't run (see the HERO TREE + TALENTS items). Switch to the meta build and re-run.${cite}`
+      : `PLAYSTYLE (~${r}%): the biggest gap — execution: ${body}.${cite}`;
   }
   if (kind === "underpress") {
     return `THE REMAINDER (~${r}%): not a setup item -- it's GCD uptime and hitting your priority on more pulls (see the cast/idle gaps above).`;

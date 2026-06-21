@@ -312,36 +312,29 @@ export function topParseLevers(tp, compDeltas = null) {
     const dedicated = cs != null && cs < 0.6;
     const confirmed = cs != null && cs >= 0.6;
     const cleaveNote = confirmed
-      ? ` (confirmed: the field deals this with abilities they also land on the boss -- same-kit cleave you can replicate, not separate add tooling).`
+      ? ` (same-kit cleave you can replicate, not separate add tooling).`
       : "";
     if (tank && tank.name && fieldTank && fieldTank.name && tank.name !== fieldTank.name) {
       // ASSIGNMENT difference: you held a DIFFERENT target than the field's consensus.
       // Real DPS but raid-dependent -> the comp bucket (sized), not a "yours" lever.
       out.push(finding(DIM.COMP, COMP(Math.round(route)),
-        `ROUTING: top parses put ${top}% of damage on ${adds} (you ${youPct}%) -- but you were TANKING ${tank.name} while ` +
-        `the top parses tanked ${fieldTank.name} (${fieldTank.n}/${fieldTank.of}). That's a tank ASSIGNMENT difference -- who holds what is a raid ` +
-        `call, not a target you freely swap. To shift it, sort funnel/tank duties with your team.`, "measured"));
+        `ROUTING: top parses put ${top}% of damage on ${adds} (you ${youPct}%) — but you were TANKING ${tank.name} while they tanked ${fieldTank.name} (${fieldTank.n}/${fieldTank.of}). That's a tank ASSIGNMENT call — sort funnel/tank duties with your team.`, "measured"));
     } else if (dedicated) {
       // The field's funnel is mostly DEDICATED add-only tooling, not same-kit cleave --
       // so it's NOT a free "cleave with your normal buttons" gain. Don't headline it as
       // yours-DPS; size it as conditional (comp/tooling/assignment-dependent).
       out.push(finding(DIM.COMP, COMP(Math.round(route)),
-        `ROUTING: top parses put ${top}% of damage on ${adds} (you ${youPct}%) -- but they get most of it from abilities they DON'T use on the boss ` +
-        `(dedicated add tooling / a target swap), not cleave off their normal rotation. So it isn't a free "press your buttons at the adds" gain: ` +
-        `it costs boss uptime and is only worth it if those adds are a priority kill on your assignment.`, "measured"));
+        `ROUTING: top parses put ${top}% of damage on ${adds} (you ${youPct}%) — but mostly from abilities they DON'T use on the boss (dedicated add tooling), not cleave off your rotation. Conditional on your assignment.`, "measured"));
     } else if (tank && fieldTank && tank.name === fieldTank.name) {
       // SAME assignment, field funnels MORE -> achievable on your duty, so it IS yours
       // (positioning/cleave while tanking the same target) -- NOT an assignment excuse.
       out.push(finding(DIM.ROTATION, DPS(Math.round(route)),
-        `ROUTING: the top parses tank ${tank.name} just like you, yet put ${top}% of their damage on ${adds} vs your ${youPct}% -- ` +
-        `so funneling the adds WHILE tanking ${tank.name} is doable on your assignment (cleave/AoE/positioning), it isn't a target swap.${cleaveNote} ` +
-        `If the adds never come into your range, that part is your group's positioning, not your buttons.`, "measured"));
+        `ROUTING: the top parses tank ${tank.name} just like you, yet put ${top}% of their damage on ${adds} vs your ${youPct}% — cleave the adds harder when they're in range (positioning, not a target swap).${cleaveNote}`, "measured"));
     } else {
       // No tank read -> generic funnel lever. "ALONGSIDE", not "instead": funneling adds
       // is usually cleaving them WITH the boss, not abandoning it.
       out.push(finding(DIM.ROTATION, DPS(Math.round(route)),
-        `ROUTING: top parses put ${top}% of damage on ${adds} (you ${youPct}%). Cleave/funnel those ALONGSIDE the boss when they're up.${cleaveNote} ` +
-        `(how much is available depends on the fight, but the target choice is yours).`, "measured"));
+        `ROUTING: top parses put ${top}% of damage on ${adds} (you ${youPct}%) — cleave/funnel those ALONGSIDE the boss when they're up.${cleaveNote}`, "measured"));
     }
   }
   // Potions: pre-pot + a second combat potion (a setup fix you apply yourself). Only the

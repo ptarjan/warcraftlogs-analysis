@@ -146,7 +146,7 @@ test("residualText: playstyle cite points at 'the EMPOWERMENT item' only when th
   const d = { medP: 50 };
   const rot = { proc: { name: "Big Hit", youEmp: 0.02, fieldEmp: 0.15 }, usage: { under: [] }, talent: null };
   const noItem = residualText("playstyle", 30, d, rot, []);   // no EMPOWERMENT finding present
-  assert.match(noItem, /land empowered vs the field's/);      // still states the measured fact
+  assert.match(noItem, /lands? empowered vs the field's/);    // still states the measured fact
   assert.doesNotMatch(noItem, /see the EMPOWERMENT item/);    // but no dangling pointer
   // When the lever DID fire (an EMPOWERMENT finding is in the list), the pointer appears.
   const withItem = residualText("playstyle", 30, d, rot, [{ kind: KIND.EMPOWERMENT, text: "EMPOWERMENT: ..." }]);
@@ -174,9 +174,9 @@ test("residualText: a SKIPPED rotation doesn't claim the gaps are 'listed above'
   const skipped = residualText("playstyle", 45, { medP: 50, skipped: ["rotation"] }, null, []);
   assert.match(skipped, /didn't load this run/);
   assert.doesNotMatch(skipped, /listed above/);
-  // Rotation loaded (nothing skipped) -> the original "listed above" wording stands.
+  // Rotation loaded (nothing skipped) -> the big-remainder next step (diff a rank-1 parse).
   const loaded = residualText("playstyle", 45, { medP: 50, skipped: [] }, { proc: null, usage: { under: [] }, talent: null }, []);
-  assert.match(loaded, /listed above/);
+  assert.match(loaded, /rank-1 parse/);
 });
 
 test("isOffMetaBuild: true only when a HERO TREE mismatch lever is present", () => {
@@ -905,7 +905,6 @@ test("residualText (playstyle): a BIG remainder gets actionable execution framin
   const rotEmpEven = { proc: { name: "Starsurge", youEmp: 0.28, fieldEmp: 0.25 }, usage: { under: [] } };
   const bigEmp = residualText("playstyle", 43, {}, rotEmpEven, []);
   assert.match(bigEmp, /rank-1 parse of this exact fight/, "big: gives the concrete diff-a-top-parse step");
-  assert.match(bigEmp, /isn't just stat variance/, "big: explicitly rejects the stat-variance punt");
   // Generic path (no empowerment data, no under-press) also gets the frontier when big.
   const bigGeneric = residualText("playstyle", 40, {}, { proc: null, usage: { under: [] } }, []);
   assert.match(bigGeneric, /rank-1 parse of this exact fight/);

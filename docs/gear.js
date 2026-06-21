@@ -581,7 +581,7 @@ export function gearLevers(gf, priority, statValue = null, gemDelta = null, abov
   const swaps = gf.swaps || [];
   // Cite the field-measured stat value once (so each swap line stays terse).
   const mcite = statValue && statValue.perRating > 0
-    ? ` -- peers who stack ${priority} do ${Math.round(statValue.pct)}% more (n=${statValue.nHave}/${statValue.nNot}), mostly because they're better players, so sized as gear alone`
+    ? ` — peers who stack ${priority} do ${Math.round(statValue.pct)}% more (n=${statValue.nHave}/${statValue.nNot}; confounded, sized as gear)`
     : "";
   const measured = !!(statValue && statValue.perRating > 0);
   // HONESTY: if the field MEASURES no benefit from stacking this stat at your ilvl

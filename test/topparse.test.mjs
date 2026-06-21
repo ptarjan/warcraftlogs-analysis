@@ -197,7 +197,7 @@ test("topParseLevers: a DEDICATED-tooling funnel (low cleaveShare) is downgraded
       tank: { name: "Alleria", share: 61 }, fieldTank: { name: "Alleria", n: 3, of: 3 }, cleaveShare: 1 } };
   const rc = topParseLevers(conf).find((x) => /^ROUTING/.test(x.text));
   assert.equal(rc.dim, DIM.ROTATION, "confirmed same-kit cleave stays a yours lever");
-  assert.match(rc.text, /confirmed/i);
+  assert.match(rc.text, /same-kit cleave you can replicate/i);
   // null cleaveShare (cache-only / no field read) -> unchanged prior behavior.
   const noRead = { comp: { missing: [] },
     routing: { top: 75, you: 60, addNames: ["Add A"],

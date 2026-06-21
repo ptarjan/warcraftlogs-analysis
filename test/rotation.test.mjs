@@ -680,7 +680,7 @@ test("openerDivergence: silent when you open about as early, on a split field, o
   assert.equal(openerDivergence([], peers), null);
 });
 
-test("openerLever (via rotationLevers): shows BOTH opening sequences + the lead divergence", () => {
+test("openerLever (via rotationLevers): lead divergence + the field's first 3 (full seq in the card)", () => {
   const rot = { abilityIds: { Niuzao: 132578 },
     fieldOpener: ["Niuzao", "Breath of Fire", "Keg Smash"],
     opener: ["Blackout Kick", "Tiger Palm", "Niuzao", "Breath of Fire"],
@@ -690,9 +690,9 @@ test("openerLever (via rotationLevers): shows BOTH opening sequences + the lead 
   assert.equal(lev[0].impact, 0, "diagnostic: no DPS claim");
   assert.equal(lev[0].kind, "OPENER");
   assert.match(lev[0].text, /push .*Niuzao.* back 2 globals/);
-  // The full sequence comparison is shown (not just one spell).
-  assert.match(lev[0].text, /Field opens: Niuzao > Breath of Fire > Keg Smash/);
-  assert.match(lev[0].text, /You open: Blackout Kick > Tiger Palm > Niuzao > Breath of Fire/);
+  // The list item shows the field's first 3 (the full both-sequences comparison is in the card).
+  assert.match(lev[0].text, /field opens Niuzao > Breath of Fire > Keg Smash/);
+  assert.match(lev[0].text, /Rotation card/);
   // Omitted variant reads "you never open with".
   const omit = rotationLevers({ abilityIds: {}, fieldOpener: ["Niuzao"], opener: ["Tiger Palm"],
     openerGap: { ability: "Niuzao", peerShare: 0.8, peerPos: 0, youPos: null, omitted: true, delay: Infinity } });
