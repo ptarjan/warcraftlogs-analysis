@@ -527,6 +527,34 @@ test("usageDivergence ignores small/rare differences (floor + ratio)", () => {
   assert.equal(over.length, 0);
 });
 
+test("usageLevers: an UNMEASURABLE under-press is sized by cast-rate share, not a flat 3-6%", () => {
+  // The Expel Harm case: a never-pressed FRINGE ability (a self-heal the field barely
+  // casts, 0.6/min) used to get a flat DPS(3,6) "press it more" estimate -- crazy for
+  // a 0.6/min button. With no per-cast (you press it ~never -> no dmgPct), size it by
+  // its share of the field's rotation: 0.6/45 ~ 1.3% -> below the 2% surface floor -> drop.
+  const fringe = {
+    usage: { under: [{ name: "Expel Harm", you: 0, field: 0.6 }], over: [] },
+    castGap: { you: 40, field: 45 },
+    talent: { taken: new Set(), universe: new Set() },   // baseline button (not a skipped talent)
+    heroMatched: true, abilityIds: {},
+  };
+  assert.equal(rotationLevers(fringe).filter((l) => /press .*Expel Harm.* more/.test(l.text)).length, 0,
+    "a fringe 0.6/min under-press no longer fabricates a press-more lever");
+
+  // A genuine slow-rotation core button (field 20/min vs your 8) still surfaces, sized
+  // by its real cast share (12/45 ~ 27%, capped to the 6% est ceiling), not dropped.
+  const core = {
+    usage: { under: [{ name: "Shadow Bolt", you: 8, field: 20 }], over: [] },
+    castGap: { you: 30, field: 45 },
+    talent: { taken: new Set(), universe: new Set() },
+    heroMatched: true, abilityIds: {},
+  };
+  const lever = rotationLevers(core).find((l) => /press .*Shadow Bolt.* more/.test(l.text));
+  assert.ok(lever, "a real core under-press still fires");
+  assert.equal(lever.impact, 6, "sized by cast share, capped at the est ceiling (6%)");
+  assert.equal(lever.basis, "est", "still an estimate (verify in a log/sim)");
+});
+
 test("usageDivergence catches a SLOW ROTATION: core button cast far less but below 2x", () => {
   // Demonology pressing every core button ~1.6x below the field trips no single 2x gap,
   // so the whole deficit used to vanish into the PLAYSTYLE remainder. The big-absolute-gap

@@ -701,16 +701,33 @@ function usageLevers(rot, link) {
         `ROTATION: press ${link(a.name)} more -- peers cast it ${f(a.field, 1)}/min vs your ${f(a.you, 1)}; ` +
         `the casts you're missing are ~${a.dmgPct}% of your ${throughputWord()}.${over}${buildCaveat}`, "measured"), `press:${a.name}`));
     });
-    // Fallback: when NONE could be measured (no peers, or too few of your own casts to
-    // get a per-cast), keep the old lumped flat estimate so the lever still surfaces.
+    // Fallback: NONE could be sized from YOUR per-cast (you press these ~never, so there's
+    // no damage-per-cast to measure). We can't measure their value, but we can BOUND it: an
+    // AVERAGE-value cast is worth its share of the rotation, so size each by the cast-rate
+    // gap relative to the field's TOTAL damaging casts/min. This keeps a real slow-rotation /
+    // core-button gap big, while killing the old flat 3-6% (5-10% with a wrong button) that
+    // mis-sized a FRINGE low-frequency ability as a major DPS lever -- e.g. a self-heal the
+    // field barely presses (Expel Harm at 0.6/min) shouldn't read as "press it more, ~3-6%".
+    // Surface floor 2%: this average-cast estimate is noisier than the measured path's 1%
+    // floor, and a sub-2% press-more item is list noise (and often a non-damage button). So
+    // a fringe cast drops out entirely instead of fabricating a number.
     const unmeasured = underAbilities.filter((a) => !((a.dmgPct || 0) >= 1));
-    if (!measured.length && unmeasured.length) {
-      const under = unmeasured.slice(0, 2).map((a) => `${link(a.name)} (peers ${f(a.field, 1)}/min vs your ${f(a.you, 1)})`);
+    const fieldCpm = (rot && rot.castGap && rot.castGap.field) || 0;
+    const sized = fieldCpm > 0
+      ? unmeasured
+          .map((a) => ({ a, pct: Math.min(6, Math.round((a.field - a.you) / fieldCpm * 100)) }))
+          .filter((x) => x.pct >= 2)
+          .sort((x, y) => y.pct - x.pct)
+          .slice(0, 2)
+      : [];
+    if (!measured.length && sized.length) {
+      const under = sized.map((x) => `${link(x.a.name)} (peers ${f(x.a.field, 1)}/min vs your ${f(x.a.you, 1)})`);
+      const total = Math.min(6, sized.reduce((s, x) => s + x.pct, 0));
       const wrongButton = realOver.length > 0;
       const over = wrongButton
         ? `; you over-press ${realOver.slice(0, 1).map((a) => `${link(a.name)} (your ${f(a.you, 1)}/min vs peers ${f(a.field, 1)})`).join("")}`
         : "";
-      out.push(finding(DIM.ROTATION, wrongButton ? DPS(5, 10) : DPS(3, 6),
+      out.push(finding(DIM.ROTATION, DPS(total),
         `ROTATION: press ${under.join(" and ")} more${over} -- match your peers' ability priority ` +
         `(verify in a log/sim).`));
     }

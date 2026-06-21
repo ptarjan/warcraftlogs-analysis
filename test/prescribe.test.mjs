@@ -438,6 +438,7 @@ test("HEALER: rotationLevers drops the reactive 'press more' + empowerment, keep
   const rot = {
     abilityIds: {},
     usage: { under: [{ name: "Vivify", you: 11, field: 30, gap: 19 }], over: [] },
+    castGap: { you: 20, field: 45 },               // total casts/min, so the unmeasurable press-more can be sized
     talent: null,                                  // no talent data -> plain under-use (the reactive case)
     cooldowns: [{ name: "Rewind", you: 0.4, field: 1.1, youCasts: 1, fieldCasts: 2.2, pct: 4 }],
     cdUsage: [], perCast: [
