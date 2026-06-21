@@ -68,9 +68,14 @@ export function renderDpsChart(d) {
     + '<span class="lg field">Field median (25–75% band)</span>'
     + (d.worst ? '<span class="lg worst">Biggest dip</span>' : "");
   wrap.appendChild(legend);
+  // The caption carries ALL the context (boss · peers · phase note) so the card needs no
+  // separate text line under each chart.
   const cap = document.createElement("div");
   cap.className = "dpschart-cap";
-  cap.textContent = `${d.unit} over ${d.boss} — your benchmark kill, normalized to fight progress`;
+  const phaseNote = d.aligned
+    ? ` · aligned by phase${d.intermissions ? ` (${d.intermissions} intermission${d.intermissions === 1 ? "" : "s"})` : ""}`
+    : "";
+  cap.textContent = `${d.boss} · your ${d.unit} vs ${d.peers || 0} peers${phaseNote}`;
   wrap.appendChild(cap);
   return wrap;
 }

@@ -378,12 +378,13 @@ export function buildCurveComparison(yc, peers) {
   };
 }
 
-// Compact, rounded payload for the SVG (keeps the shared snapshot small).
+// Compact, rounded payload for the SVG (keeps the shared snapshot small). Carries the
+// context (peers, intermissions) so the CHART caption holds it -- no separate text line.
 function chartData(d) {
   const r = (a) => a.map((v) => Math.round(v));
   return {
     boss: d.boss, unit: d.unit, you: r(d.you), pmed: r(d.pmed), plo: r(d.plo), phi: r(d.phi),
-    bounds: d.bounds || [], aligned: !!d.aligned,
+    bounds: d.bounds || [], aligned: !!d.aligned, peers: d.peers || 0, intermissions: d.intermissions || 0,
     worst: d.worst && d.worst.deficit >= DIP_FLOOR ? { start: d.worst.start, end: d.worst.end } : null,
   };
 }
@@ -417,17 +418,15 @@ function renderBoss(log, d, unit) {
   log("");
   if (typeof document !== "undefined") log(CHART_PREFIX + JSON.stringify(chartData(g)));
   else asciiChart(log, g);
-  const phaseNote = g.aligned
-    ? ` · aligned by phase${g.intermissions ? ` (${g.intermissions} intermission${g.intermissions === 1 ? "" : "s"} excluded)` : ""}`
-    : "";
-  log(`  ${g.boss} · your kill vs ${g.peers} peers${phaseNote}.`);
-  if (g.isHealer) { log("  HPS tracks incoming raid damage (reactive) — see the Healing card."); return; }
+  // The chart's OWN caption carries the boss + peers + phase note, so NO separate caption
+  // line. The only text is one short dip line, and ONLY when there's a real soft spot --
+  // a boss where you track the field gets just the chart (no prose). Keeps the card light.
+  if (g.isHealer) return;
   const w = g.worst;
   const kk = (n) => `${Math.round((n || 0) / 1000)}k`;
-  if (!(w && w.deficit >= DIP_FLOOR)) { log("  -> You hold your level wherever the field does."); return; }
+  if (!(w && w.deficit >= DIP_FLOOR)) return;                          // tracks the field -> chart only
   const where = phaseLabel(w, true);
   if (w.death) { log(`  -> ${where}: you DIED (~${w.death.atPct}% in) — survival, not a rotation hole.`); return; }
-  // One tight line: the drop + the cause. Keep it short (this card had too much text).
   const drop = `${where}: ~${kk(w.youWindow)} vs your own ~${kk(w.youTypical)} (field ~${kk(w.fieldWindow)})`;
   const g3 = `(~${w.gainPct}%)`;
   if (w.cause === "idle") log(`  -> ${drop} — you go quiet (cast rate ${Math.round(100 * (w.cpmRatio || 0))}%); keep pressing. ${g3}`);
