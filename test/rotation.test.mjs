@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { installLocalStorage } from "./helpers.mjs";
 
 installLocalStorage();
-const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, usageDamageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, empoweredStats, empowermentCandidate, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, medianCastRates, consensusOpener, openerDivergence, majorCooldownIds, cooldownStackFraction, cooldownStackGap, cooldownUseComparable, damageCurve, weakestWindow } = await import("../docs/rotation-helpers.js");
+const { empoweredCount, openerSequence, fieldCastRates, usageDivergence, classifyUnderUse, cooldownGaps, castUsageGaps, usageDamageGaps, castable, perCastGaps, sameHeroPeers, realOveruse, empoweredShare, empoweredStats, empowermentCandidate, dotUptimeGaps, petShareGap, buffWindowUplift, buffCdGap, selfBuffMatch, medianCastRates, consensusOpener, openerDivergence, majorCooldownIds, cooldownStackFraction, cooldownStackGap, cooldownUseComparable, damageCurve, weakestWindow, fieldDamageShare } = await import("../docs/rotation-helpers.js");
 const { rotationLevers, mergeRotationRecurrence } = await import("../docs/rotation.js");
 const { setRunMetric } = await import("../docs/core.js");
 
@@ -149,6 +149,24 @@ test("realOveruse: an over-press vs a ~0 field is a build difference, not a rota
   ];
   const real = realOveruse(over, null);
   assert.deepEqual(real.map((a) => a.name), ["Maul"]);
+});
+
+test("fieldDamageShare: ~0 for a self-heal the field presses but barely damages with", () => {
+  // Brewmaster Expel Harm: peers press it (it's in their rotation) but it deals ~no
+  // damage, so it's absent from their (top-5) damage table -> share ~0. The press-more
+  // fallback must NOT recommend it for DPS.
+  const peers = [
+    { total: 1_000_000, dmgBy: { "Tiger Palm": 300_000, "Blackout Kick": 250_000 } },
+    { total: 1_200_000, dmgBy: { "Tiger Palm": 360_000, "Blackout Kick": 300_000 } },
+  ];
+  assert.equal(fieldDamageShare(peers, "Expel Harm"), 0);
+  // A real damage button the field leans on reads a meaningful share.
+  assert.ok(fieldDamageShare(peers, "Tiger Palm") >= 0.01);
+});
+
+test("fieldDamageShare: null when no peer carries damage data (don't over-suppress)", () => {
+  assert.equal(fieldDamageShare([], "Anything"), null);
+  assert.equal(fieldDamageShare([{ total: 0, dmgBy: {} }], "Anything"), null);
 });
 
 test("realOveruse: same-tree field keeps a zero-field over-press (a real wrong button)", () => {

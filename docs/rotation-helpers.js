@@ -305,9 +305,9 @@ export function medianCastRates(rates) {
 // FILLER cast slightly less never survives, only a core button worth real damage does.
 export function usageDivergence(youRate, fieldRate, { floor = 0.5, ratio = 2, bigGap = 3, midRatio = 1.4 } = {}) {
   const names = new Set([...Object.keys(youRate || {}), ...Object.keys(fieldRate || {})]);
-  /** @type {{name:string,you:number,field:number,gap:number,dmgPct?:number}[]} */
+  /** @type {{name:string,you:number,field:number,gap:number,dmgPct?:number,fieldDmgShare?:number|null}[]} */
   const under = [];
-  /** @type {{name:string,you:number,field:number,gap:number,dmgPct?:number}[]} */
+  /** @type {{name:string,you:number,field:number,gap:number,dmgPct?:number,fieldDmgShare?:number|null}[]} */
   const over = [];
   for (const n of names) {
     const y = (youRate || {})[n] || 0, fl = (fieldRate || {})[n] || 0;
@@ -319,6 +319,20 @@ export function usageDivergence(youRate, fieldRate, { floor = 0.5, ratio = 2, bi
   under.sort((a, b) => b.gap - a.gap);
   over.sort((a, b) => b.gap - a.gap);
   return { under, over };
+}
+
+// The FIELD's median share of total damage for ONE ability (peer.dmgBy[name] /
+// peer.total, medianed across peers). ~0 means the field presses it for something
+// OTHER than damage -- a self-heal/defensive/utility button (Brewmaster's Expel Harm,
+// a defensive GCD) -- so "press it more for DPS" is unfounded. We can't size such an
+// ability (it deals ~no damage -- the same tell that drops it to the unsized press-more
+// fallback), so this is the gate that stops us fabricating a % for it. Returns null when
+// no peer carries damage data for it (don't over-suppress on missing data). Pure.
+export function fieldDamageShare(peers, name) {
+  const shares = (peers || [])
+    .map((p) => (p && p.total > 0 ? ((p.dmgBy || {})[name] || 0) / p.total : null))
+    .filter((x) => x != null);
+  return shares.length ? median(shares) : null;
 }
 
 // Pick the peers to compare your rotation against. Prefer ones on your SAME hero

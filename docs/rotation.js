@@ -25,6 +25,7 @@ import {
   usageDivergence, sameHeroPeers, realOveruse, perCastValue, dmgGapPct,
   cooldownGaps, usageDamageGaps, castUsageGaps, selfBuffMatch, buffWindowUplift,
   buffCdGap, perCastGaps, dotUptimeGaps, petShareGap, classifyUnderUse, castable,
+  fieldDamageShare,
 } from "./rotation-helpers.js";
 
 // --- data layer: everything reads from the shared core loader (reportCore,
@@ -320,6 +321,17 @@ export async function rotationFindings(name, server, region, className, specName
     ? usageDamageGaps(usage.under, usage.over, you.dmgTotals || {}, you.dur, you.total, { benchRate: /** @type {Record<string,number>} */ (benchCastRate) })
     : {};
   for (const u of usage.under) if (usageDmg[u.name] != null) u.dmgPct = usageDmg[u.name];
+  // FIELD DAMAGE-SHARE gate. usageDivergence is pure CAST-RATE -- it flags any ability
+  // the field presses more than you, with no idea whether that ability deals damage. An
+  // ability you never press can't be sized from your own per-cast, so it ALWAYS falls to
+  // the unsized "press X more (~5%)" fallback -- even when it's a self-heal/defensive the
+  // field presses for survival, not DPS (Brewmaster's Expel Harm: peers 0.6/min, ~0% of
+  // their damage). Drop any under-use that carries ~no damage for the FIELD (and that we
+  // didn't already size from real damage). Keep ones we measured (dmgPct>=1) or can't
+  // judge (no peer damage data), so we never over-suppress a real lever.
+  for (const u of usage.under) u.fieldDmgShare = peers.length ? fieldDamageShare(peers, u.name) : null;
+  usage.under = usage.under.filter((u) => (u.dmgPct || 0) >= 1
+    || u.fieldDmgShare == null || u.fieldDmgShare >= 0.01);
   // Under-used damage cooldowns (the band usageDivergence's filler floor misses).
   // Dedupe against usage.under so the same ability isn't double-counted.
   const underNames = new Set(usage.under.map((a) => a.name));
